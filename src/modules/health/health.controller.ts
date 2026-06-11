@@ -1,9 +1,18 @@
 import { Controller, Get } from '@nestjs/common';
+import { RedisConfigService, RedisHealth } from '../../config/redis-config.service';
+
+interface HealthResponse {
+  status: 'ok';
+  redis: RedisHealth;
+}
 
 @Controller('health')
 export class HealthController {
+  constructor(private readonly redisConfig: RedisConfigService) {}
+
   @Get()
-  getHealth(): { status: 'ok' } {
-    return { status: 'ok' };
+  async getHealth(): Promise<HealthResponse> {
+    const redis = await this.redisConfig.checkHealth();
+    return { status: 'ok', redis };
   }
 }
