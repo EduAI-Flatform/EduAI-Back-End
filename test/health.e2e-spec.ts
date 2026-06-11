@@ -37,8 +37,10 @@ describe('Health endpoint', () => {
       .get('/api/v1/health')
       .expect(200)
       .expect(({ body }) => {
-        expect(body.status).toBe('ok');
-        expect(['disabled', 'error', 'ok']).toContain(body.redis.status);
+        expect(body.success).toBe(true);
+        expect(body.message).toBe('OK');
+        expect(body.data.status).toBe('ok');
+        expect(['disabled', 'error', 'ok']).toContain(body.data.redis.status);
       });
   });
 });

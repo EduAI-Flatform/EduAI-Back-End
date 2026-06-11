@@ -1,5 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
+import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { AppLoggerService } from './common/logging/app-logger.service';
 import { RequestLoggingInterceptor } from './common/logging/request-logging.interceptor';
 
@@ -15,6 +16,9 @@ export function configureApp(
       whitelist: true,
     }),
   );
-  app.useGlobalInterceptors(new RequestLoggingInterceptor(logger));
+  app.useGlobalInterceptors(
+    new RequestLoggingInterceptor(logger),
+    new ApiResponseInterceptor(),
+  );
   app.useGlobalFilters(new GlobalExceptionFilter(nodeEnv, logger));
 }
