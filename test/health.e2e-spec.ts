@@ -32,9 +32,9 @@ describe('Health endpoint', () => {
     await app?.close();
   });
 
-  it('returns ok at GET /api/v1/health', async () => {
+  it('returns ok at GET /health', async () => {
     await request(app.getHttpServer())
-      .get('/api/v1/health')
+      .get('/health')
       .expect(200)
       .expect(({ body }) => {
         expect(body.success).toBe(true);

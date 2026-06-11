@@ -1,4 +1,4 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, RequestMethod, ValidationPipe } from '@nestjs/common';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { AppLoggerService } from './common/logging/app-logger.service';
@@ -9,7 +9,9 @@ export function configureApp(
   nodeEnv: string,
   logger: AppLoggerService,
 ): void {
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', {
+    exclude: [{ method: RequestMethod.GET, path: 'health' }],
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
