@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import Redis, { RedisOptions } from 'ioredis';
+import { AppConfigService } from './app-config.service';
 
 export type RedisHealthStatus = 'ok' | 'disabled' | 'error';
 
@@ -12,9 +13,8 @@ export class RedisConfigService implements OnModuleDestroy {
   private readonly redisUrl?: string;
   private client?: Redis;
 
-  constructor() {
-    const redisUrl = process.env.REDIS_URL?.trim();
-    this.redisUrl = redisUrl || undefined;
+  constructor(appConfig: AppConfigService) {
+    this.redisUrl = appConfig.redis.url;
   }
 
   getRedisUrl(): string | undefined {

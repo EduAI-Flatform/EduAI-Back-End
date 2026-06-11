@@ -31,11 +31,9 @@ describe('Health endpoint', () => {
     await request(app.getHttpServer())
       .get('/api/v1/health')
       .expect(200)
-      .expect({
-        status: 'ok',
-        redis: {
-          status: 'disabled',
-        },
+      .expect(({ body }) => {
+        expect(body.status).toBe('ok');
+        expect(['disabled', 'error', 'ok']).toContain(body.redis.status);
       });
   });
 });

@@ -1,21 +1,9 @@
 import { RedisConfigService } from './redis-config.service';
+import { AppConfigService } from './app-config.service';
 
 describe('RedisConfigService', () => {
-  const originalRedisUrl = process.env.REDIS_URL;
-
-  afterEach(() => {
-    if (originalRedisUrl === undefined) {
-      delete process.env.REDIS_URL;
-      return;
-    }
-
-    process.env.REDIS_URL = originalRedisUrl;
-  });
-
   it('is disabled when REDIS_URL is missing', async () => {
-    delete process.env.REDIS_URL;
-
-    const service = new RedisConfigService();
+    const service = new RedisConfigService(createConfigService());
 
     expect(service.getRedisUrl()).toBeUndefined();
     expect(service.isEnabled()).toBe(false);
@@ -24,9 +12,7 @@ describe('RedisConfigService', () => {
   });
 
   it('loads REDIS_URL from env and creates a client lazily', async () => {
-    process.env.REDIS_URL = 'redis://localhost:6379';
-
-    const service = new RedisConfigService();
+    const service = new RedisConfigService(createConfigService('redis://localhost:6379'));
 
     const client = service.getClient();
 
@@ -37,3 +23,11 @@ describe('RedisConfigService', () => {
     await service.onModuleDestroy();
   });
 });
+
+function createConfigService(redisUrl?: string): AppConfigService {
+  return {
+    redis: {
+      url: redisUrl,
+    },
+  } as AppConfigService;
+}
