@@ -1,7 +1,9 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
+import { configureApp } from '../src/app.setup';
 import { AppModule } from '../src/app.module';
+import { AppConfigService } from '../src/config/app-config.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Health endpoint', () => {
@@ -19,7 +21,7 @@ describe('Health endpoint', () => {
       .compile();
 
     app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
+    configureApp(app, app.get(AppConfigService).app.nodeEnv);
     await app.init();
   });
 
