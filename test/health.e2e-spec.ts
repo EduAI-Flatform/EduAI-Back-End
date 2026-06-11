@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { configureApp } from '../src/app.setup';
 import { AppModule } from '../src/app.module';
+import { AppLoggerService, LOG_WRITER } from '../src/common/logging/app-logger.service';
 import { AppConfigService } from '../src/config/app-config.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -18,10 +19,12 @@ describe('Health endpoint', () => {
         $connect: jest.fn(),
         $disconnect: jest.fn(),
       })
+      .overrideProvider(LOG_WRITER)
+      .useValue(jest.fn())
       .compile();
 
     app = moduleRef.createNestApplication();
-    configureApp(app, app.get(AppConfigService).app.nodeEnv);
+    configureApp(app, app.get(AppConfigService).app.nodeEnv, app.get(AppLoggerService));
     await app.init();
   });
 

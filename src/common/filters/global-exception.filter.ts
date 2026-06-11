@@ -5,9 +5,8 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { Response } from 'express';
-
-type ErrorMessage = string | string[];
+import { Request, Response } from 'express';
+import { AppLoggerService } from '../logging/app-logger.service';
 
 interface StandardErrorResponse {
   success: false;
@@ -19,17 +18,32 @@ interface StandardErrorResponse {
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  constructor(private readonly nodeEnv: string) {}
+  constructor(
+    private readonly nodeEnv: string,
+    private readonly logger: AppLoggerService,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
-    const response = host.switchToHttp().getResponse<Response>();
+    const http = host.switchToHttp();
+    const request = http.getRequest<Request>();
+    const response = http.getResponse<Response>();
     const status = this.getStatus(exception);
     const message = this.getMessage(exception, status);
+    const code = this.getCode(exception, status);
+
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error('critical request error', this.getStack(exception), 'GlobalExceptionFilter', {
+        code,
+        method: request.method,
+        path: request.originalUrl ?? request.url,
+        statusCode: status,
+      });
+    }
 
     response.status(status).json({
       success: false,
       error: {
-        code: this.getCode(exception, status),
+        code,
         message,
       },
     } satisfies StandardErrorResponse);
@@ -81,6 +95,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     return undefined;
+  }
+
+  private getStack(exception: unknown): string | undefined {
+    return exception instanceof Error ? exception.stack : undefined;
   }
 
   private formatMessage(message: unknown): string {

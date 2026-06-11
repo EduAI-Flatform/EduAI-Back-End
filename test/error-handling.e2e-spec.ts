@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { IsEmail } from 'class-validator';
 import * as request from 'supertest';
 import { configureApp } from '../src/app.setup';
+import { AppLoggerService } from '../src/common/logging/app-logger.service';
 
 class ValidationBodyDto {
   @IsEmail()
@@ -24,6 +25,8 @@ class ErrorTestController {
 
 describe('Global error handling', () => {
   let app: INestApplication;
+  const logWriter = jest.fn();
+  const logger = new AppLoggerService(logWriter);
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -31,12 +34,16 @@ describe('Global error handling', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    configureApp(app, 'production');
+    configureApp(app, 'production', logger);
     await app.init();
   });
 
   afterAll(async () => {
     await app?.close();
+  });
+
+  beforeEach(() => {
+    logWriter.mockClear();
   });
 
   it('returns the standard API error shape without stack traces', async () => {
@@ -54,6 +61,19 @@ describe('Global error handling', () => {
         expect(JSON.stringify(body)).not.toContain('stack');
         expect(JSON.stringify(body)).not.toContain('internal implementation detail');
       });
+
+    const errorLog = logWriter.mock.calls
+      .map(([entry]) => JSON.parse(entry))
+      .find((entry) => entry.level === 'error');
+
+    expect(errorLog).toMatchObject({
+      level: 'error',
+      message: 'critical request error',
+      context: 'GlobalExceptionFilter',
+      method: 'GET',
+      path: '/api/v1/error-test/unexpected',
+      statusCode: 500,
+    });
   });
 
   it('returns readable validation messages', async () => {
