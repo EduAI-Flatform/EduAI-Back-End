@@ -6,3 +6,70 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+}
+
+enum RoleName {
+  student
+  instructor
+  platform_admin
+}
+
+model User {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  fullName      String         @map("full_name")
+  avatarUrl     String?        @map("avatar_url")
+  status        UserStatus     @default(active)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  deletedAt     DateTime?      @map("deleted_at")
+  roles         UserRole[]
+  refreshTokens RefreshToken[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        RoleName   @unique
+  description String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
