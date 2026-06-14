@@ -13,3 +13,17 @@ export interface RegisteredUserResponse {
 export interface RegisterResponse {
   user: RegisteredUserResponse;
 }
+
+export interface LoginResponse {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: 'Bearer';
+  expiresIn: number;
+  user: RegisteredUserResponse;
+}
+
+export type RefreshResponse = LoginResponse;
+
+export interface LogoutResponse {
+  loggedOut: true;
+}
