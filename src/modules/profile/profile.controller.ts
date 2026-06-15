@@ -7,11 +7,16 @@ import {
   ParseUUIDPipe,
   Post,
   Put,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBody,
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -20,11 +25,16 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { MAX_AVATAR_FILE_SIZE_BYTES } from './avatar-storage.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfileService } from './profile.service';
+import {
+  AvatarUploadResponse,
+  UploadedAvatarFile,
+} from './types/avatar-upload.types';
 import {
   DeletePortfolioResponse,
   PortfolioResponse,
@@ -57,6 +67,37 @@ export class ProfileController {
     @Body() input: UpdateProfileDto,
   ): Promise<ProfileResponse> {
     return this.profileService.updateCurrentProfile(userId, input);
+  }
+
+  @Post('avatar')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: MAX_AVATAR_FILE_SIZE_BYTES,
+      },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiCreatedResponse({ description: 'Avatar uploaded for current user.' })
+  @ApiBadRequestResponse({ description: 'Invalid avatar file.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  uploadAvatar(
+    @CurrentUser('id') userId: string,
+    @UploadedFile() file?: UploadedAvatarFile,
+  ): Promise<AvatarUploadResponse> {
+    return this.profileService.uploadAvatar(userId, file);
   }
 
   @Post('skills')

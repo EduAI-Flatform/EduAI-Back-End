@@ -1,9 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AvatarStorageService } from './avatar-storage.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import {
+  AvatarUploadResponse,
+  UploadedAvatarFile,
+} from './types/avatar-upload.types';
 import {
   DeletePortfolioResponse,
   PortfolioResponse,
@@ -13,7 +18,10 @@ import { DeleteSkillResponse, SkillResponse } from './types/skill-response.types
 
 @Injectable()
 export class ProfileService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly avatarStorage: AvatarStorageService,
+  ) {}
 
   async getCurrentProfile(userId: string): Promise<ProfileResponse | null> {
     return this.prisma.userProfile.findUnique({
@@ -130,6 +138,30 @@ export class ProfileService {
     }
 
     return { deleted: true };
+  }
+
+  async uploadAvatar(
+    userId: string,
+    file?: UploadedAvatarFile,
+  ): Promise<AvatarUploadResponse> {
+    if (!file) {
+      throw new BadRequestException('Avatar file is required');
+    }
+
+    const storedAvatar = await this.avatarStorage.uploadAvatar(file);
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        avatarUrl: storedAvatar.url,
+      },
+      select: {
+        avatarUrl: true,
+      },
+    });
+
+    return {
+      avatarUrl: user.avatarUrl ?? storedAvatar.url,
+    };
   }
 
   private removeUndefinedFields<T extends object>(input: T): T {

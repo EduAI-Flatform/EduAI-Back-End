@@ -34,6 +34,7 @@ describe('Profile endpoints', () => {
     createPortfolio: jest.fn(),
     updatePortfolio: jest.fn(),
     deletePortfolio: jest.fn(),
+    uploadAvatar: jest.fn(),
   };
   const jwtService = {
     verifyAsync: jest.fn(),
@@ -117,6 +118,9 @@ describe('Profile endpoints', () => {
       deletedAt: null,
     });
     profileService.deletePortfolio.mockResolvedValue({ deleted: true });
+    profileService.uploadAvatar.mockResolvedValue({
+      avatarUrl: 'https://cdn.example.com/avatars/generated.png',
+    });
     jwtService.verifyAsync.mockResolvedValue({
       sub: 'user-id',
       email: 'student@example.com',
@@ -192,6 +196,33 @@ describe('Profile endpoints', () => {
       });
 
     expect(profileService.updateCurrentProfile).not.toHaveBeenCalled();
+  });
+
+  it('uploads an avatar for the authenticated user', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/profile/avatar')
+      .set('Authorization', 'Bearer access-token')
+      .attach('file', Buffer.from('avatar'), {
+        filename: 'client-name.png',
+        contentType: 'image/png',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          success: true,
+          data: {
+            avatarUrl: 'https://cdn.example.com/avatars/generated.png',
+          },
+        });
+      });
+
+    expect(profileService.uploadAvatar).toHaveBeenCalledWith(
+      'user-id',
+      expect.objectContaining({
+        mimetype: 'image/png',
+        originalname: 'client-name.png',
+      }),
+    );
   });
 
   it('adds a skill for the authenticated user', async () => {

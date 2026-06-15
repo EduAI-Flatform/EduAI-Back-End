@@ -1,5 +1,5 @@
 import { ProfileService } from './profile.service';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('ProfileService', () => {
   const profile = {
@@ -54,11 +54,23 @@ describe('ProfileService', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUnique: jest.fn().mockResolvedValue(portfolio),
       },
+      user: {
+        update: jest.fn().mockResolvedValue({
+          avatarUrl: 'https://cdn.example.com/avatars/generated.png',
+        }),
+      },
+    };
+    const avatarStorage = {
+      uploadAvatar: jest.fn().mockResolvedValue({
+        key: 'avatars/generated.png',
+        url: 'https://cdn.example.com/avatars/generated.png',
+      }),
     };
 
     return {
+      avatarStorage,
       prisma,
-      service: new ProfileService(prisma as never),
+      service: new ProfileService(prisma as never, avatarStorage as never),
     };
   }
 
@@ -241,5 +253,40 @@ describe('ProfileService', () => {
         deletedAt: expect.any(Date),
       },
     });
+  });
+
+  it('uploads an avatar and stores only the generated public URL', async () => {
+    const { avatarStorage, prisma, service } = createService();
+    const file = {
+      buffer: Buffer.from('avatar'),
+      mimetype: 'image/png',
+      originalname: 'client-name.png',
+      size: 6,
+    };
+
+    await expect(service.uploadAvatar('user-id', file)).resolves.toEqual({
+      avatarUrl: 'https://cdn.example.com/avatars/generated.png',
+    });
+
+    expect(avatarStorage.uploadAvatar).toHaveBeenCalledWith(file);
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'user-id' },
+      data: {
+        avatarUrl: 'https://cdn.example.com/avatars/generated.png',
+      },
+      select: {
+        avatarUrl: true,
+      },
+    });
+  });
+
+  it('rejects missing avatar files', async () => {
+    const { avatarStorage, service } = createService();
+
+    await expect(service.uploadAvatar('user-id')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(avatarStorage.uploadAvatar).not.toHaveBeenCalled();
   });
 });
