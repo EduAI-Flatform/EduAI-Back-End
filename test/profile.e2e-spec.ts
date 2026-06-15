@@ -29,6 +29,8 @@ describe('Profile endpoints', () => {
   const profileService = {
     getCurrentProfile: jest.fn(),
     updateCurrentProfile: jest.fn(),
+    addSkill: jest.fn(),
+    deleteSkill: jest.fn(),
   };
   const jwtService = {
     verifyAsync: jest.fn(),
@@ -75,6 +77,16 @@ describe('Profile endpoints', () => {
       bio: 'Updated bio',
       isPublic: true,
     });
+    profileService.addSkill.mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+      userId: 'user-id',
+      name: 'Machine Learning',
+      level: 'intermediate',
+      category: 'AI',
+      createdAt: new Date('2026-06-15T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+    });
+    profileService.deleteSkill.mockResolvedValue({ deleted: true });
     jwtService.verifyAsync.mockResolvedValue({
       sub: 'user-id',
       email: 'student@example.com',
@@ -150,5 +162,62 @@ describe('Profile endpoints', () => {
       });
 
     expect(profileService.updateCurrentProfile).not.toHaveBeenCalled();
+  });
+
+  it('adds a skill for the authenticated user', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/profile/skills')
+      .set('Authorization', 'Bearer access-token')
+      .send({
+        userId: 'other-user-id',
+        name: '  Machine Learning  ',
+        level: '  intermediate  ',
+        category: '  AI  ',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data.name).toBe('Machine Learning');
+        expect(body.data.level).toBe('intermediate');
+      });
+
+    expect(profileService.addSkill).toHaveBeenCalledWith('user-id', {
+      name: 'Machine Learning',
+      level: 'intermediate',
+      category: 'AI',
+    });
+  });
+
+  it('rejects invalid skill payloads', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/profile/skills')
+      .set('Authorization', 'Bearer access-token')
+      .send({
+        name: '',
+        level: 123,
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.success).toBe(false);
+        expect(body.error.code).toBe('BAD_REQUEST');
+      });
+
+    expect(profileService.addSkill).not.toHaveBeenCalled();
+  });
+
+  it('deletes a skill for the authenticated user', async () => {
+    await request(app.getHttpServer())
+      .delete('/api/v1/profile/skills/11111111-1111-4111-8111-111111111111')
+      .set('Authorization', 'Bearer access-token')
+      .expect(200)
+      .expect({
+        success: true,
+        data: { deleted: true },
+        message: 'OK',
+      });
+
+    expect(profileService.deleteSkill).toHaveBeenCalledWith(
+      'user-id',
+      '11111111-1111-4111-8111-111111111111',
+    );
   });
 });

@@ -1,4 +1,5 @@
 import { ProfileService } from './profile.service';
+import { NotFoundException } from '@nestjs/common';
 
 describe('ProfileService', () => {
   const profile = {
@@ -15,12 +16,25 @@ describe('ProfileService', () => {
     createdAt: new Date('2026-06-15T00:00:00.000Z'),
     updatedAt: new Date('2026-06-15T00:00:00.000Z'),
   };
+  const skill = {
+    id: 'skill-id',
+    userId: 'user-id',
+    name: 'Machine Learning',
+    level: 'intermediate',
+    category: 'AI',
+    createdAt: new Date('2026-06-15T00:00:00.000Z'),
+    updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+  };
 
   function createService() {
     const prisma = {
       userProfile: {
         findUnique: jest.fn().mockResolvedValue(profile),
         upsert: jest.fn().mockResolvedValue(profile),
+      },
+      userSkill: {
+        create: jest.fn().mockResolvedValue(skill),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
 
@@ -83,5 +97,50 @@ describe('ProfileService', () => {
         location: 'Hà Nội',
       },
     });
+  });
+
+  it('adds a skill for the authenticated user', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.addSkill('user-id', {
+        name: 'Machine Learning',
+        level: 'intermediate',
+        category: 'AI',
+      }),
+    ).resolves.toEqual(skill);
+
+    expect(prisma.userSkill.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'user-id',
+        name: 'Machine Learning',
+        level: 'intermediate',
+        category: 'AI',
+      },
+    });
+  });
+
+  it('deletes only a skill owned by the authenticated user', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.deleteSkill('user-id', 'skill-id')).resolves.toEqual({
+      deleted: true,
+    });
+
+    expect(prisma.userSkill.deleteMany).toHaveBeenCalledWith({
+      where: {
+        id: 'skill-id',
+        userId: 'user-id',
+      },
+    });
+  });
+
+  it('rejects deleting a missing or unowned skill', async () => {
+    const { prisma, service } = createService();
+    prisma.userSkill.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.deleteSkill('user-id', 'skill-id')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
