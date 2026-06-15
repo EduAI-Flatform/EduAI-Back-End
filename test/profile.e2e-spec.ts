@@ -31,6 +31,9 @@ describe('Profile endpoints', () => {
     updateCurrentProfile: jest.fn(),
     addSkill: jest.fn(),
     deleteSkill: jest.fn(),
+    createPortfolio: jest.fn(),
+    updatePortfolio: jest.fn(),
+    deletePortfolio: jest.fn(),
   };
   const jwtService = {
     verifyAsync: jest.fn(),
@@ -87,6 +90,33 @@ describe('Profile endpoints', () => {
       updatedAt: new Date('2026-06-15T00:00:00.000Z'),
     });
     profileService.deleteSkill.mockResolvedValue({ deleted: true });
+    profileService.createPortfolio.mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      userId: 'user-id',
+      title: 'AI Learning Assistant',
+      description: 'Project description',
+      projectUrl: 'https://example.com/project',
+      imageUrl: null,
+      startDate: null,
+      endDate: null,
+      createdAt: new Date('2026-06-15T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+      deletedAt: null,
+    });
+    profileService.updatePortfolio.mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      userId: 'user-id',
+      title: 'Updated project',
+      description: null,
+      projectUrl: 'https://example.com/project',
+      imageUrl: null,
+      startDate: null,
+      endDate: null,
+      createdAt: new Date('2026-06-15T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+      deletedAt: null,
+    });
+    profileService.deletePortfolio.mockResolvedValue({ deleted: true });
     jwtService.verifyAsync.mockResolvedValue({
       sub: 'user-id',
       email: 'student@example.com',
@@ -218,6 +248,87 @@ describe('Profile endpoints', () => {
     expect(profileService.deleteSkill).toHaveBeenCalledWith(
       'user-id',
       '11111111-1111-4111-8111-111111111111',
+    );
+  });
+
+  it('creates a portfolio item for the authenticated user', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/profile/portfolio')
+      .set('Authorization', 'Bearer access-token')
+      .send({
+        userId: 'other-user-id',
+        title: '  AI Learning Assistant  ',
+        description: '  Project description  ',
+        projectUrl: 'https://example.com/project',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.data.title).toBe('AI Learning Assistant');
+        expect(body.data.userId).toBe('user-id');
+      });
+
+    expect(profileService.createPortfolio).toHaveBeenCalledWith('user-id', {
+      title: 'AI Learning Assistant',
+      description: 'Project description',
+      projectUrl: 'https://example.com/project',
+    });
+  });
+
+  it('rejects invalid portfolio payloads', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/profile/portfolio')
+      .set('Authorization', 'Bearer access-token')
+      .send({
+        title: '',
+        projectUrl: 'not-a-url',
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.success).toBe(false);
+        expect(body.error.code).toBe('BAD_REQUEST');
+      });
+
+    expect(profileService.createPortfolio).not.toHaveBeenCalled();
+  });
+
+  it('updates a portfolio item for the authenticated user', async () => {
+    await request(app.getHttpServer())
+      .put('/api/v1/profile/portfolio/22222222-2222-4222-8222-222222222222')
+      .set('Authorization', 'Bearer access-token')
+      .send({
+        userId: 'other-user-id',
+        title: '  Updated project  ',
+        description: null,
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.title).toBe('Updated project');
+      });
+
+    expect(profileService.updatePortfolio).toHaveBeenCalledWith(
+      'user-id',
+      '22222222-2222-4222-8222-222222222222',
+      {
+        title: 'Updated project',
+        description: null,
+      },
+    );
+  });
+
+  it('soft deletes a portfolio item for the authenticated user', async () => {
+    await request(app.getHttpServer())
+      .delete('/api/v1/profile/portfolio/22222222-2222-4222-8222-222222222222')
+      .set('Authorization', 'Bearer access-token')
+      .expect(200)
+      .expect({
+        success: true,
+        data: { deleted: true },
+        message: 'OK',
+      });
+
+    expect(profileService.deletePortfolio).toHaveBeenCalledWith(
+      'user-id',
+      '22222222-2222-4222-8222-222222222222',
     );
   });
 });

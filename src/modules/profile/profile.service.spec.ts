@@ -25,6 +25,19 @@ describe('ProfileService', () => {
     createdAt: new Date('2026-06-15T00:00:00.000Z'),
     updatedAt: new Date('2026-06-15T00:00:00.000Z'),
   };
+  const portfolio = {
+    id: 'portfolio-id',
+    userId: 'user-id',
+    title: 'AI Learning Assistant',
+    description: 'Project description',
+    projectUrl: 'https://example.com/project',
+    imageUrl: null,
+    startDate: new Date('2025-01-01T00:00:00.000Z'),
+    endDate: null,
+    createdAt: new Date('2026-06-15T00:00:00.000Z'),
+    updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+    deletedAt: null,
+  };
 
   function createService() {
     const prisma = {
@@ -35,6 +48,11 @@ describe('ProfileService', () => {
       userSkill: {
         create: jest.fn().mockResolvedValue(skill),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      portfolio: {
+        create: jest.fn().mockResolvedValue(portfolio),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue(portfolio),
       },
     };
 
@@ -142,5 +160,86 @@ describe('ProfileService', () => {
     await expect(service.deleteSkill('user-id', 'skill-id')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('creates a portfolio item for the authenticated user', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.createPortfolio('user-id', {
+        title: 'AI Learning Assistant',
+        description: 'Project description',
+        projectUrl: 'https://example.com/project',
+      }),
+    ).resolves.toEqual(portfolio);
+
+    expect(prisma.portfolio.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'user-id',
+        title: 'AI Learning Assistant',
+        description: 'Project description',
+        projectUrl: 'https://example.com/project',
+        imageUrl: undefined,
+        startDate: undefined,
+        endDate: undefined,
+      },
+    });
+  });
+
+  it('updates only an owned active portfolio item', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.updatePortfolio('user-id', 'portfolio-id', {
+        title: 'Updated project',
+        description: undefined,
+      }),
+    ).resolves.toEqual(portfolio);
+
+    expect(prisma.portfolio.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'portfolio-id',
+        userId: 'user-id',
+        deletedAt: null,
+      },
+      data: {
+        title: 'Updated project',
+      },
+    });
+    expect(prisma.portfolio.findUnique).toHaveBeenCalledWith({
+      where: { id: 'portfolio-id' },
+    });
+  });
+
+  it('rejects updating a missing, deleted, or unowned portfolio item', async () => {
+    const { prisma, service } = createService();
+    prisma.portfolio.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.updatePortfolio('user-id', 'portfolio-id', {
+        title: 'Updated project',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('soft deletes only an owned active portfolio item', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.deletePortfolio('user-id', 'portfolio-id'),
+    ).resolves.toEqual({
+      deleted: true,
+    });
+
+    expect(prisma.portfolio.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'portfolio-id',
+        userId: 'user-id',
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: expect.any(Date),
+      },
+    });
   });
 });

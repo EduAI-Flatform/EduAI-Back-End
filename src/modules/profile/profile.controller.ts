@@ -20,9 +20,15 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
+import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfileService } from './profile.service';
+import {
+  DeletePortfolioResponse,
+  PortfolioResponse,
+} from './types/portfolio-response.types';
 import { ProfileResponse } from './types/profile-response.types';
 import { DeleteSkillResponse, SkillResponse } from './types/skill-response.types';
 
@@ -74,5 +80,41 @@ export class ProfileController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) skillId: string,
   ): Promise<DeleteSkillResponse> {
     return this.profileService.deleteSkill(userId, skillId);
+  }
+
+  @Post('portfolio')
+  @ApiCreatedResponse({ description: 'Portfolio item added to current user profile.' })
+  @ApiBadRequestResponse({ description: 'Invalid portfolio payload.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  createPortfolio(
+    @CurrentUser('id') userId: string,
+    @Body() input: CreatePortfolioDto,
+  ): Promise<PortfolioResponse> {
+    return this.profileService.createPortfolio(userId, input);
+  }
+
+  @Put('portfolio/:id')
+  @ApiOkResponse({ description: 'Portfolio item updated successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid portfolio id or payload.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Portfolio item not found for current user.' })
+  updatePortfolio(
+    @CurrentUser('id') userId: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) portfolioId: string,
+    @Body() input: UpdatePortfolioDto,
+  ): Promise<PortfolioResponse> {
+    return this.profileService.updatePortfolio(userId, portfolioId, input);
+  }
+
+  @Delete('portfolio/:id')
+  @ApiOkResponse({ description: 'Portfolio item soft deleted successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid portfolio id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Portfolio item not found for current user.' })
+  deletePortfolio(
+    @CurrentUser('id') userId: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) portfolioId: string,
+  ): Promise<DeletePortfolioResponse> {
+    return this.profileService.deletePortfolio(userId, portfolioId);
   }
 }

@@ -1,7 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
+import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import {
+  DeletePortfolioResponse,
+  PortfolioResponse,
+} from './types/portfolio-response.types';
 import { ProfileResponse } from './types/profile-response.types';
 import { DeleteSkillResponse, SkillResponse } from './types/skill-response.types';
 
@@ -57,9 +63,78 @@ export class ProfileService {
     return { deleted: true };
   }
 
-  private removeUndefinedFields(input: UpdateProfileDto): UpdateProfileDto {
+  async createPortfolio(
+    userId: string,
+    input: CreatePortfolioDto,
+  ): Promise<PortfolioResponse> {
+    return this.prisma.portfolio.create({
+      data: {
+        userId,
+        title: input.title,
+        description: input.description,
+        projectUrl: input.projectUrl,
+        imageUrl: input.imageUrl,
+        startDate: input.startDate,
+        endDate: input.endDate,
+      },
+    });
+  }
+
+  async updatePortfolio(
+    userId: string,
+    portfolioId: string,
+    input: UpdatePortfolioDto,
+  ): Promise<PortfolioResponse> {
+    const data = this.removeUndefinedFields(input);
+    const result = await this.prisma.portfolio.updateMany({
+      where: {
+        id: portfolioId,
+        userId,
+        deletedAt: null,
+      },
+      data,
+    });
+
+    if (result.count === 0) {
+      throw new NotFoundException('Portfolio item not found');
+    }
+
+    const portfolio = await this.prisma.portfolio.findUnique({
+      where: { id: portfolioId },
+    });
+
+    if (!portfolio) {
+      throw new NotFoundException('Portfolio item not found');
+    }
+
+    return portfolio;
+  }
+
+  async deletePortfolio(
+    userId: string,
+    portfolioId: string,
+  ): Promise<DeletePortfolioResponse> {
+    const result = await this.prisma.portfolio.updateMany({
+      where: {
+        id: portfolioId,
+        userId,
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: new Date(),
+      },
+    });
+
+    if (result.count === 0) {
+      throw new NotFoundException('Portfolio item not found');
+    }
+
+    return { deleted: true };
+  }
+
+  private removeUndefinedFields<T extends object>(input: T): T {
     return Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined),
-    ) as UpdateProfileDto;
+    ) as T;
   }
 }
