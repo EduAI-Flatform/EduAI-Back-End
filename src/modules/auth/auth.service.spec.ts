@@ -456,3 +456,116 @@ describe('AuthService.logout', () => {
     });
   });
 });
+
+describe('AuthService.getCurrentUser', () => {
+  const user = {
+    id: 'user-id',
+    email: 'student@example.com',
+    fullName: 'Student User',
+    status: 'active',
+    createdAt: new Date('2026-06-13T00:00:00.000Z'),
+    updatedAt: new Date('2026-06-13T00:00:00.000Z'),
+    roles: [
+      {
+        role: {
+          name: 'student',
+        },
+      },
+    ],
+  };
+
+  function createService(options?: { user?: typeof user | null }) {
+    const selectedUser = options && 'user' in options ? options.user : user;
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue(selectedUser),
+      },
+    };
+    const passwordService = {
+      comparePassword: jest.fn(),
+      hashPassword: jest.fn(),
+    } as unknown as PasswordService;
+    const jwtService = {
+      signAsync: jest.fn(),
+      verifyAsync: jest.fn(),
+    } as unknown as JwtService;
+    const appConfig = {
+      jwt: {
+        accessSecret: 'access-secret',
+        refreshSecret: 'refresh-secret',
+      },
+    } as AppConfigService;
+    const service = new AuthService(
+      prisma as never,
+      passwordService,
+      jwtService,
+      appConfig,
+    );
+
+    return { service, prisma };
+  }
+
+  it('returns a safe current user profile', async () => {
+    const { service, prisma } = createService();
+
+    await expect(service.getCurrentUser(user.id)).resolves.toEqual({
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      status: user.status,
+      roles: ['student'],
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: user.id },
+      select: {
+        createdAt: true,
+        email: true,
+        fullName: true,
+        id: true,
+        roles: {
+          select: {
+            role: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        status: true,
+        updatedAt: true,
+      },
+    });
+  });
+
+  it('does not return sensitive fields', async () => {
+    const { service } = createService();
+
+    const result = await service.getCurrentUser(user.id);
+
+    expect(JSON.stringify(result)).not.toContain('passwordHash');
+    expect(JSON.stringify(result)).not.toContain('refreshToken');
+  });
+
+  it('rejects missing users as invalid access tokens', async () => {
+    const { service } = createService({ user: null });
+
+    await expect(service.getCurrentUser(user.id)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('rejects inactive users as invalid access tokens', async () => {
+    const { service } = createService({
+      user: {
+        ...user,
+        status: 'inactive',
+      },
+    });
+
+    await expect(service.getCurrentUser(user.id)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+});

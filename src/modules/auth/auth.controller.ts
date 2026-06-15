@@ -7,7 +7,9 @@ import {
   ApiUnauthorizedResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { RoleName } from '../../../generated/prisma/client';
 import { AuthService } from './auth.service';
+import { CurrentUser } from './current-user.decorator';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -18,9 +20,9 @@ import {
   LoginResponse,
   LogoutResponse,
   RefreshResponse,
+  RegisteredUserResponse,
   RegisterResponse,
 } from './types/auth-response.types';
-import { RoleName } from '../../../generated/prisma/client';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -61,6 +63,14 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Invalid refresh token.' })
   async logout(@Body() input: RefreshTokenDto): Promise<LogoutResponse> {
     return this.authService.logout(input);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Current user profile returned successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  async me(@CurrentUser('id') userId: string): Promise<RegisteredUserResponse> {
+    return this.authService.getCurrentUser(userId);
   }
 
   @Get('admin-test')

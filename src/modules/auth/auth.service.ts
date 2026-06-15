@@ -270,6 +270,35 @@ export class AuthService {
     return { loggedOut: true };
   }
 
+  async getCurrentUser(userId: string): Promise<RegisteredUserResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        createdAt: true,
+        email: true,
+        fullName: true,
+        id: true,
+        roles: {
+          select: {
+            role: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        status: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!user || user.status !== UserStatus.active) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+
+    return this.toRegisteredUserResponse(user);
+  }
+
   private getRequiredJwtSecret(key: 'accessSecret' | 'refreshSecret'): string {
     const secret = this.appConfig.jwt[key];
 
