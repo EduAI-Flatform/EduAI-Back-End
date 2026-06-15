@@ -1,0 +1,154 @@
+import { INestApplication } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Test } from '@nestjs/testing';
+import * as request from 'supertest';
+import { RoleName } from '../generated/prisma/client';
+import { configureApp } from '../src/app.setup';
+import { AppLoggerService } from '../src/common/logging/app-logger.service';
+import { AppConfigService } from '../src/config/app-config.service';
+import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
+import { ProfileController } from '../src/modules/profile/profile.controller';
+import { ProfileService } from '../src/modules/profile/profile.service';
+
+describe('Profile endpoints', () => {
+  let app: INestApplication;
+  const profile = {
+    id: 'profile-id',
+    userId: 'user-id',
+    phoneNumber: null,
+    dateOfBirth: null,
+    bio: 'Bio',
+    headline: 'Learner',
+    location: null,
+    websiteUrl: null,
+    publicSlug: null,
+    isPublic: false,
+    createdAt: new Date('2026-06-15T00:00:00.000Z'),
+    updatedAt: new Date('2026-06-15T00:00:00.000Z'),
+  };
+  const profileService = {
+    getCurrentProfile: jest.fn(),
+    updateCurrentProfile: jest.fn(),
+  };
+  const jwtService = {
+    verifyAsync: jest.fn(),
+  };
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [ProfileController],
+      providers: [
+        JwtAuthGuard,
+        {
+          provide: ProfileService,
+          useValue: profileService,
+        },
+        {
+          provide: JwtService,
+          useValue: jwtService,
+        },
+        {
+          provide: AppConfigService,
+          useValue: {
+            jwt: {
+              accessSecret: 'test-access-secret',
+            },
+          },
+        },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    configureApp(app, 'test', new AppLoggerService(jest.fn()));
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    profileService.getCurrentProfile.mockResolvedValue(profile);
+    profileService.updateCurrentProfile.mockResolvedValue({
+      ...profile,
+      bio: 'Updated bio',
+      isPublic: true,
+    });
+    jwtService.verifyAsync.mockResolvedValue({
+      sub: 'user-id',
+      email: 'student@example.com',
+      roles: [RoleName.student],
+    });
+  });
+
+  it('requires authentication for current profile reads', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/profile/me')
+      .expect(401)
+      .expect(({ body }) => {
+        expect(body.success).toBe(false);
+        expect(body.error.code).toBe('UNAUTHORIZED');
+      });
+
+    expect(profileService.getCurrentProfile).not.toHaveBeenCalled();
+  });
+
+  it('returns the authenticated user profile', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/profile/me')
+      .set('Authorization', 'Bearer access-token')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          success: true,
+          data: {
+            id: 'profile-id',
+            userId: 'user-id',
+            bio: 'Bio',
+          },
+          message: 'OK',
+        });
+      });
+
+    expect(profileService.getCurrentProfile).toHaveBeenCalledWith('user-id');
+  });
+
+  it('updates only the authenticated user profile', async () => {
+    await request(app.getHttpServer())
+      .put('/api/v1/profile/me')
+      .set('Authorization', 'Bearer access-token')
+      .send({
+        userId: 'other-user-id',
+        bio: '  Updated bio  ',
+        isPublic: true,
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.bio).toBe('Updated bio');
+        expect(body.data.isPublic).toBe(true);
+      });
+
+    expect(profileService.updateCurrentProfile).toHaveBeenCalledWith('user-id', {
+      bio: 'Updated bio',
+      isPublic: true,
+    });
+  });
+
+  it('rejects invalid profile payloads', async () => {
+    await request(app.getHttpServer())
+      .put('/api/v1/profile/me')
+      .set('Authorization', 'Bearer access-token')
+      .send({
+        websiteUrl: 'not-a-url',
+        publicSlug: 'Invalid Slug',
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.success).toBe(false);
+        expect(body.error.code).toBe('BAD_REQUEST');
+      });
+
+    expect(profileService.updateCurrentProfile).not.toHaveBeenCalled();
+  });
+});
