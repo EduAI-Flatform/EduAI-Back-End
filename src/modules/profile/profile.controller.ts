@@ -130,6 +130,13 @@ export class ProfileController {
     return this.profileService.deleteSkill(userId, skillId);
   }
 
+  @Get('portfolio')
+  @ApiOkResponse({ description: 'Current user portfolio items returned successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  listPortfolio(@CurrentUser('id') userId: string): Promise<PortfolioResponse[]> {
+    return this.profileService.listPortfolio(userId);
+  }
+
   @Post('portfolio')
   @ApiCreatedResponse({ description: 'Portfolio item added to current user profile.' })
   @ApiBadRequestResponse({ description: 'Invalid portfolio payload.' })

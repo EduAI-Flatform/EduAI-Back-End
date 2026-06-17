@@ -97,6 +97,18 @@ export class ProfileService {
     });
   }
 
+  async listPortfolio(userId: string): Promise<PortfolioResponse[]> {
+    return this.prisma.portfolio.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
   async updatePortfolio(
     userId: string,
     portfolioId: string,

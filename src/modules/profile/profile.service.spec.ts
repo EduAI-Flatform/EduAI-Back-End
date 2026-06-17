@@ -52,6 +52,7 @@ describe('ProfileService', () => {
       },
       portfolio: {
         create: jest.fn().mockResolvedValue(portfolio),
+        findMany: jest.fn().mockResolvedValue([portfolio]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUnique: jest.fn().mockResolvedValue(portfolio),
       },
@@ -208,6 +209,22 @@ describe('ProfileService', () => {
         imageUrl: undefined,
         startDate: undefined,
         endDate: undefined,
+      },
+    });
+  });
+
+  it('lists only active portfolio items owned by the authenticated user', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.listPortfolio('user-id')).resolves.toEqual([portfolio]);
+
+    expect(prisma.portfolio.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: 'user-id',
+        deletedAt: null,
+      },
+      orderBy: {
+        createdAt: 'desc',
       },
     });
   });
