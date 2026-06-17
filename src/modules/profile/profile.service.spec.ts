@@ -47,6 +47,7 @@ describe('ProfileService', () => {
       },
       userSkill: {
         create: jest.fn().mockResolvedValue(skill),
+        findMany: jest.fn().mockResolvedValue([skill]),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       portfolio: {
@@ -146,6 +147,19 @@ describe('ProfileService', () => {
         name: 'Machine Learning',
         level: 'intermediate',
         category: 'AI',
+      },
+    });
+  });
+
+  it('lists only skills owned by the authenticated user', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.listSkills('user-id')).resolves.toEqual([skill]);
+
+    expect(prisma.userSkill.findMany).toHaveBeenCalledWith({
+      where: { userId: 'user-id' },
+      orderBy: {
+        createdAt: 'desc',
       },
     });
   });

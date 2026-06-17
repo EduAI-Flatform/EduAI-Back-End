@@ -100,6 +100,13 @@ export class ProfileController {
     return this.profileService.uploadAvatar(userId, file);
   }
 
+  @Get('skills')
+  @ApiOkResponse({ description: 'Current user skills returned successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  listSkills(@CurrentUser('id') userId: string): Promise<SkillResponse[]> {
+    return this.profileService.listSkills(userId);
+  }
+
   @Post('skills')
   @ApiCreatedResponse({ description: 'Skill added to current user profile.' })
   @ApiBadRequestResponse({ description: 'Invalid skill payload.' })

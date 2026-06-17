@@ -56,6 +56,15 @@ export class ProfileService {
     });
   }
 
+  async listSkills(userId: string): Promise<SkillResponse[]> {
+    return this.prisma.userSkill.findMany({
+      where: { userId },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
   async deleteSkill(userId: string, skillId: string): Promise<DeleteSkillResponse> {
     const result = await this.prisma.userSkill.deleteMany({
       where: {
