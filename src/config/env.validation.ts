@@ -32,8 +32,14 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     PORT: parsePort(config.PORT),
     DATABASE_URL: requiredString(config.DATABASE_URL, 'DATABASE_URL'),
     REDIS_URL: optionalString(config.REDIS_URL),
-    JWT_ACCESS_SECRET: optionalString(config.JWT_ACCESS_SECRET),
-    JWT_REFRESH_SECRET: optionalString(config.JWT_REFRESH_SECRET),
+    JWT_ACCESS_SECRET: requiredString(
+      config.JWT_ACCESS_SECRET,
+      'JWT_ACCESS_SECRET',
+    ),
+    JWT_REFRESH_SECRET: requiredString(
+      config.JWT_REFRESH_SECRET,
+      'JWT_REFRESH_SECRET',
+    ),
     R2_ACCOUNT_ID: optionalString(config.R2_ACCOUNT_ID),
     R2_ACCESS_KEY_ID: optionalString(config.R2_ACCESS_KEY_ID),
     R2_SECRET_ACCESS_KEY: optionalString(config.R2_SECRET_ACCESS_KEY),
@@ -42,11 +48,6 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     OPENAI_API_KEY: optionalString(config.OPENAI_API_KEY),
     OPENAI_MODEL: optionalString(config.OPENAI_MODEL),
   };
-
-  if (validated.NODE_ENV === 'production') {
-    requiredString(validated.JWT_ACCESS_SECRET, 'JWT_ACCESS_SECRET');
-    requiredString(validated.JWT_REFRESH_SECRET, 'JWT_REFRESH_SECRET');
-  }
 
   return validated;
 }

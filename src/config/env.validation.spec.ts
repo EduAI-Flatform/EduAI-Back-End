@@ -5,10 +5,9 @@ describe('validateEnv', () => {
     expect(() => validateEnv({})).toThrow('DATABASE_URL is required');
   });
 
-  it('requires JWT secrets in production', () => {
+  it('requires JWT secrets', () => {
     expect(() =>
       validateEnv({
-        NODE_ENV: 'production',
         DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
       }),
     ).toThrow('JWT_ACCESS_SECRET is required');
