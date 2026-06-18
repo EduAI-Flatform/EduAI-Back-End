@@ -19,6 +19,29 @@ enum RoleName {
   platform_admin
 }
 
+enum CourseLevel {
+  beginner
+  intermediate
+  advanced
+}
+
+enum CourseStatus {
+  draft
+  published
+  archived
+}
+
+enum CourseVisibility {
+  public
+  private
+}
+
+enum LessonType {
+  video
+  pdf
+  article
+}
+
 model User {
   id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email         String         @unique
@@ -34,6 +57,7 @@ model User {
   profile       UserProfile?
   skills        UserSkill[]
   portfolios    Portfolio[]
+  courses       Course[]
 
   @@index([status])
   @@map("users")
@@ -126,4 +150,51 @@ model Portfolio {
   @@index([userId])
   @@index([deletedAt])
   @@map("portfolios")
+}
+
+model Course {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  instructorId String           @map("instructor_id") @db.Uuid
+  title        String
+  slug         String           @unique
+  description  String?
+  thumbnailUrl String?          @map("thumbnail_url")
+  level        CourseLevel
+  status       CourseStatus     @default(draft)
+  visibility   CourseVisibility @default(public)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  deletedAt    DateTime?        @map("deleted_at")
+  instructor   User             @relation(fields: [instructorId], references: [id], onDelete: Restrict)
+  lessons      Lesson[]
+
+  @@index([instructorId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("courses")
+}
+
+model Lesson {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId        String     @map("course_id") @db.Uuid
+  title           String
+  slug            String
+  type            LessonType
+  content         String?
+  videoUrl        String?    @map("video_url")
+  documentUrl     String?    @map("document_url")
+  orderIndex      Int        @map("order_index")
+  durationMinutes Int?       @map("duration_minutes")
+  isPreview       Boolean    @default(false) @map("is_preview")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  deletedAt       DateTime?  @map("deleted_at")
+  course          Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, slug])
+  @@unique([courseId, orderIndex])
+  @@index([courseId])
+  @@index([type])
+  @@index([deletedAt])
+  @@map("lessons")
 }
