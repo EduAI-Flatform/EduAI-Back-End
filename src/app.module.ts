@@ -3,6 +3,7 @@ import { AppConfigModule } from './config/app-config.module';
 import { RedisModule } from './config/redis.module';
 import { LoggingModule } from './common/logging/logging.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CoursesModule } from './modules/courses/courses.module';
 import { HealthModule } from './modules/health/health.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -16,6 +17,7 @@ import { PrismaModule } from './prisma/prisma.module';
     HealthModule,
     AuthModule,
     ProfileModule,
+    CoursesModule,
   ],
 })
 export class AppModule {}

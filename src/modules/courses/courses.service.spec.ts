@@ -65,6 +65,7 @@ function createService(options?: { storedCourse?: typeof course | null }) {
     course: {
       create: jest.fn().mockResolvedValue(course),
       findFirst: jest.fn().mockResolvedValue(storedCourse),
+      findMany: jest.fn().mockResolvedValue([course]),
       update: jest.fn().mockResolvedValue({
         ...course,
         status: CourseStatus.published,
@@ -79,6 +80,23 @@ function createService(options?: { storedCourse?: typeof course | null }) {
 }
 
 describe('CoursesService', () => {
+  it('lists only published public courses for public browsing', async () => {
+    const { prisma, service } = createService();
+
+    await service.listCourses();
+
+    expect(prisma.course.findMany).toHaveBeenCalledWith({
+      where: {
+        deletedAt: null,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  });
+
   it('rejects course creation by students', async () => {
     const { prisma, service } = createService();
 

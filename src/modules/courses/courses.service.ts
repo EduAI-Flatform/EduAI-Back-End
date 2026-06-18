@@ -27,6 +27,19 @@ type CourseWithLessonCount = Course & {
 export class CoursesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async listCourses(): Promise<Course[]> {
+    return this.prisma.course.findMany({
+      where: {
+        deletedAt: null,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
   async createCourse(
     user: AuthenticatedUser,
     input: CreateCourseDto,
