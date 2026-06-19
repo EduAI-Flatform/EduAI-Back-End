@@ -3,15 +3,36 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Course, Lesson, Prisma, RoleName } from '../../../generated/prisma/client';
+import {
+  Course,
+  CourseStatus,
+  CourseVisibility,
+  Lesson,
+  Prisma,
+  RoleName,
+} from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
 
-interface DeleteLessonResponse {
+export interface DeleteLessonResponse {
   deleted: true;
 }
+
+export type LessonSummary = Pick<
+  Lesson,
+  | 'id'
+  | 'courseId'
+  | 'title'
+  | 'slug'
+  | 'type'
+  | 'orderIndex'
+  | 'durationMinutes'
+  | 'isPreview'
+  | 'createdAt'
+  | 'updatedAt'
+>;
 
 type LessonWithCourse = Lesson & {
   course: Pick<Course, 'instructorId'>;
@@ -20,6 +41,44 @@ type LessonWithCourse = Lesson & {
 @Injectable()
 export class LessonsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async listLessons(courseId: string): Promise<LessonSummary[]> {
+    const course = await this.prisma.course.findFirst({
+      where: {
+        id: courseId,
+        deletedAt: null,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+      },
+      select: { id: true },
+    });
+
+    if (!course) {
+      throw new NotFoundException('Course not found');
+    }
+
+    return this.prisma.lesson.findMany({
+      where: {
+        courseId,
+        deletedAt: null,
+      },
+      orderBy: {
+        orderIndex: 'asc',
+      },
+      select: {
+        id: true,
+        courseId: true,
+        title: true,
+        slug: true,
+        type: true,
+        orderIndex: true,
+        durationMinutes: true,
+        isPreview: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  }
 
   async createLesson(
     user: AuthenticatedUser,

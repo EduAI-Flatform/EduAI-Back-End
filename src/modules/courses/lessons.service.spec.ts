@@ -24,7 +24,22 @@ const student: AuthenticatedUser = {
   roles: [RoleName.student],
 };
 
-const course = {
+interface TestCourse {
+  id: string;
+  instructorId: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  thumbnailUrl: string | null;
+  level: CourseLevel;
+  status: CourseStatus;
+  visibility: CourseVisibility;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt: Date | null;
+}
+
+const course: TestCourse = {
   id: 'course-id',
   instructorId: instructor.id,
   title: 'AI Foundations',
@@ -65,6 +80,7 @@ function createService(options?: { storedCourse?: typeof course | null; storedLe
     lesson: {
       create: jest.fn().mockResolvedValue(lesson),
       findFirst: jest.fn().mockResolvedValue(options?.storedLesson ?? lesson),
+      findMany: jest.fn().mockResolvedValue([lesson]),
       update: jest.fn().mockResolvedValue(lesson),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -77,6 +93,44 @@ function createService(options?: { storedCourse?: typeof course | null; storedLe
 }
 
 describe('LessonsService', () => {
+  it('lists ordered non-deleted lesson metadata for published public courses', async () => {
+    const { prisma, service } = createService({
+      storedCourse: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+      },
+    });
+
+    await service.listLessons(course.id);
+
+    expect(prisma.course.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: course.id,
+        deletedAt: null,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+      },
+      select: { id: true },
+    });
+    expect(prisma.lesson.findMany).toHaveBeenCalledWith({
+      where: { courseId: course.id, deletedAt: null },
+      orderBy: { orderIndex: 'asc' },
+      select: {
+        id: true,
+        courseId: true,
+        title: true,
+        slug: true,
+        type: true,
+        orderIndex: true,
+        durationMinutes: true,
+        isPreview: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  });
+
   it('creates lessons inside an owned course', async () => {
     const { prisma, service } = createService();
 
