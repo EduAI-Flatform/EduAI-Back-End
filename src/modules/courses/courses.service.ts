@@ -6,7 +6,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  Course,
   CourseStatus,
   CourseVisibility,
   Prisma,
@@ -17,17 +16,37 @@ import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
-type CourseWithLessonCount = Course & {
-  _count: {
-    lessons: number;
-  };
+const courseResponseSelect = {
+  id: true,
+  title: true,
+  slug: true,
+  description: true,
+  thumbnailUrl: true,
+  level: true,
+  status: true,
+  visibility: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.CourseSelect;
+
+export type CourseResponse = Prisma.CourseGetPayload<{
+  select: typeof courseResponseSelect;
+}>;
+
+export type CourseDetailResponse = CourseResponse & {
+  lessonCount: number;
+};
+
+type ManageableCourse = CourseResponse & {
+  instructorId: string;
+  _count: { lessons: number };
 };
 
 @Injectable()
 export class CoursesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listCourses(): Promise<Course[]> {
+  async listCourses(): Promise<CourseResponse[]> {
     return this.prisma.course.findMany({
       where: {
         deletedAt: null,
@@ -37,13 +56,14 @@ export class CoursesService {
       orderBy: {
         createdAt: 'desc',
       },
+      select: courseResponseSelect,
     });
   }
 
   async createCourse(
     user: AuthenticatedUser,
     input: CreateCourseDto,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     this.assertCanCreateCourse(user);
 
     try {
@@ -58,6 +78,7 @@ export class CoursesService {
           status: CourseStatus.draft,
           visibility: input.visibility ?? CourseVisibility.public,
         },
+        select: courseResponseSelect,
       });
     } catch (error) {
       if (this.isCourseSlugConflict(error)) {
@@ -72,7 +93,7 @@ export class CoursesService {
     user: AuthenticatedUser,
     courseId: string,
     input: UpdateCourseDto,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
 
@@ -95,6 +116,7 @@ export class CoursesService {
       return await this.prisma.course.update({
         where: { id: courseId },
         data,
+        select: courseResponseSelect,
       });
     } catch (error) {
       if (this.isCourseSlugConflict(error)) {
@@ -108,7 +130,7 @@ export class CoursesService {
   async publishCourse(
     user: AuthenticatedUser,
     courseId: string,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
 
@@ -123,13 +145,14 @@ export class CoursesService {
       data: {
         status: CourseStatus.published,
       },
+      select: courseResponseSelect,
     });
   }
 
   async archiveCourse(
     user: AuthenticatedUser,
     courseId: string,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
 
@@ -138,36 +161,39 @@ export class CoursesService {
       data: {
         status: CourseStatus.archived,
       },
+      select: courseResponseSelect,
     });
   }
 
   async getCourse(
     courseId: string,
     user?: AuthenticatedUser,
-  ): Promise<CourseWithLessonCount> {
+  ): Promise<CourseDetailResponse> {
     const course = await this.findCourseOrThrow(courseId);
 
     if (
       course.status === CourseStatus.published &&
       course.visibility === CourseVisibility.public
     ) {
-      return course;
+      return this.toCourseDetailResponse(course);
     }
 
     if (user && this.canManageCourse(user, course)) {
-      return course;
+      return this.toCourseDetailResponse(course);
     }
 
     throw new NotFoundException('Course not found');
   }
 
-  private async findCourseOrThrow(courseId: string): Promise<CourseWithLessonCount> {
+  private async findCourseOrThrow(courseId: string): Promise<ManageableCourse> {
     const course = await this.prisma.course.findFirst({
       where: {
         id: courseId,
         deletedAt: null,
       },
-      include: {
+      select: {
+        ...courseResponseSelect,
+        instructorId: true,
         _count: {
           select: {
             lessons: true,
@@ -183,6 +209,22 @@ export class CoursesService {
     return course;
   }
 
+  private toCourseDetailResponse(course: ManageableCourse): CourseDetailResponse {
+    return {
+      id: course.id,
+      title: course.title,
+      slug: course.slug,
+      description: course.description,
+      thumbnailUrl: course.thumbnailUrl,
+      level: course.level,
+      status: course.status,
+      visibility: course.visibility,
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      lessonCount: course._count.lessons,
+    };
+  }
+
   private assertCanCreateCourse(user: AuthenticatedUser): void {
     if (
       !this.hasRole(user, RoleName.instructor) &&
@@ -194,7 +236,7 @@ export class CoursesService {
 
   private assertCanManageCourse(
     user: AuthenticatedUser,
-    course: Pick<Course, 'instructorId'>,
+    course: Pick<ManageableCourse, 'instructorId'>,
   ): void {
     if (!this.canManageCourse(user, course)) {
       throw new NotFoundException('Course not found');
@@ -203,7 +245,7 @@ export class CoursesService {
 
   private canManageCourse(
     user: AuthenticatedUser,
-    course: Pick<Course, 'instructorId'>,
+    course: Pick<ManageableCourse, 'instructorId'>,
   ): boolean {
     return (
       this.hasRole(user, RoleName.platform_admin) ||

@@ -20,7 +20,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { Lesson, RoleName } from '../../../generated/prisma/client';
+import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -30,6 +30,7 @@ import { CreateLessonDto } from './dto/create-lesson.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
 import {
   DeleteLessonResponse,
+  LessonResponse,
   LessonsService,
   LessonSummary,
 } from './lessons.service';
@@ -63,7 +64,7 @@ export class LessonsController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
     @Body() input: CreateLessonDto,
-  ): Promise<Lesson> {
+  ): Promise<LessonResponse> {
     return this.lessonsService.createLesson(user, courseId, input);
   }
 
@@ -81,7 +82,7 @@ export class LessonsController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,
     @Body() input: UpdateLessonDto,
-  ): Promise<Lesson> {
+  ): Promise<LessonResponse> {
     return this.lessonsService.updateLesson(user, lessonId, input);
   }
 

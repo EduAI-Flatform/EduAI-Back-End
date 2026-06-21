@@ -7,7 +7,6 @@ import {
   Course,
   CourseStatus,
   CourseVisibility,
-  Lesson,
   Prisma,
   RoleName,
 } from '../../../generated/prisma/client';
@@ -20,21 +19,35 @@ export interface DeleteLessonResponse {
   deleted: true;
 }
 
-export type LessonSummary = Pick<
-  Lesson,
-  | 'id'
-  | 'courseId'
-  | 'title'
-  | 'slug'
-  | 'type'
-  | 'orderIndex'
-  | 'durationMinutes'
-  | 'isPreview'
-  | 'createdAt'
-  | 'updatedAt'
->;
+const lessonSummarySelect = {
+  id: true,
+  courseId: true,
+  title: true,
+  slug: true,
+  type: true,
+  orderIndex: true,
+  durationMinutes: true,
+  isPreview: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.LessonSelect;
 
-type LessonWithCourse = Lesson & {
+const lessonResponseSelect = {
+  ...lessonSummarySelect,
+  content: true,
+  videoUrl: true,
+  documentUrl: true,
+} satisfies Prisma.LessonSelect;
+
+export type LessonSummary = Prisma.LessonGetPayload<{
+  select: typeof lessonSummarySelect;
+}>;
+
+export type LessonResponse = Prisma.LessonGetPayload<{
+  select: typeof lessonResponseSelect;
+}>;
+
+type LessonWithCourse = LessonResponse & {
   course: Pick<Course, 'instructorId'>;
 };
 
@@ -65,18 +78,7 @@ export class LessonsService {
       orderBy: {
         orderIndex: 'asc',
       },
-      select: {
-        id: true,
-        courseId: true,
-        title: true,
-        slug: true,
-        type: true,
-        orderIndex: true,
-        durationMinutes: true,
-        isPreview: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: lessonSummarySelect,
     });
   }
 
@@ -84,7 +86,7 @@ export class LessonsService {
     user: AuthenticatedUser,
     courseId: string,
     input: CreateLessonDto,
-  ): Promise<Lesson> {
+  ): Promise<LessonResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
 
@@ -102,6 +104,7 @@ export class LessonsService {
           durationMinutes: input.durationMinutes,
           isPreview: input.isPreview ?? false,
         },
+        select: lessonResponseSelect,
       });
     } catch (error) {
       if (this.isLessonUniquenessConflict(error)) {
@@ -118,7 +121,7 @@ export class LessonsService {
     user: AuthenticatedUser,
     lessonId: string,
     input: UpdateLessonDto,
-  ): Promise<Lesson> {
+  ): Promise<LessonResponse> {
     const lesson = await this.findLessonOrThrow(lessonId);
     this.assertCanManageCourse(user, lesson.course);
     const data = this.removeUndefinedFields({
@@ -137,6 +140,7 @@ export class LessonsService {
       return await this.prisma.lesson.update({
         where: { id: lessonId },
         data,
+        select: lessonResponseSelect,
       });
     } catch (error) {
       if (this.isLessonUniquenessConflict(error)) {
@@ -180,6 +184,7 @@ export class LessonsService {
         id: courseId,
         deletedAt: null,
       },
+      select: { instructorId: true },
     });
 
     if (!course) {
@@ -195,7 +200,8 @@ export class LessonsService {
         id: lessonId,
         deletedAt: null,
       },
-      include: {
+      select: {
+        ...lessonResponseSelect,
         course: {
           select: {
             instructorId: true,

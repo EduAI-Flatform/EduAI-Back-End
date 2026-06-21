@@ -149,6 +149,7 @@ describe('LessonsService', () => {
         id: course.id,
         deletedAt: null,
       },
+      select: { instructorId: true },
     });
     expect(prisma.lesson.create).toHaveBeenCalledWith({
       data: {
@@ -162,6 +163,21 @@ describe('LessonsService', () => {
         orderIndex: 0,
         durationMinutes: 12,
         isPreview: true,
+      },
+      select: {
+        id: true,
+        courseId: true,
+        title: true,
+        slug: true,
+        type: true,
+        content: true,
+        videoUrl: true,
+        documentUrl: true,
+        orderIndex: true,
+        durationMinutes: true,
+        isPreview: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
   });
@@ -193,6 +209,21 @@ describe('LessonsService', () => {
       data: {
         title: 'Updated introduction',
         orderIndex: 1,
+      },
+      select: {
+        id: true,
+        courseId: true,
+        title: true,
+        slug: true,
+        type: true,
+        content: true,
+        videoUrl: true,
+        documentUrl: true,
+        orderIndex: true,
+        durationMinutes: true,
+        isPreview: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
   });

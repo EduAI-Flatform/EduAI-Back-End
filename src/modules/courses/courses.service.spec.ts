@@ -94,6 +94,18 @@ describe('CoursesService', () => {
       orderBy: {
         createdAt: 'desc',
       },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        status: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
   });
 
@@ -131,6 +143,18 @@ describe('CoursesService', () => {
         status: CourseStatus.draft,
         visibility: CourseVisibility.private,
       },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        status: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
   });
 
@@ -155,6 +179,18 @@ describe('CoursesService', () => {
       data: {
         title: 'Updated title',
         description: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        status: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
   });
@@ -184,6 +220,18 @@ describe('CoursesService', () => {
       data: {
         status: CourseStatus.published,
       },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        status: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
   });
 
@@ -197,6 +245,18 @@ describe('CoursesService', () => {
       data: {
         status: CourseStatus.archived,
       },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        status: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
   });
 
@@ -209,9 +269,18 @@ describe('CoursesService', () => {
       },
     });
 
-    await expect(service.getCourse(course.id)).resolves.toMatchObject({
+    await expect(service.getCourse(course.id)).resolves.toEqual({
       id: course.id,
+      title: course.title,
+      slug: course.slug,
+      description: course.description,
+      thumbnailUrl: course.thumbnailUrl,
+      level: course.level,
       status: CourseStatus.published,
+      visibility: CourseVisibility.public,
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      lessonCount: 1,
     });
   });
 });

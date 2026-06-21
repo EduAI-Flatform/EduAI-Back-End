@@ -19,13 +19,17 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { Course, RoleName } from '../../../generated/prisma/client';
+import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
-import { CoursesService } from './courses.service';
+import {
+  CourseDetailResponse,
+  CourseResponse,
+  CoursesService,
+} from './courses.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
@@ -36,7 +40,7 @@ export class CoursesController {
 
   @Get()
   @ApiOkResponse({ description: 'Published public courses returned successfully.' })
-  listCourses(): Promise<Course[]> {
+  listCourses(): Promise<CourseResponse[]> {
     return this.coursesService.listCourses();
   }
 
@@ -46,7 +50,7 @@ export class CoursesController {
   @ApiNotFoundResponse({ description: 'Course not found.' })
   getCourse(
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
-  ): Promise<Course> {
+  ): Promise<CourseDetailResponse> {
     return this.coursesService.getCourse(courseId);
   }
 
@@ -62,7 +66,7 @@ export class CoursesController {
   createCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Body() input: CreateCourseDto,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     return this.coursesService.createCourse(user, input);
   }
 
@@ -80,7 +84,7 @@ export class CoursesController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
     @Body() input: UpdateCourseDto,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     return this.coursesService.updateCourse(user, courseId, input);
   }
 
@@ -98,7 +102,7 @@ export class CoursesController {
   publishCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     return this.coursesService.publishCourse(user, courseId);
   }
 
@@ -114,7 +118,7 @@ export class CoursesController {
   archiveCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
-  ): Promise<Course> {
+  ): Promise<CourseResponse> {
     return this.coursesService.archiveCourse(user, courseId);
   }
 }
