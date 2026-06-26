@@ -13,8 +13,17 @@ async function bootstrap(): Promise<void> {
   app.useLogger(logger);
   configureApp(app, config.app.nodeEnv, logger);
   configureSwagger(app);
+  configureRootRedirect(app);
 
   await app.listen(config.port);
+}
+
+function configureRootRedirect(
+  app: Awaited<ReturnType<typeof NestFactory.create>>,
+): void {
+  app.getHttpAdapter().get('/', (_request, response) => {
+    response.redirect('/api/docs');
+  });
 }
 
 function configureSwagger(app: Awaited<ReturnType<typeof NestFactory.create>>): void {
