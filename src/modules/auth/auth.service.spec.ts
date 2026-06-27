@@ -1,5 +1,6 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { RoleName } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
@@ -13,7 +14,7 @@ describe('AuthService.register', () => {
 
   const role = {
     id: 'role-id',
-    name: 'student',
+    name: RoleName.student,
   };
 
   const createdUser = {
@@ -25,14 +26,23 @@ describe('AuthService.register', () => {
     updatedAt: new Date('2026-06-13T00:00:00.000Z'),
   };
 
-  function createService(options?: { existingUser?: unknown }) {
+  type RoleRecord = {
+    id: string;
+    name: RoleName;
+  };
+
+  function createService(options?: {
+    existingUser?: unknown;
+    role?: RoleRecord;
+  }) {
+    const selectedRole = options?.role ?? role;
     const tx = {
       user: {
         findUnique: jest.fn().mockResolvedValue(options?.existingUser ?? null),
         create: jest.fn().mockResolvedValue(createdUser),
       },
       role: {
-        findUnique: jest.fn().mockResolvedValue(role),
+        findUnique: jest.fn().mockResolvedValue(selectedRole),
       },
       userRole: {
         create: jest.fn().mockResolvedValue({ id: 'user-role-id' }),
@@ -114,6 +124,33 @@ describe('AuthService.register', () => {
     expect(tx.userRole.create).toHaveBeenCalledWith({
       data: {
         roleId: role.id,
+        userId: createdUser.id,
+      },
+    });
+  });
+
+  it('assigns the requested instructor role during registration', async () => {
+    const instructorRole = {
+      id: 'instructor-role-id',
+      name: RoleName.instructor,
+    };
+    const { service, tx } = createService({ role: instructorRole });
+
+    await expect(
+      service.register({ ...registerInput, role: RoleName.instructor }),
+    ).resolves.toEqual({
+      user: {
+        ...createdUser,
+        roles: [RoleName.instructor],
+      },
+    });
+    expect(tx.role.findUnique).toHaveBeenCalledWith({
+      where: { name: RoleName.instructor },
+      select: { id: true, name: true },
+    });
+    expect(tx.userRole.create).toHaveBeenCalledWith({
+      data: {
+        roleId: instructorRole.id,
         userId: createdUser.id,
       },
     });

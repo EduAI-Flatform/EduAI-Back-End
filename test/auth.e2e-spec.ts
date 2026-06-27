@@ -95,6 +95,7 @@ describe('Auth flow endpoints', () => {
         email: '  STUDENT@EXAMPLE.COM ',
         password: 'Str0ngPassword!123',
         fullName: ' Student User ',
+        role: RoleName.instructor,
       })
       .expect(201)
       .expect(({ body }) => {
@@ -107,6 +108,7 @@ describe('Auth flow endpoints', () => {
       email: 'student@example.com',
       password: 'Str0ngPassword!123',
       fullName: 'Student User',
+      role: RoleName.instructor,
     });
   });
 

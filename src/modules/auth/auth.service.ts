@@ -73,6 +73,7 @@ export class AuthService {
     const email = input.email.trim().toLowerCase();
     const fullName = input.fullName.trim();
     const passwordHash = await this.passwordService.hashPassword(input.password);
+    const requestedRole = input.role ?? RoleName.student;
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -85,13 +86,13 @@ export class AuthService {
           throw new ConflictException('Email is already registered');
         }
 
-        const studentRole = await tx.role.findUnique({
-          where: { name: RoleName.student },
+        const role = await tx.role.findUnique({
+          where: { name: requestedRole },
           select: { id: true, name: true },
         });
 
-        if (!studentRole) {
-          throw new InternalServerErrorException('Default student role is missing');
+        if (!role) {
+          throw new InternalServerErrorException('Registration role is missing');
         }
 
         const user = await tx.user.create({
@@ -112,7 +113,7 @@ export class AuthService {
 
         await tx.userRole.create({
           data: {
-            roleId: studentRole.id,
+            roleId: role.id,
             userId: user.id,
           },
         });
@@ -120,7 +121,7 @@ export class AuthService {
         return {
           user: {
             ...user,
-            roles: [studentRole.name],
+            roles: [role.name],
           },
         };
       });
