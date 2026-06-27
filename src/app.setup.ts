@@ -9,18 +9,32 @@ export function configureApp(
   nodeEnv: string,
   logger: AppLoggerService,
 ): void {
+  const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((o) =>
+    o.trim(),
+  ) ?? [];
+
+  app.enableCors({
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
   app.setGlobalPrefix('api/v1', {
     exclude: [{ method: RequestMethod.GET, path: 'health' }],
   });
+
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
       whitelist: true,
     }),
   );
+
   app.useGlobalInterceptors(
     new RequestLoggingInterceptor(logger),
     new ApiResponseInterceptor(),
   );
+
   app.useGlobalFilters(new GlobalExceptionFilter(nodeEnv, logger));
 }
