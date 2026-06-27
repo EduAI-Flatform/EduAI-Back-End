@@ -1,8 +1,14 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   CourseLevel,
   CourseStatus,
   CourseVisibility,
+  Prisma,
   RoleName,
 } from '../../../generated/prisma/client';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
@@ -16,6 +22,11 @@ const instructor: AuthenticatedUser = {
 const admin: AuthenticatedUser = {
   id: 'admin-id',
   roles: [RoleName.platform_admin],
+};
+
+const otherInstructor: AuthenticatedUser = {
+  id: 'other-instructor-id',
+  roles: [RoleName.instructor],
 };
 
 const student: AuthenticatedUser = {
@@ -62,7 +73,9 @@ const course: TestCourse = {
 function createService(options?: { storedCourse?: typeof course | null }) {
   const storedCourse = options?.storedCourse ?? course;
   const prisma = {
+    $transaction: jest.fn(async (queries: Promise<unknown>[]) => Promise.all(queries)),
     course: {
+      count: jest.fn().mockResolvedValue(1),
       create: jest.fn().mockResolvedValue(course),
       findFirst: jest.fn().mockResolvedValue(storedCourse),
       findMany: jest.fn().mockResolvedValue([course]),
@@ -107,6 +120,61 @@ describe('CoursesService', () => {
         updatedAt: true,
       },
     });
+  });
+
+  it('lists only authenticated instructor-owned courses with pagination and filters', async () => {
+    const { prisma, service } = createService();
+
+    await service.listInstructorCourses(instructor, {
+      page: 2,
+      pageSize: 10,
+      status: CourseStatus.published,
+      search: 'React',
+    });
+
+    const where = {
+      instructorId: instructor.id,
+      status: CourseStatus.published,
+      OR: [
+        { title: { contains: 'React', mode: 'insensitive' } },
+        { slug: { contains: 'React', mode: 'insensitive' } },
+        { description: { contains: 'React', mode: 'insensitive' } },
+      ],
+    };
+
+    expect(prisma.course.count).toHaveBeenCalledWith({ where });
+    expect(prisma.course.findMany).toHaveBeenCalledWith({
+      where,
+      orderBy: {
+        updatedAt: 'desc',
+      },
+      skip: 10,
+      take: 10,
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        status: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  });
+
+  it('rejects instructor course listing by non-instructors', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.listInstructorCourses(student, {
+        page: 1,
+        pageSize: 20,
+      }),
+    ).rejects.toEqual(new ForbiddenException('Instructor role required'));
+    expect(prisma.course.findMany).not.toHaveBeenCalled();
   });
 
   it('rejects course creation by students', async () => {
@@ -159,11 +227,33 @@ describe('CoursesService', () => {
   });
 
   it('rejects updates by non-owners', async () => {
-    const { service } = createService();
+    const { prisma, service } = createService();
 
     await expect(
-      service.updateCourse(student, course.id, { title: 'Updated title' }),
+      service.updateCourse(otherInstructor, course.id, {
+        title: 'Updated title',
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.course.update).not.toHaveBeenCalled();
+  });
+
+  it('maps duplicate course slugs to conflict', async () => {
+    const { prisma, service } = createService();
+    prisma.course.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '7.8.0',
+        meta: { target: ['slug'] },
+      }),
+    );
+
+    await expect(
+      service.createCourse(instructor, {
+        title: 'Duplicate course',
+        slug: course.slug,
+        level: CourseLevel.beginner,
+      }),
+    ).rejects.toEqual(new ConflictException('Course slug is already in use'));
   });
 
   it('lets owners update editable course fields', async () => {
@@ -196,7 +286,7 @@ describe('CoursesService', () => {
   });
 
   it('rejects publishing courses without lessons', async () => {
-    const { service } = createService({
+    const { prisma, service } = createService({
       storedCourse: {
         ...course,
         _count: {
@@ -205,9 +295,12 @@ describe('CoursesService', () => {
       },
     });
 
-    await expect(service.publishCourse(instructor, course.id)).rejects.toBeInstanceOf(
-      BadRequestException,
+    await expect(service.publishCourse(instructor, course.id)).rejects.toEqual(
+      new BadRequestException(
+        'Course must have at least one lesson before publication',
+      ),
     );
+    expect(prisma.course.update).not.toHaveBeenCalled();
   });
 
   it('publishes owned courses with at least one lesson', async () => {

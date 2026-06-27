@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateCourseDto } from './dto/create-course.dto';
+import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
 const courseResponseSelect = {
@@ -37,6 +38,14 @@ export type CourseDetailResponse = CourseResponse & {
   lessonCount: number;
 };
 
+export interface PaginatedCourseResponse {
+  items: CourseResponse[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 type ManageableCourse = CourseResponse & {
   instructorId: string;
   _count: { lessons: number };
@@ -58,6 +67,37 @@ export class CoursesService {
       },
       select: courseResponseSelect,
     });
+  }
+
+  async listInstructorCourses(
+    user: AuthenticatedUser,
+    query: ListInstructorCoursesQueryDto,
+  ): Promise<PaginatedCourseResponse> {
+    this.assertInstructor(user);
+
+    const page = query.page;
+    const pageSize = query.pageSize;
+    const where = this.buildInstructorCoursesWhere(user.id, query);
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.course.count({ where }),
+      this.prisma.course.findMany({
+        where,
+        orderBy: {
+          updatedAt: 'desc',
+        },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: courseResponseSelect,
+      }),
+    ]);
+
+    return {
+      items,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    };
   }
 
   async createCourse(
@@ -234,6 +274,12 @@ export class CoursesService {
     }
   }
 
+  private assertInstructor(user: AuthenticatedUser): void {
+    if (!this.hasRole(user, RoleName.instructor)) {
+      throw new ForbiddenException('Instructor role required');
+    }
+  }
+
   private assertCanManageCourse(
     user: AuthenticatedUser,
     course: Pick<ManageableCourse, 'instructorId'>,
@@ -261,6 +307,27 @@ export class CoursesService {
     return Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined),
     ) as T;
+  }
+
+  private buildInstructorCoursesWhere(
+    instructorId: string,
+    query: Pick<ListInstructorCoursesQueryDto, 'search' | 'status'>,
+  ): Prisma.CourseWhereInput {
+    const search = query.search;
+
+    return {
+      instructorId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(search
+        ? {
+            OR: [
+              { title: { contains: search, mode: 'insensitive' } },
+              { slug: { contains: search, mode: 'insensitive' } },
+              { description: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
   }
 
   private isCourseSlugConflict(error: unknown): boolean {

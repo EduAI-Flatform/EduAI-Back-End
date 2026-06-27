@@ -19,9 +19,9 @@ const admin: AuthenticatedUser = {
   roles: [RoleName.platform_admin],
 };
 
-const student: AuthenticatedUser = {
-  id: 'student-id',
-  roles: [RoleName.student],
+const otherInstructor: AuthenticatedUser = {
+  id: 'other-instructor-id',
+  roles: [RoleName.instructor],
 };
 
 interface TestCourse {
@@ -186,7 +186,7 @@ describe('LessonsService', () => {
     const { prisma, service } = createService();
 
     await expect(
-      service.createLesson(student, course.id, {
+      service.createLesson(otherInstructor, course.id, {
         title: 'Introduction',
         slug: 'introduction',
         type: LessonType.article,
@@ -229,11 +229,14 @@ describe('LessonsService', () => {
   });
 
   it('rejects updates when the lesson is not in a manageable course', async () => {
-    const { service } = createService();
+    const { prisma, service } = createService();
 
     await expect(
-      service.updateLesson(student, lesson.id, { title: 'Updated introduction' }),
+      service.updateLesson(otherInstructor, lesson.id, {
+        title: 'Updated introduction',
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.lesson.update).not.toHaveBeenCalled();
   });
 
   it('soft deletes lessons in owned courses', async () => {

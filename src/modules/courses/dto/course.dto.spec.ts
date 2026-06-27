@@ -2,6 +2,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CourseLevel, CourseStatus, CourseVisibility } from '../../../../generated/prisma/enums';
 import { CreateCourseDto } from './create-course.dto';
+import { ListInstructorCoursesQueryDto } from './list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './update-course.dto';
 
 async function validationMessages(dtoClass: new () => object, payload: object) {
@@ -65,5 +66,25 @@ describe('Course DTO validation', () => {
     });
 
     expect(messages).toEqual([]);
+  });
+
+  it('normalizes instructor course status aliases', async () => {
+    const instance = plainToInstance(ListInstructorCoursesQueryDto, {
+      page: '1',
+      pageSize: '20',
+      status: 'Published',
+      search: ' React ',
+    });
+    const errors = await validate(instance);
+
+    expect(errors).toEqual([]);
+    expect(instance).toEqual(
+      expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+        status: CourseStatus.published,
+        search: 'React',
+      }),
+    );
   });
 });
