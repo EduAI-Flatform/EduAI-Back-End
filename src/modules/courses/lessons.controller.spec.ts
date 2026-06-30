@@ -10,6 +10,7 @@ describe('LessonsController', () => {
     const service = {
       createLesson: jest.fn().mockResolvedValue({ id: 'lesson-id' }),
       deleteLesson: jest.fn().mockResolvedValue({ deleted: true }),
+      listInstructorLessons: jest.fn().mockResolvedValue([{ id: 'lesson-id' }]),
       listLessons: jest.fn().mockResolvedValue([{ id: 'lesson-id' }]),
       updateLesson: jest.fn().mockResolvedValue({ id: 'lesson-id' }),
     };
@@ -26,6 +27,14 @@ describe('LessonsController', () => {
     await controller.listLessons('course-id');
 
     expect(service.listLessons).toHaveBeenCalledWith('course-id');
+  });
+
+  it('lists instructor lessons for an owned course', async () => {
+    const { controller, service } = createController();
+
+    await controller.listInstructorLessons(user, 'course-id');
+
+    expect(service.listInstructorLessons).toHaveBeenCalledWith(user, 'course-id');
   });
 
   it('creates lessons for the authenticated instructor', async () => {
@@ -56,6 +65,7 @@ describe('LessonsController', () => {
 
   it('requires instructor or admin roles for mutations', () => {
     for (const method of [
+      LessonsController.prototype.listInstructorLessons,
       LessonsController.prototype.createLesson,
       LessonsController.prototype.updateLesson,
       LessonsController.prototype.deleteLesson,

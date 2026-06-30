@@ -131,6 +131,45 @@ describe('LessonsService', () => {
     });
   });
 
+  it('lists lessons for owned draft courses in instructor management', async () => {
+    const { prisma, service } = createService();
+
+    await service.listInstructorLessons(instructor, course.id);
+
+    expect(prisma.course.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: course.id,
+        deletedAt: null,
+      },
+      select: { instructorId: true },
+    });
+    expect(prisma.lesson.findMany).toHaveBeenCalledWith({
+      where: { courseId: course.id, deletedAt: null },
+      orderBy: { orderIndex: 'asc' },
+      select: {
+        id: true,
+        courseId: true,
+        title: true,
+        slug: true,
+        type: true,
+        orderIndex: true,
+        durationMinutes: true,
+        isPreview: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  });
+
+  it('rejects instructor lesson lists for unowned courses', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.listInstructorLessons(otherInstructor, course.id),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.lesson.findMany).not.toHaveBeenCalled();
+  });
+
   it('creates lessons inside an owned course', async () => {
     const { prisma, service } = createService();
 

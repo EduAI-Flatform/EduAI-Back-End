@@ -50,6 +50,22 @@ export class LessonsController {
     return this.lessonsService.listLessons(courseId);
   }
 
+  @Get('instructor/courses/:courseId/lessons')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.instructor, RoleName.platform_admin)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Instructor course lessons returned successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid course id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Instructor or admin role required.' })
+  @ApiNotFoundResponse({ description: 'Course not found for current user.' })
+  listInstructorLessons(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
+  ): Promise<LessonSummary[]> {
+    return this.lessonsService.listInstructorLessons(user, courseId);
+  }
+
   @Post('courses/:courseId/lessons')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)

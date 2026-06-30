@@ -70,16 +70,17 @@ export class LessonsService {
       throw new NotFoundException('Course not found');
     }
 
-    return this.prisma.lesson.findMany({
-      where: {
-        courseId,
-        deletedAt: null,
-      },
-      orderBy: {
-        orderIndex: 'asc',
-      },
-      select: lessonSummarySelect,
-    });
+    return this.findLessonSummaries(courseId);
+  }
+
+  async listInstructorLessons(
+    user: AuthenticatedUser,
+    courseId: string,
+  ): Promise<LessonSummary[]> {
+    const course = await this.findCourseOrThrow(courseId);
+    this.assertCanManageCourse(user, course);
+
+    return this.findLessonSummaries(courseId);
   }
 
   async createLesson(
@@ -192,6 +193,19 @@ export class LessonsService {
     }
 
     return course;
+  }
+
+  private findLessonSummaries(courseId: string): Promise<LessonSummary[]> {
+    return this.prisma.lesson.findMany({
+      where: {
+        courseId,
+        deletedAt: null,
+      },
+      orderBy: {
+        orderIndex: 'asc',
+      },
+      select: lessonSummarySelect,
+    });
   }
 
   private async findLessonOrThrow(lessonId: string): Promise<LessonWithCourse> {
