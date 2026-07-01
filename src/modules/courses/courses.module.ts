@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { CoursesController } from './courses.controller';
 import { CoursesService } from './courses.service';
+import { EnrollmentsService } from './enrollments.service';
 import { InstructorCoursesController } from './instructor-courses.controller';
 import { LessonsController } from './lessons.controller';
 import { LessonsService } from './lessons.service';
@@ -9,7 +10,7 @@ import { LessonsService } from './lessons.service';
 @Module({
   imports: [AuthModule],
   controllers: [CoursesController, InstructorCoursesController, LessonsController],
-  providers: [CoursesService, LessonsService],
-  exports: [CoursesService, LessonsService],
+  providers: [CoursesService, LessonsService, EnrollmentsService],
+  exports: [CoursesService, LessonsService, EnrollmentsService],
 })
 export class CoursesModule {}
