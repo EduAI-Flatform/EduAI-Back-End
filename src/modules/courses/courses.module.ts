@@ -5,6 +5,7 @@ import { CoursesService } from './courses.service';
 import { EnrollmentsController } from './enrollments.controller';
 import { EnrollmentsService } from './enrollments.service';
 import { InstructorCoursesController } from './instructor-courses.controller';
+import { LearningProgressService } from './learning-progress.service';
 import { LessonsController } from './lessons.controller';
 import { LessonsService } from './lessons.service';
 
@@ -16,7 +17,17 @@ import { LessonsService } from './lessons.service';
     LessonsController,
     EnrollmentsController,
   ],
-  providers: [CoursesService, LessonsService, EnrollmentsService],
-  exports: [CoursesService, LessonsService, EnrollmentsService],
+  providers: [
+    CoursesService,
+    LessonsService,
+    EnrollmentsService,
+    LearningProgressService,
+  ],
+  exports: [
+    CoursesService,
+    LessonsService,
+    EnrollmentsService,
+    LearningProgressService,
+  ],
 })
 export class CoursesModule {}
