@@ -1,0 +1,34 @@
+enum UserStatus {
+  active
+  inactive
+  suspended
+}
+
+enum RoleName {
+  student
+  instructor
+  platform_admin
+}
+
+enum CourseLevel {
+  beginner
+  intermediate
+  advanced
+}
+
+enum CourseStatus {
+  draft
+  published
+  archived
+}
+
+enum CourseVisibility {
+  public
+  private
+}
+
+enum LessonType {
+  video
+  pdf
+  article
+}

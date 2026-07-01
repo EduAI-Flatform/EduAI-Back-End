@@ -1,0 +1,25 @@
+model Lesson {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId        String             @map("course_id") @db.Uuid
+  title           String
+  slug            String
+  type            LessonType
+  content         String?
+  videoUrl        String?            @map("video_url")
+  documentUrl     String?            @map("document_url")
+  orderIndex      Int                @map("order_index")
+  durationMinutes Int?               @map("duration_minutes")
+  isPreview       Boolean            @default(false) @map("is_preview")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+  deletedAt       DateTime?          @map("deleted_at")
+  course          Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  progress        LearningProgress[]
+
+  @@unique([courseId, slug])
+  @@unique([courseId, orderIndex])
+  @@index([courseId])
+  @@index([type])
+  @@index([deletedAt])
+  @@map("lessons")
+}

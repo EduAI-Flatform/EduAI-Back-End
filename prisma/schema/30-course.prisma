@@ -1,0 +1,23 @@
+model Course {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  instructorId String             @map("instructor_id") @db.Uuid
+  title        String
+  slug         String             @unique
+  description  String?
+  thumbnailUrl String?            @map("thumbnail_url")
+  level        CourseLevel
+  status       CourseStatus       @default(draft)
+  visibility   CourseVisibility   @default(public)
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+  deletedAt    DateTime?          @map("deleted_at")
+  instructor   User               @relation(fields: [instructorId], references: [id], onDelete: Restrict)
+  lessons      Lesson[]
+  enrollments  Enrollment[]
+  progress     LearningProgress[]
+
+  @@index([instructorId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("courses")
+}

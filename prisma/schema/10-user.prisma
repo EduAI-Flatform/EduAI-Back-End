@@ -1,0 +1,22 @@
+model User {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String             @unique
+  passwordHash  String             @map("password_hash")
+  fullName      String             @map("full_name")
+  avatarUrl     String?            @map("avatar_url")
+  status        UserStatus         @default(active)
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  deletedAt     DateTime?          @map("deleted_at")
+  roles         UserRole[]
+  refreshTokens RefreshToken[]
+  profile       UserProfile?
+  skills        UserSkill[]
+  portfolios    Portfolio[]
+  courses       Course[]
+  enrollments   Enrollment[]
+  progress      LearningProgress[]
+
+  @@index([status])
+  @@map("users")
+}

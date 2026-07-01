@@ -1,0 +1,17 @@
+model UserProfile {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @unique @map("user_id") @db.Uuid
+  phoneNumber String?   @map("phone_number")
+  dateOfBirth DateTime? @map("date_of_birth") @db.Date
+  bio         String?
+  headline    String?
+  location    String?
+  websiteUrl  String?   @map("website_url")
+  publicSlug  String?   @unique @map("public_slug")
+  isPublic    Boolean   @default(false) @map("is_public")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
