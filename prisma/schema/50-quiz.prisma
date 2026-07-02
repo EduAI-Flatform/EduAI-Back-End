@@ -1,0 +1,63 @@
+model Quiz {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId         String        @map("course_id") @db.Uuid
+  lessonId         String?       @map("lesson_id") @db.Uuid
+  title            String
+  description      String?
+  passingScore     Float         @map("passing_score")
+  timeLimitMinutes Int?          @map("time_limit_minutes")
+  status           QuizStatus    @default(draft)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  deletedAt        DateTime?     @map("deleted_at")
+  course           Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson           Lesson?       @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  questions        Question[]
+  attempts         QuizAttempt[]
+
+  @@index([courseId])
+  @@index([lessonId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("quizzes")
+}
+
+model Question {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId            String       @map("quiz_id") @db.Uuid
+  type              QuestionType
+  questionText      String       @map("question_text")
+  optionsJson       Json?        @map("options_json")
+  correctAnswerJson Json         @map("correct_answer_json")
+  explanation       String?
+  points            Float        @default(1)
+  orderIndex        Int          @map("order_index")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  quiz              Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, orderIndex])
+  @@index([quizId])
+  @@index([type])
+  @@map("questions")
+}
+
+model QuizAttempt {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quizId      String   @map("quiz_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  score       Float?
+  maxScore    Float?   @map("max_score")
+  passed      Boolean?
+  answersJson Json     @map("answers_json")
+  startedAt   DateTime @default(now()) @map("started_at")
+  submittedAt DateTime? @map("submitted_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  quiz        Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([quizId])
+  @@index([userId])
+  @@index([submittedAt])
+  @@map("quiz_attempts")
+}

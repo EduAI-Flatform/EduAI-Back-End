@@ -15,6 +15,7 @@ model Lesson {
   deletedAt       DateTime?          @map("deleted_at")
   course          Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
   progress        LearningProgress[]
+  quizzes         Quiz[]
 
   @@unique([courseId, slug])
   @@unique([courseId, orderIndex])

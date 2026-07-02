@@ -16,6 +16,7 @@ model User {
   courses       Course[]
   enrollments   Enrollment[]
   progress      LearningProgress[]
+  quizAttempts  QuizAttempt[]
 
   @@index([status])
   @@map("users")

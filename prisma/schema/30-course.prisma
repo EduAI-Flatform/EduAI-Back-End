@@ -15,6 +15,7 @@ model Course {
   lessons      Lesson[]
   enrollments  Enrollment[]
   progress     LearningProgress[]
+  quizzes      Quiz[]
 
   @@index([instructorId])
   @@index([status])

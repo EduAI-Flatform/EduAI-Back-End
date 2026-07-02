@@ -32,3 +32,15 @@ enum LessonType {
   pdf
   article
 }
+
+enum QuizStatus {
+  draft
+  published
+  archived
+}
+
+enum QuestionType {
+  multiple_choice
+  true_false
+  short_answer
+}
