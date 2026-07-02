@@ -1,0 +1,48 @@
+model Assignment {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId    String           @map("course_id") @db.Uuid
+  lessonId    String?          @map("lesson_id") @db.Uuid
+  title       String
+  description String?
+  dueDate     DateTime?        @map("due_date")
+  maxScore    Float            @map("max_score")
+  status      AssignmentStatus @default(draft)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  deletedAt   DateTime?        @map("deleted_at")
+  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson      Lesson?          @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  submissions Submission[]
+
+  @@index([courseId])
+  @@index([lessonId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([deletedAt])
+  @@map("assignments")
+}
+
+model Submission {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId String           @map("assignment_id") @db.Uuid
+  userId       String           @map("user_id") @db.Uuid
+  content      String?
+  fileUrl      String?          @map("file_url")
+  score        Float?
+  feedback     String?
+  status       SubmissionStatus @default(submitted)
+  submittedAt  DateTime         @default(now()) @map("submitted_at")
+  gradedAt     DateTime?        @map("graded_at")
+  gradedById   String?          @map("graded_by") @db.Uuid
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  assignment   Assignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user         User             @relation("SubmissionStudent", fields: [userId], references: [id], onDelete: Cascade)
+  gradedBy     User?            @relation("SubmissionGrader", fields: [gradedById], references: [id], onDelete: SetNull)
+
+  @@unique([assignmentId, userId])
+  @@index([userId])
+  @@index([status])
+  @@index([gradedById])
+  @@map("submissions")
+}

@@ -44,3 +44,14 @@ enum QuestionType {
   true_false
   short_answer
 }
+
+enum AssignmentStatus {
+  draft
+  published
+  archived
+}
+
+enum SubmissionStatus {
+  submitted
+  graded
+}

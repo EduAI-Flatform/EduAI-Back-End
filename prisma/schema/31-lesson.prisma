@@ -16,6 +16,7 @@ model Lesson {
   course          Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
   progress        LearningProgress[]
   quizzes         Quiz[]
+  assignments     Assignment[]
 
   @@unique([courseId, slug])
   @@unique([courseId, orderIndex])

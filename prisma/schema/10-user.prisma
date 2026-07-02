@@ -17,6 +17,8 @@ model User {
   enrollments   Enrollment[]
   progress      LearningProgress[]
   quizAttempts  QuizAttempt[]
+  submissions   Submission[]       @relation("SubmissionStudent")
+  gradedSubmissions Submission[]   @relation("SubmissionGrader")
 
   @@index([status])
   @@map("users")
