@@ -11,6 +11,8 @@ import { LessonsController } from './lessons.controller';
 import { LessonsService } from './lessons.service';
 import { QuizzesController } from './quizzes.controller';
 import { QuizzesService } from './quizzes.service';
+import { QuizAttemptsController } from './quiz-attempts.controller';
+import { QuizAttemptsService } from './quiz-attempts.service';
 
 @Module({
   imports: [AuthModule],
@@ -21,6 +23,7 @@ import { QuizzesService } from './quizzes.service';
     EnrollmentsController,
     LearningProgressController,
     QuizzesController,
+    QuizAttemptsController,
   ],
   providers: [
     CoursesService,
@@ -28,6 +31,7 @@ import { QuizzesService } from './quizzes.service';
     EnrollmentsService,
     LearningProgressService,
     QuizzesService,
+    QuizAttemptsService,
   ],
   exports: [
     CoursesService,
@@ -35,6 +39,7 @@ import { QuizzesService } from './quizzes.service';
     EnrollmentsService,
     LearningProgressService,
     QuizzesService,
+    QuizAttemptsService,
   ],
 })
 export class CoursesModule {}
