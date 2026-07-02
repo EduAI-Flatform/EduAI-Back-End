@@ -94,6 +94,7 @@ describe('LearningProgressService', () => {
 
     await expect(service.completeLesson(userId, lessonId)).resolves.toEqual({
       courseId,
+      completedLessonIds: ['lesson-1'],
       completedLessons: 1,
       totalLessons: 2,
       progressPercent: 50,
@@ -185,10 +186,13 @@ describe('LearningProgressService', () => {
   });
 
   it('returns progress for an enrolled student without mutating lesson progress', async () => {
-    const { prisma, service } = createService();
+    const { prisma, service } = createService({
+      progress: [{ ...progressRows[0], lessonId: 'lesson-2' }],
+    });
 
     await expect(service.getCourseProgress(userId, courseId)).resolves.toEqual({
       courseId,
+      completedLessonIds: ['lesson-2'],
       completedLessons: 1,
       totalLessons: 2,
       progressPercent: 50,

@@ -24,6 +24,7 @@ const courseLessonsSelect = {
 
 export interface CourseProgressResponse {
   courseId: string;
+  completedLessonIds: string[];
   completedLessons: number;
   totalLessons: number;
   progressPercent: number;
@@ -161,6 +162,7 @@ export class LearningProgressService {
     if (totalLessons === 0) {
       return {
         courseId,
+        completedLessonIds: [],
         completedLessons: 0,
         totalLessons: 0,
         progressPercent: 0,
@@ -191,6 +193,7 @@ export class LearningProgressService {
 
     return {
       courseId,
+      completedLessonIds: [...completedLessonIds],
       completedLessons,
       totalLessons,
       progressPercent,
