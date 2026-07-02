@@ -9,6 +9,8 @@ import { LearningProgressController } from './learning-progress.controller';
 import { LearningProgressService } from './learning-progress.service';
 import { LessonsController } from './lessons.controller';
 import { LessonsService } from './lessons.service';
+import { QuizzesController } from './quizzes.controller';
+import { QuizzesService } from './quizzes.service';
 
 @Module({
   imports: [AuthModule],
@@ -18,18 +20,21 @@ import { LessonsService } from './lessons.service';
     LessonsController,
     EnrollmentsController,
     LearningProgressController,
+    QuizzesController,
   ],
   providers: [
     CoursesService,
     LessonsService,
     EnrollmentsService,
     LearningProgressService,
+    QuizzesService,
   ],
   exports: [
     CoursesService,
     LessonsService,
     EnrollmentsService,
     LearningProgressService,
+    QuizzesService,
   ],
 })
 export class CoursesModule {}
