@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { QuestionType, QuizStatus, RoleName } from '../../../generated/prisma/client';
 import { QuizzesService } from './quizzes.service';
 
@@ -18,14 +18,50 @@ const quiz = {
   createdAt: new Date('2026-07-02T00:00:00.000Z'),
   updatedAt: new Date('2026-07-02T00:00:00.000Z'),
 };
+const attemptQuiz = {
+  id: quiz.id,
+  passingScore: 70,
+  status: QuizStatus.published,
+  questions: [
+    {
+      id: '11111111-1111-4111-8111-111111111111',
+      type: QuestionType.multiple_choice,
+      correctAnswerJson: 'A',
+      points: 2,
+    },
+    {
+      id: '22222222-2222-4222-8222-222222222222',
+      type: QuestionType.true_false,
+      correctAnswerJson: true,
+      points: 1,
+    },
+  ],
+};
+const submittedAt = new Date('2026-07-02T00:00:00.000Z');
 
-function createService() {
+function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQuiz) {
+  const attempt = {
+    id: 'attempt-id',
+    quizId: quiz.id,
+    score: 2,
+    maxScore: 3,
+    passed: false,
+    startedAt: submittedAt,
+    submittedAt,
+    createdAt: submittedAt,
+  };
   const prisma = {
     course: { findFirst: jest.fn().mockResolvedValue(course) },
     lesson: { findFirst: jest.fn() },
     quiz: {
       create: jest.fn().mockResolvedValue(quiz),
-      findFirst: jest.fn().mockResolvedValue({ ...quiz, course }),
+      findFirst: jest.fn().mockImplementation((args) => {
+        if (args?.select?.questions) {
+          return Promise.resolve(storedAttemptQuiz);
+        }
+
+        return Promise.resolve({ ...quiz, course });
+      }),
       findMany: jest.fn().mockResolvedValue([quiz]),
       update: jest.fn().mockResolvedValue(quiz),
     },
@@ -47,9 +83,13 @@ function createService() {
       update: jest.fn(),
       delete: jest.fn(),
     },
+    quizAttempt: {
+      create: jest.fn().mockResolvedValue(attempt),
+      findMany: jest.fn().mockResolvedValue([attempt]),
+    },
   };
 
-  return { prisma, service: new QuizzesService(prisma as never) };
+  return { attempt, prisma, service: new QuizzesService(prisma as never) };
 }
 
 describe('QuizzesService', () => {
@@ -123,6 +163,70 @@ describe('QuizzesService', () => {
     expect(prisma.question.create).toHaveBeenCalledWith({
       data: { quizId: quiz.id, explanation: undefined, ...input },
       select: expect.any(Object),
+    });
+  });
+
+  it('scores weighted objective answers, stores the attempt, and calculates passed', async () => {
+    const { prisma, service } = createService();
+    const answers = [
+      { questionId: attemptQuiz.questions[0].id, answer: ' a ' },
+      { questionId: attemptQuiz.questions[1].id, answer: false },
+    ];
+
+    await expect(service.submitAttempt('student-id', quiz.id, { answers })).resolves.toEqual(
+      expect.objectContaining({
+        id: 'attempt-id',
+        quizId: quiz.id,
+        score: 2,
+        maxScore: 3,
+        passed: false,
+      }),
+    );
+    expect(prisma.quizAttempt.create).toHaveBeenCalledWith({
+      data: {
+        quizId: quiz.id,
+        userId: 'student-id',
+        score: 2,
+        maxScore: 3,
+        passed: false,
+        answersJson: answers,
+        startedAt: expect.any(Date),
+        submittedAt: expect.any(Date),
+      },
+      select: expect.not.objectContaining({ answersJson: true }),
+    });
+  });
+
+  it('rejects duplicate or incomplete answer sets', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.submitAttempt('student-id', quiz.id, {
+        answers: [
+          { questionId: attemptQuiz.questions[0].id, answer: 'A' },
+          { questionId: attemptQuiz.questions[0].id, answer: 'A' },
+        ],
+      }),
+    ).rejects.toEqual(new BadRequestException('Each quiz question must be answered once'));
+  });
+
+  it('hides unpublished, missing, or unenrolled quizzes', async () => {
+    const { service } = createService(null);
+
+    await expect(
+      service.submitAttempt('student-id', quiz.id, { answers: [] }),
+    ).rejects.toEqual(new NotFoundException('Quiz not found'));
+  });
+
+  it('lists only attempts belonging to the authenticated student', async () => {
+    const { prisma, service } = createService();
+
+    await service.listMyAttempts('student-id', quiz.id);
+
+    expect(prisma.quizAttempt.findMany).toHaveBeenCalledWith({
+      where: { quizId: quiz.id, userId: 'student-id' },
+      orderBy: { createdAt: 'desc' },
+      select: expect.not.objectContaining({ answersJson: true }),
     });
   });
 });

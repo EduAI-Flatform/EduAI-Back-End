@@ -4,6 +4,7 @@ import { ROLES_KEY } from '../auth/roles.decorator';
 import { QuizzesController } from './quizzes.controller';
 
 const instructor = { id: 'instructor-id', roles: [RoleName.instructor] };
+const student = { id: 'student-id', roles: [RoleName.student] };
 
 describe('QuizzesController', () => {
   function createController() {
@@ -16,6 +17,8 @@ describe('QuizzesController', () => {
       deleteQuiz: jest.fn().mockResolvedValue({ deleted: true }),
       createQuestion: jest.fn().mockResolvedValue({ id: 'question-id' }),
       listQuestions: jest.fn().mockResolvedValue([]),
+      listMyAttempts: jest.fn().mockResolvedValue([]),
+      submitAttempt: jest.fn().mockResolvedValue({ id: 'attempt-id' }),
       updateQuestion: jest.fn().mockResolvedValue({ id: 'question-id' }),
       deleteQuestion: jest.fn().mockResolvedValue({ deleted: true }),
     };
@@ -54,5 +57,32 @@ describe('QuizzesController', () => {
       RoleName.platform_admin,
     ]);
     expect(Reflect.getMetadata(GUARDS_METADATA, QuizzesController)).toBeDefined();
+  });
+
+  it('uses the authenticated student id for submit and history routes', async () => {
+    const { controller, service } = createController();
+    const input = {
+      answers: [
+        {
+          questionId: '11111111-1111-4111-8111-111111111111',
+          answer: true,
+        },
+      ],
+    };
+
+    await controller.submitAttempt(student, 'quiz-id', input);
+    await controller.listMyAttempts(student, 'quiz-id');
+
+    expect(service.submitAttempt).toHaveBeenCalledWith(student.id, 'quiz-id', input);
+    expect(service.listMyAttempts).toHaveBeenCalledWith(student.id, 'quiz-id');
+  });
+
+  it('requires student role for attempt routes', () => {
+    expect(
+      Reflect.getMetadata(ROLES_KEY, QuizzesController.prototype.submitAttempt),
+    ).toEqual([RoleName.student]);
+    expect(
+      Reflect.getMetadata(ROLES_KEY, QuizzesController.prototype.listMyAttempts),
+    ).toEqual([RoleName.student]);
   });
 });

@@ -34,9 +34,11 @@ import {
   DeletedQuestionResponse,
   DeletedQuizResponse,
   QuestionResponse,
+  QuizAttemptResponse,
   QuizResponse,
   QuizzesService,
 } from './quizzes.service';
+import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
 
 @ApiTags('Quizzes')
 @ApiBearerAuth()
@@ -160,5 +162,32 @@ export class QuizzesController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) questionId: string,
   ): Promise<DeletedQuestionResponse> {
     return this.quizzesService.deleteQuestion(user, questionId);
+  }
+
+  @Post('quizzes/:quizId/attempts')
+  @Roles(RoleName.student)
+  @ApiCreatedResponse({ description: 'Quiz attempt scored and stored.' })
+  @ApiBadRequestResponse({ description: 'Invalid or incomplete answer set.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({
+    description: 'Published quiz or student enrollment not found.',
+  })
+  submitAttempt(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('quizId', new ParseUUIDPipe({ version: '4' })) quizId: string,
+    @Body() input: SubmitQuizAttemptDto,
+  ): Promise<QuizAttemptResponse> {
+    return this.quizzesService.submitAttempt(user.id, quizId, input);
+  }
+
+  @Get('quizzes/:quizId/attempts/me')
+  @Roles(RoleName.student)
+  @ApiOkResponse({ description: 'Current student quiz attempts returned.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  listMyAttempts(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('quizId', new ParseUUIDPipe({ version: '4' })) quizId: string,
+  ): Promise<QuizAttemptResponse[]> {
+    return this.quizzesService.listMyAttempts(user.id, quizId);
   }
 }
