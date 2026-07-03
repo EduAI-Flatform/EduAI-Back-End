@@ -55,3 +55,10 @@ enum SubmissionStatus {
   submitted
   graded
 }
+
+enum ClassroomSessionStatus {
+  scheduled
+  live
+  ended
+  cancelled
+}

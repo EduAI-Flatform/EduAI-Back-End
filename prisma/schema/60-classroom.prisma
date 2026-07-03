@@ -1,0 +1,58 @@
+model ClassroomSession {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId       String                 @map("course_id") @db.Uuid
+  instructorId   String                 @map("instructor_id") @db.Uuid
+  title          String
+  description    String?
+  provider       String                 @default("jitsi")
+  meetingUrl     String?                @map("meeting_url")
+  roomName       String                 @map("room_name")
+  scheduledStart DateTime               @map("scheduled_start")
+  scheduledEnd   DateTime               @map("scheduled_end")
+  actualStart    DateTime?              @map("actual_start")
+  actualEnd      DateTime?              @map("actual_end")
+  status         ClassroomSessionStatus @default(scheduled)
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  deletedAt      DateTime?              @map("deleted_at")
+  course         Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  instructor     User                   @relation("ClassroomSessionInstructor", fields: [instructorId], references: [id], onDelete: Restrict)
+  attendance     ClassroomAttendance[]
+  recordings     ClassroomRecording[]
+
+  @@index([courseId])
+  @@index([instructorId])
+  @@index([status])
+  @@index([scheduledStart])
+  @@index([deletedAt])
+  @@map("classroom_sessions")
+}
+
+model ClassroomAttendance {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId       String           @map("session_id") @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  joinedAt        DateTime         @map("joined_at")
+  leftAt          DateTime?        @map("left_at")
+  durationSeconds Int?             @map("duration_seconds")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  session         ClassroomSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user            User             @relation("ClassroomAttendanceUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+  @@index([userId])
+  @@map("classroom_attendance")
+}
+
+model ClassroomRecording {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId       String           @map("session_id") @db.Uuid
+  recordingUrl    String           @map("recording_url")
+  durationSeconds Int?             @map("duration_seconds")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  session         ClassroomSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("classroom_recordings")
+}

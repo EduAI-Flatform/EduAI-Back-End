@@ -19,6 +19,8 @@ model User {
   quizAttempts  QuizAttempt[]
   submissions   Submission[]       @relation("SubmissionStudent")
   gradedSubmissions Submission[]   @relation("SubmissionGrader")
+  classroomSessions ClassroomSession[] @relation("ClassroomSessionInstructor")
+  classroomAttendance ClassroomAttendance[] @relation("ClassroomAttendanceUser")
 
   @@index([status])
   @@map("users")

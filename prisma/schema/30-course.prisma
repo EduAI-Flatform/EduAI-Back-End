@@ -17,6 +17,7 @@ model Course {
   progress     LearningProgress[]
   quizzes      Quiz[]
   assignments  Assignment[]
+  classroomSessions ClassroomSession[]
 
   @@index([instructorId])
   @@index([status])
