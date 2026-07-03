@@ -134,6 +134,19 @@ export class AssignmentsController {
     return this.assignmentsService.submitAssignment(user.id, assignmentId, input);
   }
 
+  @Get('assignments/:id/submissions/me')
+  @Roles(RoleName.student)
+  @ApiOkResponse({ description: 'Current student assignment submission returned.' })
+  @ApiNotFoundResponse({
+    description: 'Published assignment, enrollment, or submission not found.',
+  })
+  getMySubmission(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) assignmentId: string,
+  ): Promise<SubmissionResponse> {
+    return this.assignmentsService.getMySubmission(user.id, assignmentId);
+  }
+
   @Get('assignments/:id/submissions')
   @Roles(...MANAGER_ROLES)
   @ApiOkResponse({ description: 'Owned assignment submissions returned.' })

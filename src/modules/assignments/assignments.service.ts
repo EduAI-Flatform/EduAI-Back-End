@@ -234,6 +234,36 @@ export class AssignmentsService {
     }
   }
 
+  async getMySubmission(
+    userId: string,
+    assignmentId: string,
+  ): Promise<SubmissionResponse> {
+    const submission = await this.prisma.submission.findFirst({
+      where: {
+        assignmentId,
+        userId,
+        assignment: {
+          deletedAt: null,
+          status: AssignmentStatus.published,
+          course: {
+            deletedAt: null,
+            status: CourseStatus.published,
+            enrollments: { some: { userId } },
+          },
+        },
+      },
+      select: {
+        ...submissionResponseSelect,
+        assignment: { select: { dueDate: true } },
+      },
+    });
+
+    if (!submission) throw new NotFoundException('Submission not found');
+
+    const { assignment, ...response } = submission;
+    return this.toSubmissionResponse(response, assignment.dueDate);
+  }
+
   async listSubmissions(
     user: AuthenticatedUser,
     assignmentId: string,

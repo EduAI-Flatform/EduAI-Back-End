@@ -187,6 +187,22 @@ describe('QuizzesService', () => {
     });
   });
 
+  it('hides question updates from non-owning instructors', async () => {
+    const { prisma, service } = createService();
+    prisma.question.findFirst.mockResolvedValue({
+      ...attemptQuiz.questions[0],
+      quiz: { course: { instructorId: instructor.id } },
+    });
+
+    await expect(
+      service.updateQuestion(otherInstructor, attemptQuiz.questions[0].id, {
+        questionText: 'Cập nhật trái phép',
+      }),
+    ).rejects.toEqual(new NotFoundException('Question not found'));
+
+    expect(prisma.question.update).not.toHaveBeenCalled();
+  });
+
   it('scores weighted objective answers, stores the attempt, and calculates passed', async () => {
     const { prisma, service } = createService();
     const answers = [

@@ -16,6 +16,7 @@ describe('AssignmentsController', () => {
       deleteAssignment: jest.fn().mockResolvedValue({ deleted: true }),
       publishAssignment: jest.fn().mockResolvedValue({ id: 'assignment-id' }),
       submitAssignment: jest.fn().mockResolvedValue({ id: 'submission-id' }),
+      getMySubmission: jest.fn().mockResolvedValue({ id: 'submission-id' }),
       listSubmissions: jest.fn().mockResolvedValue([]),
       gradeSubmission: jest.fn().mockResolvedValue({ id: 'submission-id' }),
     };
@@ -29,6 +30,7 @@ describe('AssignmentsController', () => {
 
     await controller.createAssignment(instructor, 'course-id', assignmentInput);
     await controller.submitAssignment(student, 'assignment-id', submissionInput);
+    await controller.getMySubmission(student, 'assignment-id');
     await controller.gradeSubmission(instructor, 'submission-id', { score: 8 });
 
     expect(service.createAssignment).toHaveBeenCalledWith(
@@ -40,6 +42,10 @@ describe('AssignmentsController', () => {
       student.id,
       'assignment-id',
       submissionInput,
+    );
+    expect(service.getMySubmission).toHaveBeenCalledWith(
+      student.id,
+      'assignment-id',
     );
     expect(service.gradeSubmission).toHaveBeenCalledWith(
       instructor,
@@ -60,6 +66,12 @@ describe('AssignmentsController', () => {
       Reflect.getMetadata(
         ROLES_KEY,
         AssignmentsController.prototype.submitAssignment,
+      ),
+    ).toEqual([RoleName.student]);
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        AssignmentsController.prototype.getMySubmission,
       ),
     ).toEqual([RoleName.student]);
     expect(

@@ -134,6 +134,37 @@ describe('AssignmentsService', () => {
     ).rejects.toEqual(new ConflictException('Assignment already submitted'));
   });
 
+  it('returns the authenticated student submission with grade state', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.getMySubmission(student.id, assignment.id),
+    ).resolves.toEqual(expect.objectContaining({
+      id: 'submission-id',
+      assignmentId: assignment.id,
+      userId: student.id,
+      isLate: true,
+    }));
+    expect(prisma.submission.findFirst).toHaveBeenCalledWith({
+      where: {
+        assignmentId: assignment.id,
+        userId: student.id,
+        assignment: {
+          deletedAt: null,
+          status: AssignmentStatus.published,
+          course: {
+            deletedAt: null,
+            status: 'published',
+            enrollments: { some: { userId: student.id } },
+          },
+        },
+      },
+      select: expect.objectContaining({
+        assignment: { select: { dueDate: true } },
+      }),
+    });
+  });
+
   it('allows a multi-role user to read assignments through student enrollment', async () => {
     const { prisma, service } = createService();
     const multiRoleUser = {
@@ -177,6 +208,20 @@ describe('AssignmentsService', () => {
       }),
       select: expect.any(Object),
     });
+  });
+
+  it('hides assignment submissions from non-owning instructors', async () => {
+    const { prisma, service } = createService();
+    const otherInstructor = {
+      id: 'other-instructor-id',
+      roles: [RoleName.instructor],
+    };
+
+    await expect(
+      service.listSubmissions(otherInstructor, assignment.id),
+    ).rejects.toEqual(new NotFoundException('Assignment not found'));
+
+    expect(prisma.submission.findMany).not.toHaveBeenCalled();
   });
 
   it('rejects student grading through ownership checks', async () => {
