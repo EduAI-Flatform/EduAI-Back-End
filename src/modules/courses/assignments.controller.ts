@@ -27,6 +27,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
+import { GradeSubmissionDto } from './dto/grade-submission.dto';
 import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import {
@@ -142,5 +143,18 @@ export class AssignmentsController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) assignmentId: string,
   ): Promise<SubmissionResponse[]> {
     return this.assignmentsService.listSubmissions(user, assignmentId);
+  }
+
+  @Post('submissions/:id/grade')
+  @Roles(...MANAGER_ROLES)
+  @ApiOkResponse({ description: 'Owned submission graded successfully.' })
+  @ApiBadRequestResponse({ description: 'Score is outside assignment bounds.' })
+  @ApiNotFoundResponse({ description: 'Owned submission not found.' })
+  gradeSubmission(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) submissionId: string,
+    @Body() input: GradeSubmissionDto,
+  ): Promise<SubmissionResponse> {
+    return this.assignmentsService.gradeSubmission(user, submissionId, input);
   }
 }

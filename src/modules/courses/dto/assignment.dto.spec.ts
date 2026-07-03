@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateAssignmentDto } from './create-assignment.dto';
+import { GradeSubmissionDto } from './grade-submission.dto';
 import { SubmitAssignmentDto } from './submit-assignment.dto';
 
 async function validationMessages(dtoClass: new () => object, payload: object) {
@@ -43,5 +44,19 @@ describe('Assignment DTO validation', () => {
         fileUrl: 'http://files.example.com/submission.pdf',
       }),
     ).resolves.toEqual([expect.stringContaining('fileUrl must be a URL')]);
+  });
+
+  it('validates manual grade payloads', async () => {
+    await expect(
+      validationMessages(GradeSubmissionDto, {
+        score: 9.5,
+        feedback: 'Good work',
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      validationMessages(GradeSubmissionDto, {
+        score: -1,
+      }),
+    ).resolves.toEqual([expect.stringContaining('score')]);
   });
 });

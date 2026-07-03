@@ -17,6 +17,7 @@ describe('AssignmentsController', () => {
       publishAssignment: jest.fn().mockResolvedValue({ id: 'assignment-id' }),
       submitAssignment: jest.fn().mockResolvedValue({ id: 'submission-id' }),
       listSubmissions: jest.fn().mockResolvedValue([]),
+      gradeSubmission: jest.fn().mockResolvedValue({ id: 'submission-id' }),
     };
     return { controller: new AssignmentsController(service as never), service };
   }
@@ -28,6 +29,7 @@ describe('AssignmentsController', () => {
 
     await controller.createAssignment(instructor, 'course-id', assignmentInput);
     await controller.submitAssignment(student, 'assignment-id', submissionInput);
+    await controller.gradeSubmission(instructor, 'submission-id', { score: 8 });
 
     expect(service.createAssignment).toHaveBeenCalledWith(
       instructor,
@@ -38,6 +40,11 @@ describe('AssignmentsController', () => {
       student.id,
       'assignment-id',
       submissionInput,
+    );
+    expect(service.gradeSubmission).toHaveBeenCalledWith(
+      instructor,
+      'submission-id',
+      { score: 8 },
     );
   });
 
@@ -55,5 +62,11 @@ describe('AssignmentsController', () => {
         AssignmentsController.prototype.submitAssignment,
       ),
     ).toEqual([RoleName.student]);
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        AssignmentsController.prototype.gradeSubmission,
+      ),
+    ).toEqual([RoleName.instructor, RoleName.platform_admin]);
   });
 });

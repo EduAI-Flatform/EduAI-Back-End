@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AssignmentStatus,
   RoleName,
@@ -55,7 +59,19 @@ function createService() {
     },
     submission: {
       create: jest.fn().mockResolvedValue(submission),
+      findFirst: jest.fn().mockResolvedValue({
+        ...submission,
+        assignment: { ...assignment, course },
+      }),
       findMany: jest.fn().mockResolvedValue([submission]),
+      update: jest.fn().mockResolvedValue({
+        ...submission,
+        score: 8,
+        feedback: 'Good work',
+        status: SubmissionStatus.graded,
+        gradedAt: submittedAt,
+        gradedById: instructor.id,
+      }),
     },
   };
   return { prisma, service: new AssignmentsService(prisma as never), submission };
@@ -134,5 +150,50 @@ describe('AssignmentsService', () => {
     await expect(
       service.listAssignments(multiRoleUser, course.id),
     ).resolves.toEqual([assignment]);
+  });
+
+  it('grades submissions for the owning instructor', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.gradeSubmission(instructor, 'submission-id', {
+        score: 8,
+        feedback: 'Good work',
+      }),
+    ).resolves.toEqual(expect.objectContaining({
+      score: 8,
+      feedback: 'Good work',
+      status: SubmissionStatus.graded,
+      gradedById: instructor.id,
+      isLate: true,
+    }));
+    expect(prisma.submission.update).toHaveBeenCalledWith({
+      where: { id: 'submission-id' },
+      data: expect.objectContaining({
+        score: 8,
+        feedback: 'Good work',
+        status: SubmissionStatus.graded,
+        gradedById: instructor.id,
+      }),
+      select: expect.any(Object),
+    });
+  });
+
+  it('rejects student grading through ownership checks', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.gradeSubmission(student, 'submission-id', { score: 8 }),
+    ).rejects.toEqual(new NotFoundException('Submission not found'));
+  });
+
+  it('rejects grades above the assignment max score', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.gradeSubmission(instructor, 'submission-id', { score: 11 }),
+    ).rejects.toEqual(
+      new BadRequestException('Score cannot exceed assignment max score'),
+    );
   });
 });

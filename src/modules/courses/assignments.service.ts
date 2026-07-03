@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
+import { GradeSubmissionDto } from './dto/grade-submission.dto';
 import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 
@@ -245,6 +246,57 @@ export class AssignmentsService {
     });
     return submissions.map((submission) =>
       this.toSubmissionResponse(submission, assignment.dueDate),
+    );
+  }
+
+  async gradeSubmission(
+    user: AuthenticatedUser,
+    submissionId: string,
+    input: GradeSubmissionDto,
+  ): Promise<SubmissionResponse> {
+    const submission = await this.prisma.submission.findFirst({
+      where: {
+        id: submissionId,
+        assignment: {
+          deletedAt: null,
+          course: { deletedAt: null },
+        },
+      },
+      select: {
+        ...submissionResponseSelect,
+        assignment: {
+          select: {
+            dueDate: true,
+            maxScore: true,
+            course: { select: { instructorId: true } },
+          },
+        },
+      },
+    });
+    if (
+      !submission ||
+      !this.canManage(user, submission.assignment.course.instructorId)
+    ) {
+      throw new NotFoundException('Submission not found');
+    }
+    if (input.score > submission.assignment.maxScore) {
+      throw new BadRequestException('Score cannot exceed assignment max score');
+    }
+
+    const gradedSubmission = await this.prisma.submission.update({
+      where: { id: submissionId },
+      data: {
+        score: input.score,
+        feedback: input.feedback,
+        status: SubmissionStatus.graded,
+        gradedAt: new Date(),
+        gradedById: user.id,
+      },
+      select: submissionResponseSelect,
+    });
+    return this.toSubmissionResponse(
+      gradedSubmission,
+      submission.assignment.dueDate,
     );
   }
 
