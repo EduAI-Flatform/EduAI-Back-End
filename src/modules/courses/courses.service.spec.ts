@@ -385,15 +385,7 @@ describe('CoursesService', () => {
       },
       select: {
         id: true,
-        title: true,
-        slug: true,
-        description: true,
-        thumbnailUrl: true,
-        level: true,
         status: true,
-        visibility: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
   });
@@ -444,15 +436,7 @@ describe('CoursesService', () => {
       },
       select: {
         id: true,
-        title: true,
-        slug: true,
-        description: true,
-        thumbnailUrl: true,
-        level: true,
         status: true,
-        visibility: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
   });
@@ -487,15 +471,7 @@ describe('CoursesService', () => {
       },
       select: {
         id: true,
-        title: true,
-        slug: true,
-        description: true,
-        thumbnailUrl: true,
-        level: true,
         status: true,
-        visibility: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
   });
@@ -512,15 +488,7 @@ describe('CoursesService', () => {
       },
       select: {
         id: true,
-        title: true,
-        slug: true,
-        description: true,
-        thumbnailUrl: true,
-        level: true,
         status: true,
-        visibility: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
   });
@@ -552,19 +520,9 @@ describe('CoursesService', () => {
   it('enrolls users in published courses and initializes lesson progress', async () => {
     const { prisma, service } = createService();
 
-    await expect(service.enrollCourse(student.id, course.id)).resolves.toMatchObject({
-      id: enrollment.id,
-      courseId: course.id,
-      status: 'active',
-      course: {
-        id: course.id,
-        title: 'AI Foundations',
-      },
-      progress: {
-        completedLessons: 0,
-        totalLessons: 1,
-        progressPercent: 0,
-      },
+    await expect(service.enrollCourse(student.id, course.id)).resolves.toEqual({
+      success: true,
+      message: 'Course enrolled successfully.',
     });
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
@@ -598,7 +556,9 @@ describe('CoursesService', () => {
         courseId: course.id,
         status: 'active',
       },
-      select: expect.any(Object),
+      select: {
+        id: true,
+      },
     });
     expect(prisma.learningProgress.createMany).toHaveBeenCalledWith({
       data: [

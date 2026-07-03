@@ -30,6 +30,11 @@ const courseResponseSelect = {
   updatedAt: true,
 } satisfies Prisma.CourseSelect;
 
+const courseCommandResponseSelect = {
+  id: true,
+  status: true,
+} satisfies Prisma.CourseSelect;
+
 const ENROLLMENT_ACTIVE_STATUS = 'active';
 const ENROLLMENT_COMPLETED_STATUS = 'completed';
 const PROGRESS_NOT_STARTED_STATUS = 'not_started';
@@ -126,6 +131,10 @@ export type CourseResponse = Prisma.CourseGetPayload<{
   select: typeof courseResponseSelect;
 }>;
 
+export type CourseCommandResponse = Prisma.CourseGetPayload<{
+  select: typeof courseCommandResponseSelect;
+}>;
+
 export type CourseDetailResponse = CourseResponse & {
   lessonCount: number;
 };
@@ -173,6 +182,11 @@ export interface EnrollmentResponse {
   completedAt: Date | null;
   course: EnrollmentCourseSummary;
   progress: EnrollmentProgressSummary;
+}
+
+export interface SuccessResponse {
+  success: true;
+  message: string;
 }
 
 export interface CourseProgressResponse {
@@ -241,7 +255,7 @@ export class CoursesService {
   async createCourse(
     user: AuthenticatedUser,
     input: CreateCourseDto,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     this.assertCanCreateCourse(user);
 
     try {
@@ -256,7 +270,7 @@ export class CoursesService {
           status: CourseStatus.draft,
           visibility: input.visibility ?? CourseVisibility.public,
         },
-        select: courseResponseSelect,
+        select: courseCommandResponseSelect,
       });
     } catch (error) {
       if (this.isCourseSlugConflict(error)) {
@@ -271,7 +285,7 @@ export class CoursesService {
     user: AuthenticatedUser,
     courseId: string,
     input: UpdateCourseDto,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
 
@@ -294,7 +308,7 @@ export class CoursesService {
       return await this.prisma.course.update({
         where: { id: courseId },
         data,
-        select: courseResponseSelect,
+        select: courseCommandResponseSelect,
       });
     } catch (error) {
       if (this.isCourseSlugConflict(error)) {
@@ -308,7 +322,7 @@ export class CoursesService {
   async publishCourse(
     user: AuthenticatedUser,
     courseId: string,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
 
@@ -323,14 +337,14 @@ export class CoursesService {
       data: {
         status: CourseStatus.published,
       },
-      select: courseResponseSelect,
+      select: courseCommandResponseSelect,
     });
   }
 
   async archiveCourse(
     user: AuthenticatedUser,
     courseId: string,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
 
@@ -339,7 +353,7 @@ export class CoursesService {
       data: {
         status: CourseStatus.archived,
       },
-      select: courseResponseSelect,
+      select: courseCommandResponseSelect,
     });
   }
 
@@ -366,7 +380,7 @@ export class CoursesService {
   async enrollCourse(
     userId: string,
     courseId: string,
-  ): Promise<EnrollmentResponse> {
+  ): Promise<SuccessResponse> {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const course = await tx.course.findFirst({
@@ -396,13 +410,15 @@ export class CoursesService {
           throw new ConflictException('Course already enrolled');
         }
 
-        const enrollment = await tx.enrollment.create({
+        await tx.enrollment.create({
           data: {
             userId,
             courseId,
             status: ENROLLMENT_ACTIVE_STATUS,
           },
-          select: buildEnrollmentResponseSelect(userId),
+          select: {
+            id: true,
+          },
         });
 
         if (course.lessons.length > 0) {
@@ -418,7 +434,10 @@ export class CoursesService {
           });
         }
 
-        return this.toEnrollmentResponse(enrollment);
+        return {
+          success: true,
+          message: 'Course enrolled successfully.',
+        };
       });
     } catch (error) {
       if (this.isDuplicateEnrollmentError(error)) {

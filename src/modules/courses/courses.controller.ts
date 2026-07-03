@@ -28,11 +28,13 @@ import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import {
   CourseDetailResponse,
+  CourseCommandResponse,
   CourseResponse,
   CourseProgressResponse,
   CoursesService,
   EnrollmentResponse,
   PaginatedCourseResponse,
+  SuccessResponse,
 } from './courses.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
@@ -85,7 +87,7 @@ export class CoursesController {
   createCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Body() input: CreateCourseDto,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     return this.coursesService.createCourse(user, input);
   }
 
@@ -103,7 +105,7 @@ export class CoursesController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
     @Body() input: UpdateCourseDto,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     return this.coursesService.updateCourse(user, courseId, input);
   }
 
@@ -121,7 +123,7 @@ export class CoursesController {
   publishCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     return this.coursesService.publishCourse(user, courseId);
   }
 
@@ -137,7 +139,7 @@ export class CoursesController {
   archiveCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
-  ): Promise<CourseResponse> {
+  ): Promise<CourseCommandResponse> {
     return this.coursesService.archiveCourse(user, courseId);
   }
 
@@ -154,7 +156,7 @@ export class CoursesController {
   enrollCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
-  ): Promise<EnrollmentResponse> {
+  ): Promise<SuccessResponse> {
     return this.coursesService.enrollCourse(user.id, courseId);
   }
 
