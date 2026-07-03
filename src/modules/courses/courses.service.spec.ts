@@ -8,6 +8,7 @@ import {
   CourseLevel,
   CourseStatus,
   CourseVisibility,
+  LessonType,
   Prisma,
   RoleName,
 } from '../../../generated/prisma/client';
@@ -70,19 +71,190 @@ const course: TestCourse = {
   },
 };
 
-function createService(options?: { storedCourse?: typeof course | null }) {
+const lesson = {
+  id: 'lesson-id',
+  orderIndex: 1,
+};
+
+const publishedCourseWithLessons = {
+  id: course.id,
+  title: course.title,
+  slug: course.slug,
+  description: course.description,
+  thumbnailUrl: course.thumbnailUrl,
+  level: course.level,
+  status: CourseStatus.published,
+  visibility: course.visibility,
+  createdAt: course.createdAt,
+  updatedAt: course.updatedAt,
+  lessons: [lesson],
+};
+
+const enrollment = {
+  id: 'enrollment-id',
+  userId: student.id,
+  courseId: course.id,
+  status: 'active',
+  enrolledAt: new Date('2026-07-01T00:00:00.000Z'),
+  completedAt: null,
+  course: {
+    id: course.id,
+    title: course.title,
+    slug: course.slug,
+    description: course.description,
+    thumbnailUrl: course.thumbnailUrl,
+    level: course.level,
+    status: CourseStatus.published,
+    visibility: course.visibility,
+    createdAt: course.createdAt,
+    updatedAt: course.updatedAt,
+    lessons: [
+      {
+        id: 'lesson-id',
+        title: 'Introduction',
+        slug: 'introduction',
+        type: LessonType.video,
+        orderIndex: 1,
+        durationMinutes: 10,
+        isPreview: false,
+        progress: [{ status: 'not_started', progressPercent: 0 }],
+      },
+    ],
+  },
+};
+
+const progressLesson = {
+  id: 'lesson-1',
+  courseId: course.id,
+  course: {
+    id: course.id,
+    lessons: [{ id: 'lesson-1' }, { id: 'lesson-2' }],
+  },
+};
+
+const progressEnrollment = {
+  id: 'progress-enrollment-id',
+  userId: student.id,
+  courseId: course.id,
+  status: 'active',
+  completedAt: null,
+  course: {
+    lessons: [{ id: 'lesson-1' }, { id: 'lesson-2' }],
+  },
+};
+
+const progressRows = [
+  {
+    lessonId: 'lesson-1',
+    status: 'completed',
+    progressPercent: 100,
+    completedAt: new Date('2026-07-01T00:00:00.000Z'),
+    lastAccessedAt: new Date('2026-07-01T00:00:00.000Z'),
+  },
+  {
+    lessonId: 'lesson-2',
+    status: 'not_started',
+    progressPercent: 0,
+    completedAt: null,
+    lastAccessedAt: null,
+  },
+];
+
+function createService(options?: {
+  storedCourse?: typeof course | null;
+  storedPublishedCourse?: typeof publishedCourseWithLessons | null;
+  existingEnrollment?: { id: string } | null;
+  storedLesson?: typeof progressLesson | null;
+  storedEnrollment?: typeof progressEnrollment | null;
+  progress?: typeof progressRows;
+}) {
   const storedCourse = options?.storedCourse ?? course;
-  const prisma = {
-    $transaction: jest.fn(async (queries: Promise<unknown>[]) => Promise.all(queries)),
+  let prisma: {
+    $transaction: jest.Mock;
+    course: {
+      count: jest.Mock;
+      create: jest.Mock;
+      findFirst: jest.Mock;
+      findMany: jest.Mock;
+      update: jest.Mock;
+    };
+    enrollment: {
+      create: jest.Mock;
+      findFirst: jest.Mock;
+      findMany: jest.Mock;
+      update: jest.Mock;
+    };
+    learningProgress: {
+      createMany: jest.Mock;
+      findMany: jest.Mock;
+      upsert: jest.Mock;
+    };
+    lesson: { findFirst: jest.Mock };
+  };
+
+  prisma = {
+    $transaction: jest.fn(async (input: unknown) => {
+      if (typeof input === 'function') {
+        return input(prisma);
+      }
+
+      return Promise.all(input as Promise<unknown>[]);
+    }),
     course: {
       count: jest.fn().mockResolvedValue(1),
       create: jest.fn().mockResolvedValue(course),
-      findFirst: jest.fn().mockResolvedValue(storedCourse),
+      findFirst: jest.fn().mockImplementation((args) => {
+        if (args?.select?.lessons) {
+          return Promise.resolve(
+            options && 'storedPublishedCourse' in options
+              ? options.storedPublishedCourse
+              : publishedCourseWithLessons,
+          );
+        }
+
+        return Promise.resolve(storedCourse);
+      }),
       findMany: jest.fn().mockResolvedValue([course]),
       update: jest.fn().mockResolvedValue({
         ...course,
         status: CourseStatus.published,
       }),
+    },
+    enrollment: {
+      create: jest.fn().mockResolvedValue(enrollment),
+      findFirst: jest.fn().mockImplementation((args) => {
+        if (args?.select?.course) {
+          return Promise.resolve(
+            options && 'storedEnrollment' in options
+              ? options.storedEnrollment
+              : progressEnrollment,
+          );
+        }
+
+        if (args?.select?.completedAt) {
+          return Promise.resolve(
+            options && 'storedEnrollment' in options
+              ? options.storedEnrollment
+              : progressEnrollment,
+          );
+        }
+
+        return Promise.resolve(options?.existingEnrollment ?? null);
+      }),
+      findMany: jest.fn().mockResolvedValue([enrollment]),
+      update: jest.fn().mockResolvedValue(progressEnrollment),
+    },
+    learningProgress: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findMany: jest.fn().mockResolvedValue(options?.progress ?? progressRows),
+      upsert: jest.fn().mockResolvedValue(progressRows[0]),
+    },
+    lesson: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(
+          options && 'storedLesson' in options ? options.storedLesson : progressLesson,
+        ),
     },
   };
 
@@ -374,6 +546,262 @@ describe('CoursesService', () => {
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
       lessonCount: 1,
+    });
+  });
+
+  it('enrolls users in published courses and initializes lesson progress', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.enrollCourse(student.id, course.id)).resolves.toMatchObject({
+      id: enrollment.id,
+      courseId: course.id,
+      status: 'active',
+      course: {
+        id: course.id,
+        title: 'AI Foundations',
+      },
+      progress: {
+        completedLessons: 0,
+        totalLessons: 1,
+        progressPercent: 0,
+      },
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.course.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: course.id,
+        deletedAt: null,
+        status: CourseStatus.published,
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        thumbnailUrl: true,
+        level: true,
+        status: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
+        lessons: {
+          where: { deletedAt: null },
+          orderBy: { orderIndex: 'asc' },
+          select: { id: true, orderIndex: true },
+        },
+      },
+    });
+    expect(prisma.enrollment.create).toHaveBeenCalledWith({
+      data: {
+        userId: student.id,
+        courseId: course.id,
+        status: 'active',
+      },
+      select: expect.any(Object),
+    });
+    expect(prisma.learningProgress.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: student.id,
+          courseId: course.id,
+          lessonId: lesson.id,
+          status: 'not_started',
+          progressPercent: 0,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('rejects enrollment for missing or unpublished courses', async () => {
+    const { prisma, service } = createService({ storedPublishedCourse: null });
+
+    await expect(service.enrollCourse(student.id, course.id)).rejects.toEqual(
+      new NotFoundException('Published course not found'),
+    );
+    expect(prisma.enrollment.create).not.toHaveBeenCalled();
+    expect(prisma.learningProgress.createMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate enrollment', async () => {
+    const { prisma, service } = createService({
+      existingEnrollment: { id: enrollment.id },
+    });
+
+    await expect(service.enrollCourse(student.id, course.id)).rejects.toEqual(
+      new ConflictException('Course already enrolled'),
+    );
+    expect(prisma.enrollment.create).not.toHaveBeenCalled();
+    expect(prisma.learningProgress.createMany).not.toHaveBeenCalled();
+  });
+
+  it('lists authenticated user enrollments with lean course and progress data', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.getMyEnrollments(student.id)).resolves.toEqual([
+      {
+        id: enrollment.id,
+        courseId: course.id,
+        status: 'active',
+        enrolledAt: enrollment.enrolledAt,
+        completedAt: null,
+        course: {
+          id: course.id,
+          title: 'AI Foundations',
+          slug: 'ai-foundations',
+          description: null,
+          thumbnailUrl: null,
+          level: CourseLevel.beginner,
+          status: CourseStatus.published,
+          visibility: CourseVisibility.public,
+          createdAt: enrollment.course.createdAt,
+          updatedAt: enrollment.course.updatedAt,
+        },
+        progress: {
+          completedLessons: 0,
+          totalLessons: 1,
+          progressPercent: 0,
+        },
+      },
+    ]);
+    expect(prisma.enrollment.findMany).toHaveBeenCalledWith({
+      where: { userId: student.id },
+      orderBy: { enrolledAt: 'desc' },
+      select: expect.any(Object),
+    });
+  });
+
+  it('completes a lesson for an enrolled student and returns course progress', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.completeLesson(student.id, 'lesson-1')).resolves.toEqual({
+      courseId: course.id,
+      completedLessonIds: ['lesson-1'],
+      completedLessons: 1,
+      totalLessons: 2,
+      progressPercent: 50,
+      completed: false,
+    });
+
+    expect(prisma.lesson.findFirst).toHaveBeenCalledWith({
+      where: { id: 'lesson-1', deletedAt: null },
+      select: {
+        id: true,
+        courseId: true,
+        course: {
+          select: {
+            id: true,
+            lessons: {
+              where: { deletedAt: null },
+              select: { id: true },
+            },
+          },
+        },
+      },
+    });
+    expect(prisma.enrollment.findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: student.id,
+        courseId: course.id,
+      },
+      select: {
+        id: true,
+        status: true,
+        completedAt: true,
+      },
+    });
+    expect(prisma.learningProgress.upsert).toHaveBeenCalledWith({
+      where: {
+        userId_lessonId: {
+          userId: student.id,
+          lessonId: 'lesson-1',
+        },
+      },
+      create: {
+        userId: student.id,
+        courseId: course.id,
+        lessonId: 'lesson-1',
+        status: 'completed',
+        progressPercent: 100,
+        completedAt: expect.any(Date),
+        lastAccessedAt: expect.any(Date),
+      },
+      update: {
+        status: 'completed',
+        progressPercent: 100,
+        completedAt: expect.any(Date),
+        lastAccessedAt: expect.any(Date),
+      },
+    });
+  });
+
+  it('rejects lesson completion when the student is not enrolled', async () => {
+    const { prisma, service } = createService({ storedEnrollment: null });
+
+    await expect(service.completeLesson(student.id, 'lesson-1')).rejects.toEqual(
+      new NotFoundException('Enrollment not found'),
+    );
+    expect(prisma.learningProgress.upsert).not.toHaveBeenCalled();
+  });
+
+  it('marks the enrollment completed when all lessons are complete', async () => {
+    const { prisma, service } = createService({
+      progress: [
+        { ...progressRows[0], lessonId: 'lesson-1' },
+        { ...progressRows[0], lessonId: 'lesson-2' },
+      ],
+    });
+
+    await expect(service.completeLesson(student.id, 'lesson-1')).resolves.toMatchObject({
+      completedLessons: 2,
+      totalLessons: 2,
+      progressPercent: 100,
+      completed: true,
+    });
+    expect(prisma.enrollment.update).toHaveBeenCalledWith({
+      where: { id: progressEnrollment.id },
+      data: {
+        status: 'completed',
+        completedAt: expect.any(Date),
+      },
+    });
+  });
+
+  it('returns progress for an enrolled student without mutating lesson progress', async () => {
+    const { prisma, service } = createService({
+      progress: [{ ...progressRows[0], lessonId: 'lesson-2' }],
+    });
+
+    await expect(service.getCourseProgress(student.id, course.id)).resolves.toEqual({
+      courseId: course.id,
+      completedLessonIds: ['lesson-2'],
+      completedLessons: 1,
+      totalLessons: 2,
+      progressPercent: 50,
+      completed: false,
+    });
+
+    expect(prisma.learningProgress.upsert).not.toHaveBeenCalled();
+    expect(prisma.lesson.findFirst).not.toHaveBeenCalled();
+    expect(prisma.enrollment.findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: student.id,
+        courseId: course.id,
+      },
+      select: {
+        id: true,
+        status: true,
+        completedAt: true,
+        course: {
+          select: {
+            lessons: {
+              where: { deletedAt: null },
+              select: { id: true },
+            },
+          },
+        },
+      },
     });
   });
 });

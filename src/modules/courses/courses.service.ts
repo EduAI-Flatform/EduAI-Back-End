@@ -30,6 +30,98 @@ const courseResponseSelect = {
   updatedAt: true,
 } satisfies Prisma.CourseSelect;
 
+const ENROLLMENT_ACTIVE_STATUS = 'active';
+const ENROLLMENT_COMPLETED_STATUS = 'completed';
+const PROGRESS_NOT_STARTED_STATUS = 'not_started';
+const PROGRESS_COMPLETED_STATUS = 'completed';
+
+const enrollmentCourseSelect = {
+  id: true,
+  title: true,
+  slug: true,
+  description: true,
+  thumbnailUrl: true,
+  level: true,
+  status: true,
+  visibility: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.CourseSelect;
+
+const buildEnrollmentResponseSelect = (userId: string) =>
+  ({
+    id: true,
+    userId: true,
+    courseId: true,
+    status: true,
+    enrolledAt: true,
+    completedAt: true,
+    course: {
+      select: {
+        ...enrollmentCourseSelect,
+        lessons: {
+          where: {
+            deletedAt: null,
+          },
+          orderBy: {
+            orderIndex: 'asc',
+          },
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            type: true,
+            orderIndex: true,
+            durationMinutes: true,
+            isPreview: true,
+            progress: {
+              where: {
+                userId,
+              },
+              select: {
+                status: true,
+                progressPercent: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  }) satisfies Prisma.EnrollmentSelect;
+
+const publishedCourseWithLessonsSelect = {
+  ...enrollmentCourseSelect,
+  lessons: {
+    where: {
+      deletedAt: null,
+    },
+    orderBy: {
+      orderIndex: 'asc',
+    },
+    select: {
+      id: true,
+      orderIndex: true,
+    },
+  },
+} satisfies Prisma.CourseSelect;
+
+const enrollmentSelect = {
+  id: true,
+  status: true,
+  completedAt: true,
+} satisfies Prisma.EnrollmentSelect;
+
+const courseLessonsSelect = {
+  lessons: {
+    where: {
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+    },
+  },
+} satisfies Prisma.CourseSelect;
+
 export type CourseResponse = Prisma.CourseGetPayload<{
   select: typeof courseResponseSelect;
 }>;
@@ -44,6 +136,52 @@ export interface PaginatedCourseResponse {
   page: number;
   pageSize: number;
   totalPages: number;
+}
+
+type EnrollmentRecord = Prisma.EnrollmentGetPayload<{
+  select: ReturnType<typeof buildEnrollmentResponseSelect>;
+}>;
+
+type PublishedCourseWithLessons = Prisma.CourseGetPayload<{
+  select: typeof publishedCourseWithLessonsSelect;
+}>;
+
+export interface EnrollmentCourseSummary {
+  id: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  thumbnailUrl: string | null;
+  level: PublishedCourseWithLessons['level'];
+  status: PublishedCourseWithLessons['status'];
+  visibility: PublishedCourseWithLessons['visibility'];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface EnrollmentProgressSummary {
+  completedLessons: number;
+  totalLessons: number;
+  progressPercent: number;
+}
+
+export interface EnrollmentResponse {
+  id: string;
+  courseId: string;
+  status: string;
+  enrolledAt: Date;
+  completedAt: Date | null;
+  course: EnrollmentCourseSummary;
+  progress: EnrollmentProgressSummary;
+}
+
+export interface CourseProgressResponse {
+  courseId: string;
+  completedLessonIds: string[];
+  completedLessons: number;
+  totalLessons: number;
+  progressPercent: number;
+  completed: boolean;
 }
 
 type ManageableCourse = CourseResponse & {
@@ -225,6 +363,204 @@ export class CoursesService {
     throw new NotFoundException('Course not found');
   }
 
+  async enrollCourse(
+    userId: string,
+    courseId: string,
+  ): Promise<EnrollmentResponse> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const course = await tx.course.findFirst({
+          where: {
+            id: courseId,
+            deletedAt: null,
+            status: CourseStatus.published,
+          },
+          select: publishedCourseWithLessonsSelect,
+        });
+
+        if (!course) {
+          throw new NotFoundException('Published course not found');
+        }
+
+        const existingEnrollment = await tx.enrollment.findFirst({
+          where: {
+            userId,
+            courseId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (existingEnrollment) {
+          throw new ConflictException('Course already enrolled');
+        }
+
+        const enrollment = await tx.enrollment.create({
+          data: {
+            userId,
+            courseId,
+            status: ENROLLMENT_ACTIVE_STATUS,
+          },
+          select: buildEnrollmentResponseSelect(userId),
+        });
+
+        if (course.lessons.length > 0) {
+          await tx.learningProgress.createMany({
+            data: course.lessons.map((lesson) => ({
+              userId,
+              courseId,
+              lessonId: lesson.id,
+              status: PROGRESS_NOT_STARTED_STATUS,
+              progressPercent: 0,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        return this.toEnrollmentResponse(enrollment);
+      });
+    } catch (error) {
+      if (this.isDuplicateEnrollmentError(error)) {
+        throw new ConflictException('Course already enrolled');
+      }
+
+      throw error;
+    }
+  }
+
+  async getMyEnrollments(userId: string): Promise<EnrollmentResponse[]> {
+    const enrollments = await this.prisma.enrollment.findMany({
+      where: {
+        userId,
+      },
+      orderBy: {
+        enrolledAt: 'desc',
+      },
+      select: buildEnrollmentResponseSelect(userId),
+    });
+
+    return enrollments.map((enrollment) =>
+      this.toEnrollmentResponse(enrollment),
+    );
+  }
+
+  async completeLesson(
+    userId: string,
+    lessonId: string,
+  ): Promise<CourseProgressResponse> {
+    return this.prisma.$transaction(async (tx) => {
+      const lesson = await tx.lesson.findFirst({
+        where: {
+          id: lessonId,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          courseId: true,
+          course: {
+            select: {
+              id: true,
+              ...courseLessonsSelect,
+            },
+          },
+        },
+      });
+
+      if (!lesson) {
+        throw new NotFoundException('Lesson not found');
+      }
+
+      const enrollment = await tx.enrollment.findFirst({
+        where: {
+          userId,
+          courseId: lesson.courseId,
+        },
+        select: enrollmentSelect,
+      });
+
+      if (!enrollment) {
+        throw new NotFoundException('Enrollment not found');
+      }
+
+      const now = new Date();
+
+      await tx.learningProgress.upsert({
+        where: {
+          userId_lessonId: {
+            userId,
+            lessonId,
+          },
+        },
+        create: {
+          userId,
+          courseId: lesson.courseId,
+          lessonId,
+          status: PROGRESS_COMPLETED_STATUS,
+          progressPercent: 100,
+          completedAt: now,
+          lastAccessedAt: now,
+        },
+        update: {
+          status: PROGRESS_COMPLETED_STATUS,
+          progressPercent: 100,
+          completedAt: now,
+          lastAccessedAt: now,
+        },
+      });
+
+      const progress = await this.calculateCourseProgress(
+        tx,
+        userId,
+        lesson.courseId,
+        lesson.course.lessons.map((courseLesson) => courseLesson.id),
+      );
+
+      if (progress.completed && !enrollment.completedAt) {
+        await tx.enrollment.update({
+          where: {
+            id: enrollment.id,
+          },
+          data: {
+            status: ENROLLMENT_COMPLETED_STATUS,
+            completedAt: now,
+          },
+        });
+      }
+
+      return progress;
+    });
+  }
+
+  async getCourseProgress(
+    userId: string,
+    courseId: string,
+  ): Promise<CourseProgressResponse> {
+    const enrollment = await this.prisma.enrollment.findFirst({
+      where: {
+        userId,
+        courseId,
+      },
+      select: {
+        ...enrollmentSelect,
+        course: {
+          select: courseLessonsSelect,
+        },
+      },
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException('Enrollment not found');
+    }
+
+    return this.calculateCourseProgress(
+      this.prisma,
+      userId,
+      courseId,
+      enrollment.course.lessons.map((lesson) => lesson.id),
+    );
+  }
+
   private async findCourseOrThrow(courseId: string): Promise<ManageableCourse> {
     const course = await this.prisma.course.findFirst({
       where: {
@@ -262,6 +598,94 @@ export class CoursesService {
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
       lessonCount: course._count.lessons,
+    };
+  }
+
+  private toEnrollmentResponse(
+    enrollment: EnrollmentRecord,
+  ): EnrollmentResponse {
+    const lessons = enrollment.course.lessons;
+    const completedLessons = lessons.filter((lesson) =>
+      lesson.progress.some((progress) => progress.status === PROGRESS_COMPLETED_STATUS),
+    ).length;
+    const totalLessons = lessons.length;
+
+    return {
+      id: enrollment.id,
+      courseId: enrollment.courseId,
+      status: enrollment.status,
+      enrolledAt: enrollment.enrolledAt,
+      completedAt: enrollment.completedAt,
+      course: {
+        id: enrollment.course.id,
+        title: enrollment.course.title,
+        slug: enrollment.course.slug,
+        description: enrollment.course.description,
+        thumbnailUrl: enrollment.course.thumbnailUrl,
+        level: enrollment.course.level,
+        status: enrollment.course.status,
+        visibility: enrollment.course.visibility,
+        createdAt: enrollment.course.createdAt,
+        updatedAt: enrollment.course.updatedAt,
+      },
+      progress: {
+        completedLessons,
+        totalLessons,
+        progressPercent:
+          totalLessons === 0
+            ? 0
+            : Math.round((completedLessons / totalLessons) * 100),
+      },
+    };
+  }
+
+  private async calculateCourseProgress(
+    prisma: Pick<PrismaService, 'learningProgress'>,
+    userId: string,
+    courseId: string,
+    lessonIds: string[],
+  ): Promise<CourseProgressResponse> {
+    const totalLessons = lessonIds.length;
+
+    if (totalLessons === 0) {
+      return {
+        courseId,
+        completedLessonIds: [],
+        completedLessons: 0,
+        totalLessons: 0,
+        progressPercent: 0,
+        completed: false,
+      };
+    }
+
+    const progressRows = await prisma.learningProgress.findMany({
+      where: {
+        userId,
+        courseId,
+        lessonId: {
+          in: lessonIds,
+        },
+      },
+      select: {
+        lessonId: true,
+        status: true,
+      },
+    });
+    const completedLessonIds = new Set(
+      progressRows
+        .filter((progress) => progress.status === PROGRESS_COMPLETED_STATUS)
+        .map((progress) => progress.lessonId),
+    );
+    const completedLessons = completedLessonIds.size;
+    const progressPercent = Math.round((completedLessons / totalLessons) * 100);
+
+    return {
+      courseId,
+      completedLessonIds: [...completedLessonIds],
+      completedLessons,
+      totalLessons,
+      progressPercent,
+      completed: completedLessons === totalLessons,
     };
   }
 
@@ -336,6 +760,23 @@ export class CoursesService {
       error.code === 'P2002' &&
       Array.isArray(error.meta?.target) &&
       error.meta.target.includes('slug')
+    );
+  }
+
+  private isDuplicateEnrollmentError(error: unknown): boolean {
+    if (error instanceof ConflictException) {
+      return false;
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return error.code === 'P2002';
+    }
+
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2002'
     );
   }
 }

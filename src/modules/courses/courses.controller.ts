@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -28,23 +29,27 @@ import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import {
   CourseDetailResponse,
   CourseResponse,
+  CourseProgressResponse,
   CoursesService,
+  EnrollmentResponse,
+  PaginatedCourseResponse,
 } from './courses.service';
 import { CreateCourseDto } from './dto/create-course.dto';
+import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
 @ApiTags('Courses')
-@Controller('courses')
+@Controller()
 export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
-  @Get()
+  @Get('courses')
   @ApiOkResponse({ description: 'Published public courses returned successfully.' })
   listCourses(): Promise<CourseResponse[]> {
     return this.coursesService.listCourses();
   }
 
-  @Get(':id')
+  @Get('courses/:id')
   @ApiOkResponse({ description: 'Published public course returned successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid course id.' })
   @ApiNotFoundResponse({ description: 'Course not found.' })
@@ -54,7 +59,21 @@ export class CoursesController {
     return this.coursesService.getCourse(courseId);
   }
 
-  @Post()
+  @Get('instructor/courses')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.instructor)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Instructor courses returned successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Instructor role required.' })
+  listInstructorCourses(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: ListInstructorCoursesQueryDto,
+  ): Promise<PaginatedCourseResponse> {
+    return this.coursesService.listInstructorCourses(user, query);
+  }
+
+  @Post('courses')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @ApiBearerAuth()
@@ -70,7 +89,7 @@ export class CoursesController {
     return this.coursesService.createCourse(user, input);
   }
 
-  @Put(':id')
+  @Put('courses/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @ApiBearerAuth()
@@ -88,7 +107,7 @@ export class CoursesController {
     return this.coursesService.updateCourse(user, courseId, input);
   }
 
-  @Post(':id/publish')
+  @Post('courses/:id/publish')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @ApiBearerAuth()
@@ -106,7 +125,7 @@ export class CoursesController {
     return this.coursesService.publishCourse(user, courseId);
   }
 
-  @Post(':id/archive')
+  @Post('courses/:id/archive')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @ApiBearerAuth()
@@ -120,5 +139,71 @@ export class CoursesController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
   ): Promise<CourseResponse> {
     return this.coursesService.archiveCourse(user, courseId);
+  }
+
+  @Post('courses/:id/enroll')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'Course enrollment created successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid course id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({ description: 'Published course not found.' })
+  @ApiConflictResponse({ description: 'Course already enrolled.' })
+  enrollCourse(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
+  ): Promise<EnrollmentResponse> {
+    return this.coursesService.enrollCourse(user.id, courseId);
+  }
+
+  @Get('me/enrollments')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Current user enrollments returned successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  getMyEnrollments(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<EnrollmentResponse[]> {
+    return this.coursesService.getMyEnrollments(user.id);
+  }
+
+  @Post('lessons/:id/complete')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Lesson marked complete successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid lesson id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({
+    description: 'Lesson or enrollment not found for current student.',
+  })
+  completeLesson(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,
+  ): Promise<CourseProgressResponse> {
+    return this.coursesService.completeLesson(user.id, lessonId);
+  }
+
+  @Get('courses/:id/progress')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Course progress returned successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid course id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({
+    description: 'Enrollment not found for current student.',
+  })
+  getCourseProgress(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
+  ): Promise<CourseProgressResponse> {
+    return this.coursesService.getCourseProgress(user.id, courseId);
   }
 }
