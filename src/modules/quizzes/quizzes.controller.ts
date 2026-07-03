@@ -36,6 +36,7 @@ import {
   QuestionResponse,
   QuizAttemptResponse,
   QuizResponse,
+  StudentQuizResponse,
   QuizzesService,
 } from './quizzes.service';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
@@ -178,6 +179,31 @@ export class QuizzesController {
     @Body() input: SubmitQuizAttemptDto,
   ): Promise<QuizAttemptResponse> {
     return this.quizzesService.submitAttempt(user.id, quizId, input);
+  }
+
+  @Get('quizzes/:quizId/take')
+  @Roles(RoleName.student)
+  @ApiOkResponse({ description: 'Published quiz returned without answer keys.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({
+    description: 'Published quiz or student enrollment not found.',
+  })
+  getStudentQuiz(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('quizId', new ParseUUIDPipe({ version: '4' })) quizId: string,
+  ): Promise<StudentQuizResponse> {
+    return this.quizzesService.getStudentQuiz(user.id, quizId);
+  }
+
+  @Get('courses/:courseId/quizzes/available')
+  @Roles(RoleName.student)
+  @ApiOkResponse({ description: 'Published enrolled course quizzes returned.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  listStudentQuizzes(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
+  ): Promise<QuizResponse[]> {
+    return this.quizzesService.listStudentQuizzes(user.id, courseId);
   }
 
   @Get('quizzes/:quizId/attempts/me')

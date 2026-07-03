@@ -20,20 +20,41 @@ const quiz = {
 };
 const attemptQuiz = {
   id: quiz.id,
+  courseId: quiz.courseId,
+  lessonId: quiz.lessonId,
+  title: quiz.title,
+  description: quiz.description,
   passingScore: 70,
+  timeLimitMinutes: quiz.timeLimitMinutes,
   status: QuizStatus.published,
+  createdAt: quiz.createdAt,
+  updatedAt: quiz.updatedAt,
   questions: [
     {
       id: '11111111-1111-4111-8111-111111111111',
+      quizId: quiz.id,
       type: QuestionType.multiple_choice,
+      questionText: 'Chọn định nghĩa đúng về AI',
+      optionsJson: ['A', 'B'],
       correctAnswerJson: 'A',
+      explanation: null,
       points: 2,
+      orderIndex: 1,
+      createdAt: quiz.createdAt,
+      updatedAt: quiz.updatedAt,
     },
     {
       id: '22222222-2222-4222-8222-222222222222',
+      quizId: quiz.id,
       type: QuestionType.true_false,
+      questionText: 'AI luôn đúng?',
+      optionsJson: null,
       correctAnswerJson: true,
+      explanation: null,
       points: 1,
+      orderIndex: 2,
+      createdAt: quiz.createdAt,
+      updatedAt: quiz.updatedAt,
     },
   ],
 };
@@ -194,6 +215,82 @@ describe('QuizzesService', () => {
         submittedAt: expect.any(Date),
       },
       select: expect.not.objectContaining({ answersJson: true }),
+    });
+  });
+
+  it('returns a student-safe published quiz without answer keys', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.getStudentQuiz('student-id', quiz.id)).resolves.toEqual({
+      courseId: quiz.courseId,
+      createdAt: quiz.createdAt,
+      description: quiz.description,
+      id: quiz.id,
+      lessonId: quiz.lessonId,
+      passingScore: 70,
+      questions: [
+        {
+          id: attemptQuiz.questions[0].id,
+          optionsJson: ['A', 'B'],
+          orderIndex: 1,
+          points: 2,
+          questionText: 'Chọn định nghĩa đúng về AI',
+          quizId: quiz.id,
+          type: QuestionType.multiple_choice,
+        },
+        {
+          id: attemptQuiz.questions[1].id,
+          optionsJson: null,
+          orderIndex: 2,
+          points: 1,
+          questionText: 'AI luôn đúng?',
+          quizId: quiz.id,
+          type: QuestionType.true_false,
+        },
+      ],
+      status: QuizStatus.published,
+      timeLimitMinutes: quiz.timeLimitMinutes,
+      title: quiz.title,
+      updatedAt: quiz.updatedAt,
+    });
+    expect(prisma.quiz.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: quiz.id,
+        deletedAt: null,
+        status: QuizStatus.published,
+        course: {
+          deletedAt: null,
+          status: 'published',
+          enrollments: { some: { userId: 'student-id' } },
+        },
+      },
+      select: expect.objectContaining({
+        questions: expect.objectContaining({
+          select: expect.not.objectContaining({ correctAnswerJson: true }),
+        }),
+      }),
+    });
+  });
+
+  it('lists published enrolled course quizzes for students', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.listStudentQuizzes('student-id', course.id)).resolves.toEqual([
+      quiz,
+    ]);
+    expect(prisma.quiz.findMany).toHaveBeenCalledWith({
+      where: {
+        courseId: course.id,
+        deletedAt: null,
+        status: QuizStatus.published,
+        course: {
+          deletedAt: null,
+          status: 'published',
+          enrollments: { some: { userId: 'student-id' } },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: expect.any(Object),
     });
   });
 

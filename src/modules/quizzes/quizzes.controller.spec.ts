@@ -14,6 +14,8 @@ describe('QuizzesController', () => {
       getQuiz: jest.fn().mockResolvedValue({ id: 'quiz-id' }),
       updateQuiz: jest.fn().mockResolvedValue({ id: 'quiz-id' }),
       publishQuiz: jest.fn().mockResolvedValue({ id: 'quiz-id' }),
+      listStudentQuizzes: jest.fn().mockResolvedValue([]),
+      getStudentQuiz: jest.fn().mockResolvedValue({ id: 'quiz-id', questions: [] }),
       deleteQuiz: jest.fn().mockResolvedValue({ deleted: true }),
       createQuestion: jest.fn().mockResolvedValue({ id: 'question-id' }),
       listQuestions: jest.fn().mockResolvedValue([]),
@@ -77,7 +79,23 @@ describe('QuizzesController', () => {
     expect(service.listMyAttempts).toHaveBeenCalledWith(student.id, 'quiz-id');
   });
 
+  it('uses the authenticated student id for student quiz reads', async () => {
+    const { controller, service } = createController();
+
+    await controller.listStudentQuizzes(student, 'course-id');
+    await controller.getStudentQuiz(student, 'quiz-id');
+
+    expect(service.listStudentQuizzes).toHaveBeenCalledWith(student.id, 'course-id');
+    expect(service.getStudentQuiz).toHaveBeenCalledWith(student.id, 'quiz-id');
+  });
+
   it('requires student role for attempt routes', () => {
+    expect(
+      Reflect.getMetadata(ROLES_KEY, QuizzesController.prototype.listStudentQuizzes),
+    ).toEqual([RoleName.student]);
+    expect(
+      Reflect.getMetadata(ROLES_KEY, QuizzesController.prototype.getStudentQuiz),
+    ).toEqual([RoleName.student]);
     expect(
       Reflect.getMetadata(ROLES_KEY, QuizzesController.prototype.submitAttempt),
     ).toEqual([RoleName.student]);

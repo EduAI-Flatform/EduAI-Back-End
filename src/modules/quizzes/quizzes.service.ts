@@ -46,6 +46,16 @@ const questionResponseSelect = {
   updatedAt: true,
 } satisfies Prisma.QuestionSelect;
 
+const studentQuestionResponseSelect = {
+  id: true,
+  quizId: true,
+  type: true,
+  questionText: true,
+  optionsJson: true,
+  points: true,
+  orderIndex: true,
+} satisfies Prisma.QuestionSelect;
+
 const attemptResponseSelect = {
   id: true,
   quizId: true,
@@ -64,6 +74,14 @@ export type QuizResponse = Prisma.QuizGetPayload<{
 export type QuestionResponse = Prisma.QuestionGetPayload<{
   select: typeof questionResponseSelect;
 }>;
+
+export type StudentQuestionResponse = Prisma.QuestionGetPayload<{
+  select: typeof studentQuestionResponseSelect;
+}>;
+
+export type StudentQuizResponse = QuizResponse & {
+  questions: StudentQuestionResponse[];
+};
 
 type StoredAttemptResponse = Prisma.QuizAttemptGetPayload<{
   select: typeof attemptResponseSelect;
@@ -324,6 +342,60 @@ export class QuizzesService {
     return { ...attempt, scorePercent: this.roundScore(scorePercent) };
   }
 
+  async getStudentQuiz(
+    userId: string,
+    quizId: string,
+  ): Promise<StudentQuizResponse> {
+    const quiz = await this.prisma.quiz.findFirst({
+      where: this.studentPublishedQuizWhere(userId, quizId),
+      select: {
+        ...quizResponseSelect,
+        questions: {
+          orderBy: { orderIndex: 'asc' },
+          select: studentQuestionResponseSelect,
+        },
+      },
+    });
+
+    if (!quiz) {
+      throw new NotFoundException('Quiz not found');
+    }
+
+    const { questions, ...quizResponse } = quiz;
+    return {
+      ...quizResponse,
+      questions: questions.map((question) => ({
+        id: question.id,
+        quizId: question.quizId,
+        type: question.type,
+        questionText: question.questionText,
+        optionsJson: question.optionsJson,
+        points: question.points,
+        orderIndex: question.orderIndex,
+      })),
+    };
+  }
+
+  async listStudentQuizzes(
+    userId: string,
+    courseId: string,
+  ): Promise<QuizResponse[]> {
+    return this.prisma.quiz.findMany({
+      where: {
+        courseId,
+        deletedAt: null,
+        status: QuizStatus.published,
+        course: {
+          deletedAt: null,
+          status: CourseStatus.published,
+          enrollments: { some: { userId } },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: quizResponseSelect,
+    });
+  }
+
   async listMyAttempts(
     userId: string,
     quizId: string,
@@ -356,6 +428,22 @@ export class QuizzesService {
       throw new NotFoundException('Course not found');
     }
     return course;
+  }
+
+  private studentPublishedQuizWhere(
+    userId: string,
+    quizId: string,
+  ): Prisma.QuizWhereInput {
+    return {
+      id: quizId,
+      deletedAt: null,
+      status: QuizStatus.published,
+      course: {
+        deletedAt: null,
+        status: CourseStatus.published,
+        enrollments: { some: { userId } },
+      },
+    };
   }
 
   private async findManageableQuizOrThrow(
