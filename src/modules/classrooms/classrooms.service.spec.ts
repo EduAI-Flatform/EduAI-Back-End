@@ -17,6 +17,7 @@ const course = {
 };
 const scheduledStart = new Date('2026-07-10T08:00:00.000Z');
 const scheduledEnd = new Date('2026-07-10T09:00:00.000Z');
+const serverNow = new Date('2026-07-10T08:15:30.000Z');
 const classroomSession = {
   id: 'session-id',
   courseId: course.id,
@@ -56,6 +57,34 @@ function createService() {
         ...classroomSession,
         status: ClassroomSessionStatus.live,
         actualStart: scheduledStart,
+      }),
+    },
+    classroomAttendance: {
+      findFirst: jest.fn().mockResolvedValue({
+        id: 'attendance-id',
+        sessionId: classroomSession.id,
+        userId: student.id,
+        joinedAt: scheduledStart,
+      }),
+      upsert: jest.fn().mockResolvedValue({
+        id: 'attendance-id',
+        sessionId: classroomSession.id,
+        userId: student.id,
+        joinedAt: serverNow,
+        leftAt: null,
+        durationSeconds: null,
+        createdAt: serverNow,
+        updatedAt: serverNow,
+      }),
+      update: jest.fn().mockResolvedValue({
+        id: 'attendance-id',
+        sessionId: classroomSession.id,
+        userId: student.id,
+        joinedAt: scheduledStart,
+        leftAt: serverNow,
+        durationSeconds: 930,
+        createdAt: scheduledStart,
+        updatedAt: serverNow,
       }),
     },
   };
@@ -203,5 +232,78 @@ describe('ClassroomsService', () => {
     await expect(service.joinSession(student.id, classroomSession.id)).rejects.toEqual(
       new NotFoundException('Classroom session not found'),
     );
+  });
+
+  it('records join attendance with server-side timestamps and one row per session user', async () => {
+    jest.useFakeTimers().setSystemTime(serverNow);
+    const { prisma, service } = createService();
+
+    await expect(
+      service.recordAttendance(student.id, classroomSession.id, { event: 'join' }),
+    ).resolves.toEqual(expect.objectContaining({
+      sessionId: classroomSession.id,
+      userId: student.id,
+      joinedAt: serverNow,
+      leftAt: null,
+      durationSeconds: null,
+    }));
+
+    expect(prisma.classroomAttendance.upsert).toHaveBeenCalledWith({
+      where: {
+        sessionId_userId: {
+          sessionId: classroomSession.id,
+          userId: student.id,
+        },
+      },
+      create: expect.objectContaining({
+        sessionId: classroomSession.id,
+        userId: student.id,
+        joinedAt: serverNow,
+      }),
+      update: expect.objectContaining({
+        joinedAt: serverNow,
+        leftAt: null,
+        durationSeconds: null,
+      }),
+      select: expect.any(Object),
+    });
+    jest.useRealTimers();
+  });
+
+  it('records leave attendance and calculates duration on the server', async () => {
+    jest.useFakeTimers().setSystemTime(serverNow);
+    const { prisma, service } = createService();
+
+    await expect(
+      service.recordAttendance(student.id, classroomSession.id, { event: 'leave' }),
+    ).resolves.toEqual(expect.objectContaining({
+      leftAt: serverNow,
+      durationSeconds: 930,
+    }));
+
+    expect(prisma.classroomAttendance.update).toHaveBeenCalledWith({
+      where: {
+        sessionId_userId: {
+          sessionId: classroomSession.id,
+          userId: student.id,
+        },
+      },
+      data: {
+        leftAt: serverNow,
+        durationSeconds: 930,
+      },
+      select: expect.any(Object),
+    });
+    jest.useRealTimers();
+  });
+
+  it('rejects attendance for sessions the student cannot join', async () => {
+    const { prisma, service } = createService();
+    prisma.classroomSession.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      service.recordAttendance(student.id, classroomSession.id, { event: 'join' }),
+    ).rejects.toEqual(new NotFoundException('Classroom session not found'));
+    expect(prisma.classroomAttendance.upsert).not.toHaveBeenCalled();
   });
 });

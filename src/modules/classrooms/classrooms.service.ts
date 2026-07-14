@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateClassroomSessionDto } from './dto/create-classroom-session.dto';
+import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { UpdateClassroomSessionDto } from './dto/update-classroom-session.dto';
 import { JitsiRoomService } from './jitsi-room.service';
 
@@ -49,6 +50,21 @@ export interface JoinedClassroomSessionResponse {
   roomName: string;
   meetingUrl: string;
 }
+
+const classroomAttendanceResponseSelect = {
+  id: true,
+  sessionId: true,
+  userId: true,
+  joinedAt: true,
+  leftAt: true,
+  durationSeconds: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.ClassroomAttendanceSelect;
+
+export type ClassroomAttendanceResponse = Prisma.ClassroomAttendanceGetPayload<{
+  select: typeof classroomAttendanceResponseSelect;
+}>;
 
 type ManageableCourse = {
   id: string;
@@ -245,6 +261,20 @@ export class ClassroomsService {
     };
   }
 
+  async recordAttendance(
+    userId: string,
+    sessionId: string,
+    input: RecordAttendanceDto,
+  ): Promise<ClassroomAttendanceResponse> {
+    await this.findJoinableSessionOrThrow(userId, sessionId);
+
+    if (input.event === 'join') {
+      return this.recordJoin(userId, sessionId);
+    }
+
+    return this.recordLeave(userId, sessionId);
+  }
+
   private async findManageableCourseOrThrow(
     user: AuthenticatedUser,
     courseId: string,
@@ -259,6 +289,92 @@ export class ClassroomsService {
     }
 
     return course;
+  }
+
+  private async findJoinableSessionOrThrow(
+    userId: string,
+    sessionId: string,
+  ): Promise<{ id: string }> {
+    const session = await this.prisma.classroomSession.findFirst({
+      where: {
+        id: sessionId,
+        deletedAt: null,
+        status: ClassroomSessionStatus.live,
+        course: {
+          deletedAt: null,
+          status: CourseStatus.published,
+          enrollments: { some: { userId } },
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Classroom session not found');
+    }
+
+    return session;
+  }
+
+  private recordJoin(
+    userId: string,
+    sessionId: string,
+  ): Promise<ClassroomAttendanceResponse> {
+    const now = new Date();
+
+    return this.prisma.classroomAttendance.upsert({
+      where: {
+        sessionId_userId: {
+          sessionId,
+          userId,
+        },
+      },
+      create: {
+        sessionId,
+        userId,
+        joinedAt: now,
+      },
+      update: {
+        joinedAt: now,
+        leftAt: null,
+        durationSeconds: null,
+      },
+      select: classroomAttendanceResponseSelect,
+    });
+  }
+
+  private async recordLeave(
+    userId: string,
+    sessionId: string,
+  ): Promise<ClassroomAttendanceResponse> {
+    const existingAttendance = await this.prisma.classroomAttendance.findFirst({
+      where: { sessionId, userId },
+      select: { id: true, joinedAt: true },
+    });
+
+    if (!existingAttendance) {
+      throw new NotFoundException('Classroom attendance not found');
+    }
+
+    const now = new Date();
+    const durationSeconds = Math.max(
+      0,
+      Math.floor((now.getTime() - existingAttendance.joinedAt.getTime()) / 1000),
+    );
+
+    return this.prisma.classroomAttendance.update({
+      where: {
+        sessionId_userId: {
+          sessionId,
+          userId,
+        },
+      },
+      data: {
+        leftAt: now,
+        durationSeconds,
+      },
+      select: classroomAttendanceResponseSelect,
+    });
   }
 
   private async resolveCourseAccess(

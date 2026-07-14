@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateClassroomSessionDto } from './create-classroom-session.dto';
+import { RecordAttendanceDto } from './record-attendance.dto';
 import { UpdateClassroomSessionDto } from './update-classroom-session.dto';
 
 async function validationMessages(dtoClass: new () => object, payload: object) {
@@ -39,5 +40,17 @@ describe('Classroom session DTO validation', () => {
         expect.stringContaining('scheduledStart'),
       ]),
     );
+  });
+
+  it('accepts only supported attendance events', async () => {
+    await expect(
+      validationMessages(RecordAttendanceDto, { event: 'join' }),
+    ).resolves.toEqual([]);
+    await expect(
+      validationMessages(RecordAttendanceDto, { event: 'leave' }),
+    ).resolves.toEqual([]);
+    await expect(
+      validationMessages(RecordAttendanceDto, { event: 'arrive' }),
+    ).resolves.toEqual([expect.stringContaining('event')]);
   });
 });

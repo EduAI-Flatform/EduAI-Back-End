@@ -16,6 +16,7 @@ describe('ClassroomsController', () => {
       deleteSession: jest.fn().mockResolvedValue({ deleted: true }),
       startSession: jest.fn().mockResolvedValue({ meetingUrl: 'https://meet.jit.si/room' }),
       joinSession: jest.fn().mockResolvedValue({ meetingUrl: 'https://meet.jit.si/room' }),
+      recordAttendance: jest.fn().mockResolvedValue({ id: 'attendance-id' }),
     };
     return { controller: new ClassroomsController(service as never), service };
   }
@@ -35,6 +36,7 @@ describe('ClassroomsController', () => {
     await controller.deleteSession(instructor, 'session-id');
     await controller.startSession(instructor, 'session-id');
     await controller.joinSession(student, 'session-id');
+    await controller.recordAttendance(student, 'session-id', { event: 'join' });
 
     expect(service.createSession).toHaveBeenCalledWith(instructor, 'course-id', input);
     expect(service.listSessions).toHaveBeenCalledWith(student, 'course-id');
@@ -47,6 +49,11 @@ describe('ClassroomsController', () => {
     expect(service.deleteSession).toHaveBeenCalledWith(instructor, 'session-id');
     expect(service.startSession).toHaveBeenCalledWith(instructor, 'session-id');
     expect(service.joinSession).toHaveBeenCalledWith(student.id, 'session-id');
+    expect(service.recordAttendance).toHaveBeenCalledWith(
+      student.id,
+      'session-id',
+      { event: 'join' },
+    );
   });
 
   it('requires guards and separates manager from student-visible routes', () => {
@@ -85,6 +92,12 @@ describe('ClassroomsController', () => {
       Reflect.getMetadata(
         ROLES_KEY,
         ClassroomsController.prototype.joinSession,
+      ),
+    ).toEqual([RoleName.student]);
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        ClassroomsController.prototype.recordAttendance,
       ),
     ).toEqual([RoleName.student]);
   });

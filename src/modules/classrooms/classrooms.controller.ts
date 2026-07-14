@@ -27,12 +27,14 @@ import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import {
   ClassroomSessionResponse,
+  ClassroomAttendanceResponse,
   ClassroomsService,
   DeletedClassroomSessionResponse,
   JoinedClassroomSessionResponse,
   StartedClassroomSessionResponse,
 } from './classrooms.service';
 import { CreateClassroomSessionDto } from './dto/create-classroom-session.dto';
+import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { UpdateClassroomSessionDto } from './dto/update-classroom-session.dto';
 
 const MANAGER_ROLES = [RoleName.instructor, RoleName.platform_admin];
@@ -127,5 +129,20 @@ export class ClassroomsController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) sessionId: string,
   ): Promise<JoinedClassroomSessionResponse> {
     return this.classroomsService.joinSession(user.id, sessionId);
+  }
+
+  @Post('classroom-sessions/:id/attendance')
+  @Roles(RoleName.student)
+  @ApiOkResponse({ description: 'Classroom attendance event recorded.' })
+  @ApiBadRequestResponse({ description: 'Invalid attendance event.' })
+  @ApiNotFoundResponse({
+    description: 'Live classroom session, enrollment, or attendance not found.',
+  })
+  recordAttendance(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) sessionId: string,
+    @Body() input: RecordAttendanceDto,
+  ): Promise<ClassroomAttendanceResponse> {
+    return this.classroomsService.recordAttendance(user.id, sessionId, input);
   }
 }
