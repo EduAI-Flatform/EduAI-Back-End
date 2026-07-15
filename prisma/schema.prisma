@@ -100,6 +100,9 @@ model User {
   classroomAttendance ClassroomAttendance[] @relation("ClassroomAttendanceUser")
   libraryResources LibraryResource[] @relation("LibraryResourceOwner")
   savedResources SavedResource[]
+  communityPosts CommunityPost[]  @relation("CommunityPostAuthor")
+  communityComments CommunityComment[] @relation("CommunityCommentAuthor")
+  communityReactions CommunityReaction[]
 
   @@index([status])
   @@map("users")
@@ -532,4 +535,62 @@ model SavedResource {
   @@unique([userId, resourceId])
   @@index([resourceId])
   @@map("saved_resources")
+}
+
+model CommunityPost {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  authorId   String              @map("author_id") @db.Uuid
+  title      String
+  content    String
+  visibility String              @default("public")
+  status     String              @default("active")
+  createdAt  DateTime            @default(now()) @map("created_at")
+  updatedAt  DateTime            @updatedAt @map("updated_at")
+  deletedAt  DateTime?           @map("deleted_at")
+  author     User                @relation("CommunityPostAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  comments   CommunityComment[]
+  reactions  CommunityReaction[]
+
+  @@index([authorId])
+  @@index([visibility])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("community_posts")
+}
+
+model CommunityComment {
+  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postId    String            @map("post_id") @db.Uuid
+  authorId  String            @map("author_id") @db.Uuid
+  parentId  String?           @map("parent_id") @db.Uuid
+  content   String
+  status    String            @default("active")
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  deletedAt DateTime?         @map("deleted_at")
+  post      CommunityPost     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author    User              @relation("CommunityCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  parent    CommunityComment? @relation("CommunityCommentReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies   CommunityComment[] @relation("CommunityCommentReplies")
+
+  @@index([postId])
+  @@index([authorId])
+  @@index([parentId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("community_comments")
+}
+
+model CommunityReaction {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postId    String        @map("post_id") @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  type      String
+  createdAt DateTime      @default(now()) @map("created_at")
+  post      CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId, type])
+  @@index([userId])
+  @@map("community_reactions")
 }

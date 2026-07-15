@@ -23,6 +23,9 @@ model User {
   classroomAttendance ClassroomAttendance[] @relation("ClassroomAttendanceUser")
   libraryResources LibraryResource[] @relation("LibraryResourceOwner")
   savedResources SavedResource[]
+  communityPosts CommunityPost[]  @relation("CommunityPostAuthor")
+  communityComments CommunityComment[] @relation("CommunityCommentAuthor")
+  communityReactions CommunityReaction[]
 
   @@index([status])
   @@map("users")
