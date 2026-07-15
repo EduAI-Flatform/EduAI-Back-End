@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CourseVisibility, Prisma, RoleName } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLibraryResourceDto } from './dto/create-library-resource.dto';
@@ -30,6 +35,11 @@ export interface PaginatedLibraryResourceResponse {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export interface LibraryFavoriteActionResponse {
+  success: true;
+  message: string;
 }
 
 @Injectable()
@@ -105,6 +115,82 @@ export class LibraryResourceService {
       },
       select: resourceSelect,
     });
+  }
+
+  async listFavorites(userId: string, roles: RoleName[]): Promise<LibraryResourceResponse[]> {
+    const visibleResources = this.buildResourceWhere(userId, roles, {
+      page: 1,
+      limit: 100,
+    });
+    const favorites = await this.prisma.savedResource.findMany({
+      where: {
+        userId,
+        resource: visibleResources,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { resource: { select: resourceSelect } },
+    });
+
+    return favorites.map(({ resource }) => resource);
+  }
+
+  async favoriteResource(
+    userId: string,
+    roles: RoleName[],
+    resourceId: string,
+  ): Promise<LibraryFavoriteActionResponse> {
+    await this.ensureVisibleResource(userId, roles, resourceId);
+
+    try {
+      await this.prisma.savedResource.create({
+        data: { userId, resourceId },
+      });
+    } catch (error) {
+      if (this.isFavoriteConflict(error)) {
+        throw new ConflictException('Resource is already favorited');
+      }
+      throw error;
+    }
+
+    return { success: true, message: 'Resource added to favorites' };
+  }
+
+  async unfavoriteResource(
+    userId: string,
+    roles: RoleName[],
+    resourceId: string,
+  ): Promise<LibraryFavoriteActionResponse> {
+    await this.ensureVisibleResource(userId, roles, resourceId);
+    await this.prisma.savedResource.deleteMany({
+      where: { userId, resourceId },
+    });
+
+    return { success: true, message: 'Resource removed from favorites' };
+  }
+
+  private async ensureVisibleResource(
+    userId: string,
+    roles: RoleName[],
+    resourceId: string,
+  ): Promise<void> {
+    const resource = await this.prisma.libraryResource.findFirst({
+      where: {
+        id: resourceId,
+        ...this.buildResourceWhere(userId, roles, { page: 1, limit: 100 }),
+      },
+      select: { id: true },
+    });
+    if (!resource) throw new NotFoundException('Library resource not found');
+  }
+
+  private isFavoriteConflict(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002' &&
+      Array.isArray(error.meta?.target) &&
+      error.meta.target.includes('user_id') &&
+      error.meta.target.includes('resource_id')
+    );
   }
 
   private buildResourceWhere(

@@ -1,6 +1,6 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { LibraryResourceService } from './library-resource.service';
-import { CourseVisibility, RoleName } from '../../../generated/prisma/client';
+import { CourseVisibility, Prisma, RoleName } from '../../../generated/prisma/client';
 
 const resource = {
   id: 'resource-id',
@@ -30,7 +30,13 @@ function createService() {
     libraryResource: {
       count: jest.fn().mockResolvedValue(1),
       create: jest.fn().mockResolvedValue(resource),
+      findFirst: jest.fn().mockResolvedValue({ id: resource.id }),
       findMany: jest.fn().mockResolvedValue([resource]),
+    },
+    savedResource: {
+      create: jest.fn().mockResolvedValue({ id: 'saved-id' }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findMany: jest.fn().mockResolvedValue([{ resource }]),
     },
   };
   const storage = {
@@ -48,6 +54,55 @@ function createService() {
 }
 
 describe('LibraryResourceService', () => {
+  it('creates one favorite for an accessible resource', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.favoriteResource('student-id', [RoleName.student], resource.id),
+    ).resolves.toEqual({ success: true, message: 'Resource added to favorites' });
+
+    expect(prisma.savedResource.create).toHaveBeenCalledWith({
+      data: { userId: 'student-id', resourceId: resource.id },
+    });
+  });
+
+  it('maps the unique favorite constraint to a conflict', async () => {
+    const { prisma, service } = createService();
+    prisma.savedResource.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '7.8.0',
+        meta: { target: ['user_id', 'resource_id'] },
+      }),
+    );
+
+    await expect(
+      service.favoriteResource('student-id', [RoleName.student], resource.id),
+    ).rejects.toEqual(new ConflictException('Resource is already favorited'));
+  });
+
+  it('removes only the current user favorite', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.unfavoriteResource('student-id', [RoleName.student], resource.id),
+    ).resolves.toEqual({ success: true, message: 'Resource removed from favorites' });
+    expect(prisma.savedResource.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 'student-id', resourceId: resource.id },
+    });
+  });
+
+  it('lists only favorites visible to the current user', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.listFavorites('student-id', [RoleName.student]),
+    ).resolves.toEqual([resource]);
+    expect(prisma.savedResource.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ userId: 'student-id' }),
+    }));
+  });
+
   it('searches public resources with filters and pagination', async () => {
     const { prisma, service } = createService();
 

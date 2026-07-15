@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  ParseUUIDPipe,
   Query,
   Post,
   UploadedFile,
@@ -31,6 +34,7 @@ import { ListLibraryResourcesQueryDto } from './dto/list-library-resources-query
 import { LibraryR2StorageService, MAX_LIBRARY_FILE_SIZE_BYTES } from './library-r2-storage.service';
 import {
   LibraryResourceResponse,
+  LibraryFavoriteActionResponse,
   LibraryResourceService,
   PaginatedLibraryResourceResponse,
 } from './library-resource.service';
@@ -51,6 +55,32 @@ export class LibraryResourceController {
     @Query() query: ListLibraryResourcesQueryDto,
   ): Promise<PaginatedLibraryResourceResponse> {
     return this.service.listResources(user.id, user.roles, query);
+  }
+
+  @Get('favorites')
+  @ApiOkResponse({ description: 'Current user favorites returned successfully.' })
+  listFavorites(@CurrentUser() user: AuthenticatedUser): Promise<LibraryResourceResponse[]> {
+    return this.service.listFavorites(user.id, user.roles);
+  }
+
+  @Post(':id/favorite')
+  @ApiOkResponse({ description: 'Resource added to favorites.' })
+  @ApiNotFoundResponse({ description: 'Library resource not found or not visible.' })
+  favoriteResource(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) resourceId: string,
+  ): Promise<LibraryFavoriteActionResponse> {
+    return this.service.favoriteResource(user.id, user.roles, resourceId);
+  }
+
+  @Delete(':id/favorite')
+  @ApiOkResponse({ description: 'Resource removed from favorites.' })
+  @ApiNotFoundResponse({ description: 'Library resource not found or not visible.' })
+  unfavoriteResource(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) resourceId: string,
+  ): Promise<LibraryFavoriteActionResponse> {
+    return this.service.unfavoriteResource(user.id, user.roles, resourceId);
   }
 
   @Post()
