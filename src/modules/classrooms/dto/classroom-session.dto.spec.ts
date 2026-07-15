@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateClassroomSessionDto } from './create-classroom-session.dto';
+import { CreateClassroomRecordingDto } from './create-classroom-recording.dto';
 import { RecordAttendanceDto } from './record-attendance.dto';
 import { UpdateClassroomSessionDto } from './update-classroom-session.dto';
 
@@ -52,5 +53,26 @@ describe('Classroom session DTO validation', () => {
     await expect(
       validationMessages(RecordAttendanceDto, { event: 'arrive' }),
     ).resolves.toEqual([expect.stringContaining('event')]);
+  });
+
+  it('validates HTTPS classroom recording metadata', async () => {
+    await expect(
+      validationMessages(CreateClassroomRecordingDto, {
+        recordingUrl: 'https://recordings.example.com/session.mp4',
+        durationSeconds: 3600,
+      }),
+    ).resolves.toEqual([]);
+
+    await expect(
+      validationMessages(CreateClassroomRecordingDto, {
+        recordingUrl: 'http://recordings.example.com/session.mp4',
+        durationSeconds: -1,
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('recordingUrl must be a URL'),
+        expect.stringContaining('durationSeconds'),
+      ]),
+    );
   });
 });

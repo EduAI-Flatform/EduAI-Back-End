@@ -28,11 +28,13 @@ import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import {
   ClassroomSessionResponse,
   ClassroomAttendanceResponse,
+  ClassroomRecordingResponse,
   ClassroomsService,
   DeletedClassroomSessionResponse,
   JoinedClassroomSessionResponse,
   StartedClassroomSessionResponse,
 } from './classrooms.service';
+import { CreateClassroomRecordingDto } from './dto/create-classroom-recording.dto';
 import { CreateClassroomSessionDto } from './dto/create-classroom-session.dto';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { UpdateClassroomSessionDto } from './dto/update-classroom-session.dto';
@@ -144,5 +146,18 @@ export class ClassroomsController {
     @Body() input: RecordAttendanceDto,
   ): Promise<ClassroomAttendanceResponse> {
     return this.classroomsService.recordAttendance(user.id, sessionId, input);
+  }
+
+  @Post('classroom-sessions/:id/recording')
+  @Roles(...MANAGER_ROLES)
+  @ApiCreatedResponse({ description: 'Classroom recording metadata stored.' })
+  @ApiBadRequestResponse({ description: 'Invalid recording metadata.' })
+  @ApiNotFoundResponse({ description: 'Owned classroom session not found.' })
+  addRecording(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) sessionId: string,
+    @Body() input: CreateClassroomRecordingDto,
+  ): Promise<ClassroomRecordingResponse> {
+    return this.classroomsService.addRecording(user, sessionId, input);
   }
 }

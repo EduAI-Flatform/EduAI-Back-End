@@ -17,6 +17,7 @@ describe('ClassroomsController', () => {
       startSession: jest.fn().mockResolvedValue({ meetingUrl: 'https://meet.jit.si/room' }),
       joinSession: jest.fn().mockResolvedValue({ meetingUrl: 'https://meet.jit.si/room' }),
       recordAttendance: jest.fn().mockResolvedValue({ id: 'attendance-id' }),
+      addRecording: jest.fn().mockResolvedValue({ id: 'recording-id' }),
     };
     return { controller: new ClassroomsController(service as never), service };
   }
@@ -37,6 +38,9 @@ describe('ClassroomsController', () => {
     await controller.startSession(instructor, 'session-id');
     await controller.joinSession(student, 'session-id');
     await controller.recordAttendance(student, 'session-id', { event: 'join' });
+    await controller.addRecording(instructor, 'session-id', {
+      recordingUrl: 'https://recordings.example.com/session.mp4',
+    });
 
     expect(service.createSession).toHaveBeenCalledWith(instructor, 'course-id', input);
     expect(service.listSessions).toHaveBeenCalledWith(student, 'course-id');
@@ -53,6 +57,11 @@ describe('ClassroomsController', () => {
       student.id,
       'session-id',
       { event: 'join' },
+    );
+    expect(service.addRecording).toHaveBeenCalledWith(
+      instructor,
+      'session-id',
+      { recordingUrl: 'https://recordings.example.com/session.mp4' },
     );
   });
 
@@ -100,5 +109,11 @@ describe('ClassroomsController', () => {
         ClassroomsController.prototype.recordAttendance,
       ),
     ).toEqual([RoleName.student]);
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        ClassroomsController.prototype.addRecording,
+      ),
+    ).toEqual([RoleName.instructor, RoleName.platform_admin]);
   });
 });

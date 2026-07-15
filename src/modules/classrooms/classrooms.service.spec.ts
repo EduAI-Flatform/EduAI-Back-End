@@ -87,6 +87,15 @@ function createService() {
         updatedAt: serverNow,
       }),
     },
+    classroomRecording: {
+      create: jest.fn().mockResolvedValue({
+        id: 'recording-id',
+        sessionId: classroomSession.id,
+        recordingUrl: 'https://recordings.example.com/session.mp4',
+        durationSeconds: 3600,
+        createdAt: serverNow,
+      }),
+    },
   };
   return {
     prisma,
@@ -305,5 +314,42 @@ describe('ClassroomsService', () => {
       service.recordAttendance(student.id, classroomSession.id, { event: 'join' }),
     ).rejects.toEqual(new NotFoundException('Classroom session not found'));
     expect(prisma.classroomAttendance.upsert).not.toHaveBeenCalled();
+  });
+
+  it('adds recording metadata for a manageable classroom session', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.addRecording(instructor, classroomSession.id, {
+        recordingUrl: 'https://recordings.example.com/session.mp4',
+        durationSeconds: 3600,
+      }),
+    ).resolves.toEqual(expect.objectContaining({
+      id: 'recording-id',
+      sessionId: classroomSession.id,
+      recordingUrl: 'https://recordings.example.com/session.mp4',
+      durationSeconds: 3600,
+    }));
+
+    expect(prisma.classroomRecording.create).toHaveBeenCalledWith({
+      data: {
+        sessionId: classroomSession.id,
+        recordingUrl: 'https://recordings.example.com/session.mp4',
+        durationSeconds: 3600,
+      },
+      select: expect.any(Object),
+    });
+  });
+
+  it('hides recording creation from non-owning instructors', async () => {
+    const { prisma, service } = createService();
+    const otherInstructor = { id: 'other-instructor-id', roles: [RoleName.instructor] };
+
+    await expect(
+      service.addRecording(otherInstructor, classroomSession.id, {
+        recordingUrl: 'https://recordings.example.com/session.mp4',
+      }),
+    ).rejects.toEqual(new NotFoundException('Classroom session not found'));
+    expect(prisma.classroomRecording.create).not.toHaveBeenCalled();
   });
 });

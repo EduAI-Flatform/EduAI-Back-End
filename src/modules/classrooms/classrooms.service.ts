@@ -7,6 +7,7 @@ import {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CreateClassroomRecordingDto } from './dto/create-classroom-recording.dto';
 import { CreateClassroomSessionDto } from './dto/create-classroom-session.dto';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { UpdateClassroomSessionDto } from './dto/update-classroom-session.dto';
@@ -64,6 +65,18 @@ const classroomAttendanceResponseSelect = {
 
 export type ClassroomAttendanceResponse = Prisma.ClassroomAttendanceGetPayload<{
   select: typeof classroomAttendanceResponseSelect;
+}>;
+
+const classroomRecordingResponseSelect = {
+  id: true,
+  sessionId: true,
+  recordingUrl: true,
+  durationSeconds: true,
+  createdAt: true,
+} satisfies Prisma.ClassroomRecordingSelect;
+
+export type ClassroomRecordingResponse = Prisma.ClassroomRecordingGetPayload<{
+  select: typeof classroomRecordingResponseSelect;
 }>;
 
 type ManageableCourse = {
@@ -273,6 +286,23 @@ export class ClassroomsService {
     }
 
     return this.recordLeave(userId, sessionId);
+  }
+
+  async addRecording(
+    user: AuthenticatedUser,
+    sessionId: string,
+    input: CreateClassroomRecordingDto,
+  ): Promise<ClassroomRecordingResponse> {
+    await this.findManageableSessionOrThrow(user, sessionId);
+
+    return this.prisma.classroomRecording.create({
+      data: {
+        sessionId,
+        recordingUrl: input.recordingUrl,
+        durationSeconds: input.durationSeconds,
+      },
+      select: classroomRecordingResponseSelect,
+    });
   }
 
   private async findManageableCourseOrThrow(
