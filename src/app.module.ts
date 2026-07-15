@@ -8,6 +8,7 @@ import { ClassroomsModule } from './modules/classrooms/classrooms.module';
 import { CoursesModule } from './modules/courses/courses.module';
 import { HealthModule } from './modules/health/health.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
+import { LibraryModule } from './modules/library/library.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -23,6 +24,7 @@ import { PrismaModule } from './prisma/prisma.module';
     ProfileModule,
     CoursesModule,
     LessonsModule,
+    LibraryModule,
     QuizzesModule,
     AssignmentsModule,
     ClassroomsModule,
