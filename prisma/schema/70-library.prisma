@@ -1,0 +1,72 @@
+model LibraryCategory {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  slug        String            @unique
+  description String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  resources   LibraryResource[]
+
+  @@map("library_categories")
+}
+
+model LibraryResource {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId     String            @map("owner_id") @db.Uuid
+  categoryId  String            @map("category_id") @db.Uuid
+  title       String
+  description String?
+  type        String
+  fileUrl     String?           @map("file_url")
+  externalUrl String?           @map("external_url")
+  visibility  String            @default("public")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  deletedAt   DateTime?         @map("deleted_at")
+  owner       User              @relation("LibraryResourceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  category    LibraryCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  tags        ResourceTag[]
+  savedBy     SavedResource[]
+
+  @@index([ownerId])
+  @@index([categoryId])
+  @@index([type])
+  @@index([visibility])
+  @@index([deletedAt])
+  @@map("library_resources")
+}
+
+model LibraryTag {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  slug      String        @unique
+  createdAt DateTime      @default(now()) @map("created_at")
+  resources ResourceTag[]
+
+  @@map("library_tags")
+}
+
+model ResourceTag {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resourceId String          @map("resource_id") @db.Uuid
+  tagId      String          @map("tag_id") @db.Uuid
+  resource   LibraryResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  tag        LibraryTag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceId, tagId])
+  @@index([tagId])
+  @@map("resource_tags")
+}
+
+model SavedResource {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String          @map("user_id") @db.Uuid
+  resourceId String          @map("resource_id") @db.Uuid
+  createdAt  DateTime        @default(now()) @map("created_at")
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource   LibraryResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, resourceId])
+  @@index([resourceId])
+  @@map("saved_resources")
+}

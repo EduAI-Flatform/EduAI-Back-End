@@ -21,6 +21,8 @@ model User {
   gradedSubmissions Submission[]   @relation("SubmissionGrader")
   classroomSessions ClassroomSession[] @relation("ClassroomSessionInstructor")
   classroomAttendance ClassroomAttendance[] @relation("ClassroomAttendanceUser")
+  libraryResources LibraryResource[] @relation("LibraryResourceOwner")
+  savedResources SavedResource[]
 
   @@index([status])
   @@map("users")
