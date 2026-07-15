@@ -1,6 +1,8 @@
 import {
   Body,
   Controller,
+  Get,
+  Query,
   Post,
   UploadedFile,
   UseGuards,
@@ -15,6 +17,7 @@ import {
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
+  ApiOkResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
@@ -24,8 +27,14 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CreateLibraryResourceDto } from './dto/create-library-resource.dto';
+import { ListLibraryResourcesQueryDto } from './dto/list-library-resources-query.dto';
 import { LibraryR2StorageService, MAX_LIBRARY_FILE_SIZE_BYTES } from './library-r2-storage.service';
-import { LibraryResourceResponse, LibraryResourceService } from './library-resource.service';
+import {
+  LibraryResourceResponse,
+  LibraryResourceService,
+  PaginatedLibraryResourceResponse,
+} from './library-resource.service';
+import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { UploadedLibraryFile } from './types/library-upload.types';
 
 @ApiTags('Library resources')
@@ -34,6 +43,15 @@ import { UploadedLibraryFile } from './types/library-upload.types';
 @Controller('library/resources')
 export class LibraryResourceController {
   constructor(private readonly service: LibraryResourceService) {}
+
+  @Get()
+  @ApiOkResponse({ description: 'Library resources returned successfully.' })
+  listResources(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: ListLibraryResourcesQueryDto,
+  ): Promise<PaginatedLibraryResourceResponse> {
+    return this.service.listResources(user.id, user.roles, query);
+  }
 
   @Post()
   @Roles(RoleName.instructor, RoleName.platform_admin)

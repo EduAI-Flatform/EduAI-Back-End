@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { LibraryResourceService } from './library-resource.service';
+import { CourseVisibility, RoleName } from '../../../generated/prisma/client';
 
 const resource = {
   id: 'resource-id',
@@ -19,6 +20,7 @@ const resource = {
 
 function createService() {
   const prisma = {
+    $transaction: jest.fn((queries: Promise<unknown>[]) => Promise.all(queries)),
     libraryCategory: {
       findUnique: jest.fn().mockResolvedValue({ id: 'category-id' }),
     },
@@ -26,7 +28,9 @@ function createService() {
       findMany: jest.fn().mockResolvedValue([{ id: 'tag-id' }]),
     },
     libraryResource: {
+      count: jest.fn().mockResolvedValue(1),
       create: jest.fn().mockResolvedValue(resource),
+      findMany: jest.fn().mockResolvedValue([resource]),
     },
   };
   const storage = {
@@ -44,6 +48,70 @@ function createService() {
 }
 
 describe('LibraryResourceService', () => {
+  it('searches public resources with filters and pagination', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.listResources('student-id', [RoleName.student], {
+        page: 2,
+        limit: 10,
+        search: 'TypeScript',
+        categoryId: 'category-id',
+        tagId: 'tag-id',
+        type: 'pdf' as never,
+        visibility: CourseVisibility.public,
+      }),
+    ).resolves.toEqual({ items: [resource], total: 1, page: 2, limit: 10, totalPages: 1 });
+
+    const where = prisma.libraryResource.count.mock.calls[0][0].where;
+    expect(where).toEqual(expect.objectContaining({
+      deletedAt: null,
+      categoryId: 'category-id',
+      type: 'pdf',
+    }));
+    expect(where.AND).toEqual(expect.arrayContaining([
+      { visibility: CourseVisibility.public },
+    ]));
+    expect(where.tags).toEqual({ some: { tagId: 'tag-id' } });
+    expect(where.AND).toEqual(expect.arrayContaining([expect.objectContaining({ OR: expect.any(Array) })]));
+    expect(where.AND.find((condition: { OR?: unknown[] }) => condition.OR)?.OR).toHaveLength(6);
+    expect(prisma.libraryResource.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      skip: 10,
+      take: 10,
+    }));
+  });
+
+  it('allows instructors to see public resources and their own private resources', async () => {
+    const { prisma, service } = createService();
+
+    await service.listResources('instructor-id', [RoleName.instructor], {
+      page: 1,
+      limit: 20,
+    });
+
+    expect(prisma.libraryResource.count.mock.calls[0][0].where.AND).toEqual(expect.arrayContaining([{
+      OR: [
+        { visibility: CourseVisibility.public },
+        { ownerId: 'instructor-id' },
+      ],
+    }]));
+  });
+
+  it('keeps private visibility filters scoped to the instructor owner', async () => {
+    const { prisma, service } = createService();
+
+    await service.listResources('instructor-id', [RoleName.instructor], {
+      page: 1,
+      limit: 20,
+      visibility: CourseVisibility.private,
+    });
+
+    expect(prisma.libraryResource.count.mock.calls[0][0].where.AND).toEqual([
+      { visibility: CourseVisibility.private },
+      { OR: [{ visibility: CourseVisibility.public }, { ownerId: 'instructor-id' }] },
+    ]);
+  });
+
   it('stores the generated R2 URL and selected tag links', async () => {
     const { prisma, service, storage } = createService();
 
