@@ -9,9 +9,14 @@ export function configureApp(
   nodeEnv: string,
   logger: AppLoggerService,
 ): void {
-  const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((o) =>
+  const configuredOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((o) =>
     o.trim(),
-  ) ?? [];
+  ).filter(Boolean) ?? [];
+  const allowedOrigins = configuredOrigins.length > 0
+    ? configuredOrigins
+    : nodeEnv === 'development'
+      ? ['http://localhost:5173', 'http://127.0.0.1:5173']
+      : [];
 
   app.enableCors({
     origin: allowedOrigins,

@@ -103,6 +103,9 @@ model User {
   communityPosts CommunityPost[]  @relation("CommunityPostAuthor")
   communityComments CommunityComment[] @relation("CommunityCommentAuthor")
   communityReactions CommunityReaction[]
+  aiConversations AiConversation[]
+  aiGeneratedQuizzes AiGeneratedQuiz[]
+  aiFlashcards AiFlashcard[]
 
   @@index([status])
   @@map("users")
@@ -593,4 +596,76 @@ model CommunityReaction {
   @@unique([postId, userId, type])
   @@index([userId])
   @@map("community_reactions")
+}
+
+model AiConversation {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String       @map("user_id") @db.Uuid
+  contextType String?      @map("context_type")
+  contextId   String?      @map("context_id") @db.Uuid
+  title       String?
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages    AiMessage[]
+
+  @@index([userId])
+  @@index([contextType, contextId])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String         @map("conversation_id") @db.Uuid
+  role           String
+  content        String
+  tokenCount     Int?           @map("token_count")
+  model          String?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiEmbedding {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceType   String   @map("source_type")
+  sourceId     String   @map("source_id") @db.Uuid
+  chunkText    String   @map("chunk_text")
+  embedding    Unsupported("vector")?
+  metadataJson Json?    @map("metadata_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([sourceType, sourceId])
+  @@map("ai_embeddings")
+}
+
+model AiGeneratedQuiz {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  sourceType String   @map("source_type")
+  sourceId   String   @map("source_id") @db.Uuid
+  outputJson Json     @map("output_json")
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
+  @@map("ai_generated_quizzes")
+}
+
+model AiFlashcard {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  sourceType String   @map("source_type")
+  sourceId   String   @map("source_id") @db.Uuid
+  front      String
+  back       String
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
+  @@map("ai_flashcards")
 }
