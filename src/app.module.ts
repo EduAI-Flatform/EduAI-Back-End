@@ -3,6 +3,7 @@ import { AppConfigModule } from './config/app-config.module';
 import { RedisModule } from './config/redis.module';
 import { LoggingModule } from './common/logging/logging.module';
 import { AssignmentsModule } from './modules/assignments/assignments.module';
+import { AiModule } from './modules/ai/ai.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ClassroomsModule } from './modules/classrooms/classrooms.module';
 import { CommunityModule } from './modules/community/community.module';
@@ -30,6 +31,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AssignmentsModule,
     ClassroomsModule,
     CommunityModule,
+    AiModule,
   ],
 })
 export class AppModule {}
