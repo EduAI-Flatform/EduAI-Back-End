@@ -11,6 +11,9 @@ describe('CommunityController', () => {
       deletePost: jest.fn().mockResolvedValue({ success: true }),
       getPost: jest.fn().mockResolvedValue({ id: 'post-id' }),
       listPosts: jest.fn().mockResolvedValue([]),
+      createComment: jest.fn().mockResolvedValue({ id: 'comment-id' }),
+      listComments: jest.fn().mockResolvedValue([]),
+      deleteComment: jest.fn().mockResolvedValue({ success: true }),
     };
     const controller = new CommunityController(service as never);
     const user = { id: 'user-id', roles: [RoleName.student] };
@@ -18,16 +21,24 @@ describe('CommunityController', () => {
     await controller.createPost(user, { title: 'Title', content: 'Content' });
     await controller.updatePost(user, 'post-id', { title: 'Updated' });
     await controller.deletePost(user, 'post-id');
+    await controller.createComment(user, 'post-id', { content: 'Comment' });
+    await controller.listComments('post-id');
+    await controller.deleteComment(user, 'comment-id');
 
     expect(service.createPost).toHaveBeenCalledWith(user, { title: 'Title', content: 'Content' });
     expect(service.updatePost).toHaveBeenCalledWith(user, 'post-id', { title: 'Updated' });
     expect(service.deletePost).toHaveBeenCalledWith(user, 'post-id');
+    expect(service.createComment).toHaveBeenCalledWith(user, 'post-id', { content: 'Comment' });
+    expect(service.listComments).toHaveBeenCalledWith('post-id');
+    expect(service.deleteComment).toHaveBeenCalledWith(user, 'comment-id');
   });
 
   it('protects post mutations with JWT authentication', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, CommunityController.prototype.createPost)).toBeDefined();
     expect(Reflect.getMetadata(GUARDS_METADATA, CommunityController.prototype.updatePost)).toBeDefined();
     expect(Reflect.getMetadata(GUARDS_METADATA, CommunityController.prototype.deletePost)).toBeDefined();
+    expect(Reflect.getMetadata(GUARDS_METADATA, CommunityController.prototype.createComment)).toBeDefined();
+    expect(Reflect.getMetadata(GUARDS_METADATA, CommunityController.prototype.deleteComment)).toBeDefined();
     expect(Reflect.getMetadata(ROLES_KEY, CommunityController.prototype.createPost)).toBeUndefined();
   });
 });

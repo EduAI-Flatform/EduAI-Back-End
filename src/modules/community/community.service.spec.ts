@@ -15,6 +15,12 @@ describe('CommunityService', () => {
         findFirst: jest.fn(),
         update: jest.fn(),
       },
+      communityComment: {
+        create: jest.fn(),
+        findMany: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn(),
+      },
     };
 
     return { service: new CommunityService(prisma as never), prisma };
@@ -108,6 +114,76 @@ describe('CommunityService', () => {
     });
     expect(prisma.communityPost.update).toHaveBeenCalledWith({
       where: { id: 'post-id' },
+      data: { status: 'removed', deletedAt: expect.any(Date) },
+    });
+  });
+
+  it('creates a nested comment only when its parent belongs to the same post', async () => {
+    const { service, prisma } = createService();
+    prisma.communityPost.findFirst.mockResolvedValue({ id: 'post-id' });
+    prisma.communityComment.findFirst.mockResolvedValue({ id: 'parent-id' });
+    prisma.communityComment.create.mockResolvedValue({
+      id: 'reply-id',
+      postId: 'post-id',
+      parentId: 'parent-id',
+    });
+
+    await service.createComment(student, 'post-id', {
+      content: 'A reply',
+      parentId: 'parent-id',
+    });
+
+    expect(prisma.communityComment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          postId: 'post-id',
+          authorId: student.id,
+          parentId: 'parent-id',
+          content: 'A reply',
+          status: 'active',
+        },
+        select: expect.any(Object),
+      }),
+    );
+    expect(prisma.communityComment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 'parent-id',
+          postId: 'post-id',
+          deletedAt: null,
+          status: 'active',
+        },
+      }),
+    );
+  });
+
+  it('lists active comments for a visible post in creation order', async () => {
+    const { service, prisma } = createService();
+    prisma.communityPost.findFirst.mockResolvedValue({ id: 'post-id' });
+    prisma.communityComment.findMany.mockResolvedValue([]);
+
+    await service.listComments('post-id');
+
+    expect(prisma.communityComment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { postId: 'post-id', deletedAt: null, status: 'active' },
+        orderBy: { createdAt: 'asc' },
+        select: expect.any(Object),
+      }),
+    );
+  });
+
+  it('allows only the comment author or admin to delete a comment', async () => {
+    const { service, prisma } = createService();
+    prisma.communityComment.findFirst.mockResolvedValue({ authorId: student.id });
+    prisma.communityComment.update.mockResolvedValue(undefined);
+
+    await expect(service.deleteComment(student, 'comment-id')).resolves.toEqual({
+      success: true,
+      message: 'Community comment deleted successfully',
+    });
+    expect(prisma.communityComment.update).toHaveBeenCalledWith({
+      where: { id: 'comment-id' },
       data: { status: 'removed', deletedAt: expect.any(Date) },
     });
   });

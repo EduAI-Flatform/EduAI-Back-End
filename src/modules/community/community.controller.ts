@@ -23,21 +23,22 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateCommunityPostDto } from './dto/create-community-post.dto';
+import { CreateCommunityCommentDto } from './dto/create-community-comment.dto';
 import { UpdateCommunityPostDto } from './dto/update-community-post.dto';
 import { CommunityService } from './community.service';
 
 @ApiTags('Community posts')
-@Controller('community/posts')
+@Controller('community')
 export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
-  @Get()
+  @Get('posts')
   @ApiOkResponse({ description: 'Active public community posts returned successfully.' })
   listPosts() {
     return this.communityService.listPosts();
   }
 
-  @Get(':id')
+  @Get('posts/:id')
   @ApiOkResponse({ description: 'Community post returned successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid post id.' })
   @ApiNotFoundResponse({ description: 'Community post not found.' })
@@ -45,7 +46,7 @@ export class CommunityController {
     return this.communityService.getPost(id);
   }
 
-  @Post()
+  @Post('posts')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiCreatedResponse({ description: 'Community post created successfully.' })
@@ -58,7 +59,7 @@ export class CommunityController {
     return this.communityService.createPost(user, input);
   }
 
-  @Put(':id')
+  @Put('posts/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({ description: 'Community post updated successfully.' })
@@ -74,7 +75,7 @@ export class CommunityController {
     return this.communityService.updatePost(user, id, input);
   }
 
-  @Delete(':id')
+  @Delete('posts/:id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({ description: 'Community post deleted successfully.' })
@@ -86,5 +87,44 @@ export class CommunityController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ) {
     return this.communityService.deletePost(user, id);
+  }
+
+  @Get('posts/:postId/comments')
+  @ApiOkResponse({ description: 'Active comments and replies returned successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid post id.' })
+  @ApiNotFoundResponse({ description: 'Community post not found.' })
+  listComments(
+    @Param('postId', new ParseUUIDPipe({ version: '4' })) postId: string,
+  ) {
+    return this.communityService.listComments(postId);
+  }
+
+  @Post('posts/:postId/comments')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'Community comment created successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid comment or parent id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Community post or parent comment not found.' })
+  createComment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('postId', new ParseUUIDPipe({ version: '4' })) postId: string,
+    @Body() input: CreateCommunityCommentDto,
+  ) {
+    return this.communityService.createComment(user, postId, input);
+  }
+
+  @Delete('comments/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Community comment deleted successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid comment id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Community comment not found for current user.' })
+  deleteComment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return this.communityService.deleteComment(user, id);
   }
 }

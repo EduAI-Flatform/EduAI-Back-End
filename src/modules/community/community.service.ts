@@ -3,6 +3,7 @@ import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateCommunityPostDto } from './dto/create-community-post.dto';
+import { CreateCommunityCommentDto } from './dto/create-community-comment.dto';
 import { UpdateCommunityPostDto } from './dto/update-community-post.dto';
 
 const communityPostResponseSelect = {
@@ -22,8 +23,29 @@ const communityPostResponseSelect = {
   },
 } satisfies Prisma.CommunityPostSelect;
 
+const communityCommentResponseSelect = {
+  id: true,
+  postId: true,
+  parentId: true,
+  content: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  author: {
+    select: {
+      id: true,
+      fullName: true,
+      avatarUrl: true,
+    },
+  },
+} satisfies Prisma.CommunityCommentSelect;
+
 type CommunityPostResponse = Prisma.CommunityPostGetPayload<{
   select: typeof communityPostResponseSelect;
+}>;
+
+type CommunityCommentResponse = Prisma.CommunityCommentGetPayload<{
+  select: typeof communityCommentResponseSelect;
 }>;
 
 export interface CommunitySuccessResponse {
@@ -137,6 +159,82 @@ export class CommunityService {
     };
   }
 
+  async listComments(postId: string): Promise<CommunityCommentResponse[]> {
+    await this.findVisiblePost(postId);
+
+    return this.prisma.communityComment.findMany({
+      where: {
+        postId,
+        deletedAt: null,
+        status: 'active',
+      },
+      orderBy: { createdAt: 'asc' },
+      select: communityCommentResponseSelect,
+    });
+  }
+
+  async createComment(
+    user: AuthenticatedUser,
+    postId: string,
+    input: CreateCommunityCommentDto,
+  ): Promise<CommunityCommentResponse> {
+    await this.findVisiblePost(postId);
+
+    if (input.parentId) {
+      const parent = await this.prisma.communityComment.findFirst({
+        where: {
+          id: input.parentId,
+          postId,
+          deletedAt: null,
+          status: 'active',
+        },
+        select: { id: true },
+      });
+
+      if (!parent) {
+        throw new NotFoundException('Parent community comment not found');
+      }
+    }
+
+    return this.prisma.communityComment.create({
+      data: {
+        postId,
+        authorId: user.id,
+        parentId: input.parentId ?? null,
+        content: input.content,
+        status: 'active',
+      },
+      select: communityCommentResponseSelect,
+    });
+  }
+
+  async deleteComment(
+    user: AuthenticatedUser,
+    id: string,
+  ): Promise<CommunitySuccessResponse> {
+    const comment = await this.prisma.communityComment.findFirst({
+      where: { id, deletedAt: null },
+      select: { authorId: true },
+    });
+
+    if (!comment || (comment.authorId !== user.id && !this.isAdmin(user))) {
+      throw new NotFoundException('Community comment not found');
+    }
+
+    await this.prisma.communityComment.update({
+      where: { id },
+      data: {
+        status: 'removed',
+        deletedAt: new Date(),
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Community comment deleted successfully',
+    };
+  }
+
   private findManageablePost(id: string): Promise<{ authorId: string }> {
     return this.prisma.communityPost.findFirst({
       where: { id, deletedAt: null },
@@ -147,6 +245,24 @@ export class CommunityService {
       }
       return post;
     });
+  }
+
+  private async findVisiblePost(id: string): Promise<{ id: string }> {
+    const post = await this.prisma.communityPost.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        status: 'active',
+        visibility: 'public',
+      },
+      select: { id: true },
+    });
+
+    if (!post) {
+      throw new NotFoundException('Community post not found');
+    }
+
+    return post;
   }
 
   private isAdmin(user: AuthenticatedUser): boolean {
