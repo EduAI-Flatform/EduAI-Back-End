@@ -12,6 +12,7 @@ import {
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -126,5 +127,34 @@ export class CommunityController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ) {
     return this.communityService.deleteComment(user, id);
+  }
+
+  @Post('posts/:id/reactions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'Community post liked successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid post id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Community post not found.' })
+  @ApiConflictResponse({ description: 'Community post is already liked by the current user.' })
+  likePost(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return this.communityService.likePost(user, id);
+  }
+
+  @Delete('posts/:id/reactions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Community post unliked successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid post id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Community post not found.' })
+  unlikePost(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return this.communityService.unlikePost(user, id);
   }
 }

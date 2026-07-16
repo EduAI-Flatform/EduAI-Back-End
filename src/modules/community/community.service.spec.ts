@@ -21,6 +21,10 @@ describe('CommunityService', () => {
         findFirst: jest.fn(),
         update: jest.fn(),
       },
+      communityReaction: {
+        create: jest.fn(),
+        deleteMany: jest.fn(),
+      },
     };
 
     return { service: new CommunityService(prisma as never), prisma };
@@ -186,5 +190,44 @@ describe('CommunityService', () => {
       where: { id: 'comment-id' },
       data: { status: 'removed', deletedAt: expect.any(Date) },
     });
+  });
+
+  it('creates one like for an authenticated user and returns a compact command response', async () => {
+    const { service, prisma } = createService();
+    prisma.communityPost.findFirst.mockResolvedValue({ id: 'post-id' });
+    prisma.communityReaction.create.mockResolvedValue({ id: 'reaction-id' });
+
+    await expect(service.likePost(student, 'post-id')).resolves.toEqual({
+      success: true,
+      message: 'Community post liked successfully',
+    });
+    expect(prisma.communityReaction.create).toHaveBeenCalledWith({
+      data: { postId: 'post-id', userId: student.id, type: 'like' },
+      select: { id: true },
+    });
+  });
+
+  it('removes the authenticated user like without affecting other reactions', async () => {
+    const { service, prisma } = createService();
+    prisma.communityPost.findFirst.mockResolvedValue({ id: 'post-id' });
+    prisma.communityReaction.deleteMany.mockResolvedValue({ count: 1 });
+
+    await expect(service.unlikePost(student, 'post-id')).resolves.toEqual({
+      success: true,
+      message: 'Community post unliked successfully',
+    });
+    expect(prisma.communityReaction.deleteMany).toHaveBeenCalledWith({
+      where: { postId: 'post-id', userId: student.id, type: 'like' },
+    });
+  });
+
+  it('maps a duplicate database like to a conflict response', async () => {
+    const { service, prisma } = createService();
+    prisma.communityPost.findFirst.mockResolvedValue({ id: 'post-id' });
+    prisma.communityReaction.create.mockRejectedValue({ code: 'P2002' });
+
+    await expect(service.likePost(student, 'post-id')).rejects.toThrow(
+      'Community post already liked',
+    );
   });
 });

@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
@@ -235,6 +240,54 @@ export class CommunityService {
     };
   }
 
+  async likePost(
+    user: AuthenticatedUser,
+    postId: string,
+  ): Promise<CommunitySuccessResponse> {
+    await this.findVisiblePost(postId);
+
+    try {
+      await this.prisma.communityReaction.create({
+        data: {
+          postId,
+          userId: user.id,
+          type: 'like',
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      if (this.isDuplicateReaction(error)) {
+        throw new ConflictException('Community post already liked');
+      }
+      throw error;
+    }
+
+    return {
+      success: true,
+      message: 'Community post liked successfully',
+    };
+  }
+
+  async unlikePost(
+    user: AuthenticatedUser,
+    postId: string,
+  ): Promise<CommunitySuccessResponse> {
+    await this.findVisiblePost(postId);
+
+    await this.prisma.communityReaction.deleteMany({
+      where: {
+        postId,
+        userId: user.id,
+        type: 'like',
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Community post unliked successfully',
+    };
+  }
+
   private findManageablePost(id: string): Promise<{ authorId: string }> {
     return this.prisma.communityPost.findFirst({
       where: { id, deletedAt: null },
@@ -267,5 +320,14 @@ export class CommunityService {
 
   private isAdmin(user: AuthenticatedUser): boolean {
     return user.roles.includes(RoleName.platform_admin);
+  }
+
+  private isDuplicateReaction(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2002'
+    );
   }
 }
