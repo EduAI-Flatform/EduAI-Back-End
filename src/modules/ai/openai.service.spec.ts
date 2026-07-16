@@ -2,9 +2,13 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { OpenAiService } from './openai.service';
 
-function createConfig(apiKey?: string, model?: string): AppConfigService {
+function createConfig(
+  apiKey?: string,
+  model?: string,
+  embeddingModel?: string,
+): AppConfigService {
   return {
-    openai: { apiKey, model },
+    openai: { apiKey, model, embeddingModel },
   } as AppConfigService;
 }
 
@@ -20,6 +24,16 @@ describe('OpenAiService', () => {
     const service = new OpenAiService(createConfig('test-key'));
 
     expect(service.getModel()).toBe('gpt-5.4-mini');
+  });
+
+  it('uses the configured embedding model with a small-model default', () => {
+    expect(new OpenAiService(createConfig('test-key')).getEmbeddingModel()).toBe(
+      'text-embedding-3-small',
+    );
+    expect(
+      new OpenAiService(createConfig('test-key', undefined, 'custom-embedding'))
+        .getEmbeddingModel(),
+    ).toBe('custom-embedding');
   });
 
   it('does not expose the API key when the provider is unavailable', () => {

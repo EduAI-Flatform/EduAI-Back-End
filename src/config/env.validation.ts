@@ -14,6 +14,7 @@ export interface ValidatedEnv {
   R2_PUBLIC_URL?: string;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
+  OPENAI_EMBEDDING_MODEL?: string;
 }
 
 export function loadBackendEnv(): ValidatedEnv {
@@ -47,6 +48,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     R2_PUBLIC_URL: optionalString(config.R2_PUBLIC_URL),
     OPENAI_API_KEY: optionalString(config.OPENAI_API_KEY),
     OPENAI_MODEL: optionalString(config.OPENAI_MODEL),
+    OPENAI_EMBEDDING_MODEL: optionalString(config.OPENAI_EMBEDDING_MODEL),
   };
 
   return validated;

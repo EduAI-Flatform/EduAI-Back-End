@@ -4,13 +4,14 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { AiController } from './ai.controller';
 import { AiConversationService } from './ai-conversation.service';
+import { AiEmbeddingService } from './ai-embedding.service';
 import { AiRateLimitService } from './ai-rate-limit.service';
 import { OpenAiService } from './openai.service';
 
 @Module({
   imports: [AppConfigModule, PrismaModule, AuthModule],
   controllers: [AiController],
-  providers: [AiConversationService, AiRateLimitService, OpenAiService],
+  providers: [AiConversationService, AiEmbeddingService, AiRateLimitService, OpenAiService],
   exports: [AiConversationService, OpenAiService],
 })
 export class AiModule {}

@@ -25,6 +25,7 @@ export interface BackendConfig {
   openai: {
     apiKey?: string;
     model?: string;
+    embeddingModel?: string;
   };
 }
 
@@ -56,6 +57,7 @@ export default function configuration(): BackendConfig {
     openai: {
       apiKey: env.OPENAI_API_KEY,
       model: env.OPENAI_MODEL,
+      embeddingModel: env.OPENAI_EMBEDDING_MODEL,
     },
   };
 }
