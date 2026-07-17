@@ -18,6 +18,7 @@ model Course {
   quizzes      Quiz[]
   assignments  Assignment[]
   classroomSessions ClassroomSession[]
+  certificates Certificate[]
 
   @@index([instructorId])
   @@index([status])

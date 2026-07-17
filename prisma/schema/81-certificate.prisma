@@ -1,0 +1,34 @@
+model CertificateTemplate {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  description  String?
+  backgroundUrl String?      @map("background_url")
+  layoutJson   Json?         @map("layout_json")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  certificates Certificate[]
+
+  @@map("certificate_templates")
+}
+
+model Certificate {
+  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String             @map("user_id") @db.Uuid
+  courseId            String             @map("course_id") @db.Uuid
+  certificateTemplateId String           @map("certificate_template_id") @db.Uuid
+  certificateCode     String             @unique @map("certificate_code")
+  title               String
+  issuedAt            DateTime           @default(now()) @map("issued_at")
+  verificationUrl     String?            @map("verification_url")
+  qrCodeUrl           String?            @map("qr_code_url")
+  metadataJson        Json?              @map("metadata_json")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  user                User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  course              Course             @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  certificateTemplate CertificateTemplate @relation(fields: [certificateTemplateId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([courseId])
+  @@index([certificateTemplateId])
+  @@map("certificates")
+}
