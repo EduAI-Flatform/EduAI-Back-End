@@ -1,12 +1,43 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { RedisConfigService } from '../../config/redis-config.service';
+
+const DAILY_LIMIT = 30;
+const localUsage = new Map<string, number>();
 
 @Injectable()
 export class AiRateLimitService {
-  /**
-   * Hook for the documented per-user AI quota. Redis-backed enforcement belongs
-   * to the rate-limit slice and is intentionally not implemented here.
-   */
-  async assertChatAllowed(_userId: string): Promise<void> {
-    return undefined;
+  constructor(private readonly redisConfig: RedisConfigService) {}
+
+  async assertChatAllowed(userId: string): Promise<void> {
+    const key = `ai:chat:${userId}:${new Date().toISOString().slice(0, 10)}`;
+    const redis = this.redisConfig.getClient();
+
+    if (!redis) {
+      const nextUsage = (localUsage.get(key) ?? 0) + 1;
+      localUsage.set(key, nextUsage);
+      if (nextUsage > DAILY_LIMIT) {
+        throw new HttpException('Daily AI chat limit reached', HttpStatus.TOO_MANY_REQUESTS);
+      }
+      return;
+    }
+
+    try {
+      const usage = await redis.incr(key);
+      if (usage === 1) {
+        const secondsUntilReset = Math.max(
+          1,
+          Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1000),
+        );
+        await redis.expire(key, secondsUntilReset);
+      }
+      if (usage > DAILY_LIMIT) {
+        throw new HttpException('Daily AI chat limit reached', HttpStatus.TOO_MANY_REQUESTS);
+      }
+    } catch (error) {
+      if (error instanceof HttpException && error.getStatus() === HttpStatus.TOO_MANY_REQUESTS) {
+        throw error;
+      }
+      throw new ServiceUnavailableException('AI quota service is unavailable');
+    }
   }
 }
