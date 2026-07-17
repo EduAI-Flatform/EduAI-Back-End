@@ -6,6 +6,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { generateCertificateQrCode } from './certificate-qr.util';
 import { IssueCertificateDto } from './dto/issue-certificate.dto';
 
 const certificateResponseSelect = {
@@ -90,14 +91,22 @@ export class CertificatesService {
       return existing;
     }
 
+    const certificateCode = `CERT-${randomUUID().toUpperCase()}`;
+    const verificationUrl = `/api/v1/certificates/verify/${encodeURIComponent(
+      certificateCode,
+    )}`;
+    const qrCodeUrl = await generateCertificateQrCode(verificationUrl);
+
     try {
       return await this.prisma.certificate.create({
         data: {
           userId,
           courseId: enrollment.course.id,
           certificateTemplateId: template.id,
-          certificateCode: `CERT-${randomUUID().toUpperCase()}`,
+          certificateCode,
           title: enrollment.course.title,
+          verificationUrl,
+          qrCodeUrl,
         },
         select: certificateResponseSelect,
       });

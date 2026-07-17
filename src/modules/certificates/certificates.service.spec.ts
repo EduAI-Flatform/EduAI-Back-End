@@ -98,6 +98,10 @@ describe('CertificatesService.issueCertificate', () => {
           certificateTemplateId: templateId,
           title: 'AI Foundations',
           certificateCode: expect.stringMatching(/^CERT-/),
+          verificationUrl: expect.stringMatching(
+            /^\/api\/v1\/certificates\/verify\/CERT-/,
+          ),
+          qrCodeUrl: expect.stringMatching(/^data:image\/png;base64,/),
         }),
         select: expect.any(Object),
       }),
