@@ -8,6 +8,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { ClassroomsModule } from './modules/classrooms/classrooms.module';
 import { CommunityModule } from './modules/community/community.module';
 import { CoursesModule } from './modules/courses/courses.module';
+import { CertificatesModule } from './modules/certificates/certificates.module';
 import { HealthModule } from './modules/health/health.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
 import { LibraryModule } from './modules/library/library.module';
@@ -25,6 +26,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AuthModule,
     ProfileModule,
     CoursesModule,
+    CertificatesModule,
     LessonsModule,
     LibraryModule,
     QuizzesModule,

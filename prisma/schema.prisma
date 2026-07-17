@@ -632,6 +632,7 @@ model Certificate {
   @@index([userId])
   @@index([courseId])
   @@index([certificateTemplateId])
+  @@unique([userId, courseId])
   @@map("certificates")
 }
 
