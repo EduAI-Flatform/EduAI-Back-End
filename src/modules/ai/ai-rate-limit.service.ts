@@ -16,6 +16,14 @@ export class AiRateLimitService {
     return this.assertAllowed(userId, 'summary');
   }
 
+  async assertQuizAllowed(userId: string): Promise<void> {
+    return this.assertAllowed(userId, 'quiz');
+  }
+
+  async assertFlashcardsAllowed(userId: string): Promise<void> {
+    return this.assertAllowed(userId, 'flashcards');
+  }
+
   private async assertAllowed(userId: string, operation: string): Promise<void> {
     const key = `ai:${operation}:${userId}:${new Date().toISOString().slice(0, 10)}`;
     const redis = this.redisConfig.getClient();

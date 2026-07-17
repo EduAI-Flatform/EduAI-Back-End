@@ -12,8 +12,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { AiConversationService } from './ai-conversation.service';
 import { AiSummaryService } from './ai-summary.service';
+import { AiGenerationService } from './ai-generation.service';
 import { CreateAiChatDto } from './dto/create-ai-chat.dto';
 import { CreateAiSummaryDto } from './dto/create-ai-summary.dto';
+import { CreateAiGenerationDto } from './dto/create-ai-generation.dto';
 
 @ApiTags('AI')
 @Controller('ai')
@@ -21,6 +23,7 @@ export class AiController {
   constructor(
     private readonly aiConversationService: AiConversationService,
     private readonly aiSummaryService: AiSummaryService,
+    private readonly aiGenerationService: AiGenerationService,
   ) {}
 
   @Post('chat')
@@ -49,5 +52,33 @@ export class AiController {
     @Body() input: CreateAiSummaryDto,
   ) {
     return this.aiSummaryService.summarize(user, input);
+  }
+
+  @Post('quiz-generator')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'AI quiz generated successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid AI quiz payload.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Quiz source not found for current user.' })
+  createQuiz(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() input: CreateAiGenerationDto,
+  ) {
+    return this.aiGenerationService.generateQuiz(user, input);
+  }
+
+  @Post('flashcards')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'AI flashcards generated successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid AI flashcard payload.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiNotFoundResponse({ description: 'Flashcard source not found for current user.' })
+  createFlashcards(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() input: CreateAiGenerationDto,
+  ) {
+    return this.aiGenerationService.generateFlashcards(user, input);
   }
 }

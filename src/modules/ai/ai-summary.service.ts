@@ -29,9 +29,7 @@ export class AiSummaryService {
     input: CreateAiSummaryDto,
   ): Promise<AiSummaryResponse> {
     await this.rateLimit.assertSummaryAllowed(user.id);
-    const source = input.sourceType === 'lesson'
-      ? await this.getLesson(user, input.sourceId)
-      : await this.getLibraryResource(user, input.sourceId);
+    const source = await this.resolveSource(user, input);
 
     if (!source) throw new NotFoundException('AI summary source not found');
 
@@ -46,6 +44,12 @@ export class AiSummaryService {
     if (!summary) throw new BadGatewayException('AI provider returned an empty summary');
 
     return { sourceType: input.sourceType, sourceId: input.sourceId, title: source.title, summary };
+  }
+
+  async resolveSource(user: AuthenticatedUser, input: CreateAiSummaryDto) {
+    return input.sourceType === 'lesson'
+      ? await this.getLesson(user, input.sourceId)
+      : await this.getLibraryResource(user, input.sourceId);
   }
 
   private async getLesson(user: AuthenticatedUser, lessonId: string) {

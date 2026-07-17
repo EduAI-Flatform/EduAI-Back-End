@@ -4,7 +4,7 @@ import { AiController } from './ai.controller';
 describe('AiController', () => {
   it('delegates chat requests with the authenticated user', async () => {
     const service = { createChat: jest.fn().mockResolvedValue({ conversationId: 'conversation-id' }) };
-    const controller = new AiController(service as never, {} as never);
+    const controller = new AiController(service as never, {} as never, {} as never);
     const user = { id: 'user-id', roles: [] };
     const input = { message: 'Hello AI' };
 
@@ -17,7 +17,7 @@ describe('AiController', () => {
   it('delegates summary requests with the authenticated user', async () => {
     const chat = { createChat: jest.fn() };
     const summary = { summarize: jest.fn().mockResolvedValue({ sourceType: 'lesson', summary: 'Summary' }) };
-    const controller = new AiController(chat as never, summary as never);
+    const controller = new AiController(chat as never, summary as never, {} as never);
     const user = { id: 'user-id', roles: [] };
     const input = { sourceType: 'lesson' as const, sourceId: 'lesson-id' };
 

@@ -8,12 +8,13 @@ import { AiEmbeddingService } from './ai-embedding.service';
 import { AiRetrievalService } from './ai-retrieval.service';
 import { AiRateLimitService } from './ai-rate-limit.service';
 import { AiSummaryService } from './ai-summary.service';
+import { AiGenerationService } from './ai-generation.service';
 import { OpenAiService } from './openai.service';
 
 @Module({
   imports: [AppConfigModule, PrismaModule, AuthModule],
   controllers: [AiController],
-  providers: [AiConversationService, AiEmbeddingService, AiRateLimitService, AiRetrievalService, AiSummaryService, OpenAiService],
+  providers: [AiConversationService, AiEmbeddingService, AiRateLimitService, AiRetrievalService, AiSummaryService, AiGenerationService, OpenAiService],
   exports: [AiConversationService, AiRetrievalService, OpenAiService],
 })
 export class AiModule {}
