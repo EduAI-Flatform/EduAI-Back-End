@@ -108,3 +108,46 @@ describe('CertificatesService.issueCertificate', () => {
     );
   });
 });
+
+describe('CertificatesService.verifyCertificate', () => {
+  it('returns a public certificate projection without sensitive or internal fields', async () => {
+    const publicCertificate = {
+      certificateCode: 'CERT-abc123',
+      title: 'AI Foundations',
+      issuedAt: new Date('2026-07-17T00:00:00.000Z'),
+      verificationUrl: '/api/v1/certificates/verify/CERT-abc123',
+      courseTitle: 'AI Foundations',
+    };
+    const { service } = createService({
+      certificate: {
+        findUnique: jest.fn().mockResolvedValue({
+          certificateCode: publicCertificate.certificateCode,
+          title: publicCertificate.title,
+          issuedAt: publicCertificate.issuedAt,
+          verificationUrl: publicCertificate.verificationUrl,
+          course: { title: publicCertificate.courseTitle },
+          id: 'internal-id',
+          user: { email: 'student@example.com' },
+        }),
+        create: jest.fn(),
+      },
+    });
+
+    await expect(service.verifyCertificate('CERT-abc123')).resolves.toEqual(
+      publicCertificate,
+    );
+  });
+
+  it('rejects an unknown certificate code', async () => {
+    const { service } = createService({
+      certificate: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+      },
+    });
+
+    await expect(service.verifyCertificate('CERT-missing')).rejects.toThrow(
+      'Certificate not found',
+    );
+  });
+});

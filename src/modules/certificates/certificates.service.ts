@@ -23,9 +23,29 @@ const certificateResponseSelect = {
   createdAt: true,
 } satisfies Prisma.CertificateSelect;
 
+const certificateVerificationSelect = {
+  certificateCode: true,
+  title: true,
+  issuedAt: true,
+  verificationUrl: true,
+  course: {
+    select: {
+      title: true,
+    },
+  },
+} satisfies Prisma.CertificateSelect;
+
 export type CertificateResponse = Prisma.CertificateGetPayload<{
   select: typeof certificateResponseSelect;
 }>;
+
+export interface CertificateVerificationResponse {
+  certificateCode: string;
+  title: string;
+  issuedAt: Date;
+  verificationUrl: string | null;
+  courseTitle: string;
+}
 
 type CompletedEnrollment = {
   status: string;
@@ -129,5 +149,24 @@ export class CertificatesService {
 
       throw error;
     }
+  }
+
+  async verifyCertificate(code: string): Promise<CertificateVerificationResponse> {
+    const certificate = await this.prisma.certificate.findUnique({
+      where: { certificateCode: code },
+      select: certificateVerificationSelect,
+    });
+
+    if (!certificate) {
+      throw new NotFoundException('Certificate not found');
+    }
+
+    return {
+      certificateCode: certificate.certificateCode,
+      title: certificate.title,
+      issuedAt: certificate.issuedAt,
+      verificationUrl: certificate.verificationUrl,
+      courseTitle: certificate.course.title,
+    };
   }
 }
