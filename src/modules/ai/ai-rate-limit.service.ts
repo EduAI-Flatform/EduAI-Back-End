@@ -9,7 +9,15 @@ export class AiRateLimitService {
   constructor(private readonly redisConfig: RedisConfigService) {}
 
   async assertChatAllowed(userId: string): Promise<void> {
-    const key = `ai:chat:${userId}:${new Date().toISOString().slice(0, 10)}`;
+    return this.assertAllowed(userId, 'chat');
+  }
+
+  async assertSummaryAllowed(userId: string): Promise<void> {
+    return this.assertAllowed(userId, 'summary');
+  }
+
+  private async assertAllowed(userId: string, operation: string): Promise<void> {
+    const key = `ai:${operation}:${userId}:${new Date().toISOString().slice(0, 10)}`;
     const redis = this.redisConfig.getClient();
 
     if (!redis) {
