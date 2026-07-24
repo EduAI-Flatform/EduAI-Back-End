@@ -36,15 +36,16 @@ export class CreateCourseDto {
   @MaxLength(180)
   title!: string;
 
-  @ApiProperty({ example: 'ai-foundations' })
+  @ApiPropertyOptional({ example: 'ai-foundations' })
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(120)
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-  slug!: string;
+  slug?: string;
 
   @ApiPropertyOptional({ example: 'Introductory AI course.', nullable: true })
   @Transform(({ value }) => normalizeOptionalString(value))

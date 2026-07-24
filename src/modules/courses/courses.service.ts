@@ -13,9 +13,11 @@ import {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CourseThumbnailStorageService } from './course-thumbnail-storage.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { UploadedCourseThumbnail } from './types/course-thumbnail-upload.types';
 
 const courseResponseSelect = {
   id: true,
@@ -205,7 +207,10 @@ type ManageableCourse = CourseResponse & {
 
 @Injectable()
 export class CoursesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly thumbnailStorage: CourseThumbnailStorageService,
+  ) {}
 
   async listCourses(): Promise<CourseResponse[]> {
     return this.prisma.course.findMany({
@@ -255,36 +260,50 @@ export class CoursesService {
   async createCourse(
     user: AuthenticatedUser,
     input: CreateCourseDto,
+    thumbnail?: UploadedCourseThumbnail,
   ): Promise<CourseCommandResponse> {
     this.assertCanCreateCourse(user);
+    let slug = input.slug ?? (await this.createUniqueCourseSlug(input.title));
+    const thumbnailUrl = thumbnail
+      ? (await this.thumbnailStorage.uploadThumbnail(thumbnail)).url
+      : input.thumbnailUrl;
 
-    try {
-      return await this.prisma.course.create({
-        data: {
-          instructorId: user.id,
-          title: input.title,
-          slug: input.slug,
-          description: input.description,
-          thumbnailUrl: input.thumbnailUrl,
-          level: input.level,
-          status: CourseStatus.draft,
-          visibility: input.visibility ?? CourseVisibility.public,
-        },
-        select: courseCommandResponseSelect,
-      });
-    } catch (error) {
-      if (this.isCourseSlugConflict(error)) {
-        throw new ConflictException('Course slug is already in use');
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await this.prisma.course.create({
+          data: {
+            instructorId: user.id,
+            title: input.title,
+            slug,
+            description: input.description,
+            thumbnailUrl,
+            level: input.level,
+            status: CourseStatus.draft,
+            visibility: input.visibility ?? CourseVisibility.public,
+          },
+          select: courseCommandResponseSelect,
+        });
+      } catch (error) {
+        if (!this.isCourseSlugConflict(error)) {
+          throw error;
+        }
+
+        if (input.slug || attempt === 3) {
+          throw new ConflictException('Course slug is already in use');
+        }
+
+        slug = await this.createUniqueCourseSlug(input.title);
       }
-
-      throw error;
     }
+
+    throw new ConflictException('Course slug is already in use');
   }
 
   async updateCourse(
     user: AuthenticatedUser,
     courseId: string,
     input: UpdateCourseDto,
+    thumbnail?: UploadedCourseThumbnail,
   ): Promise<CourseCommandResponse> {
     const course = await this.findCourseOrThrow(courseId);
     this.assertCanManageCourse(user, course);
@@ -295,11 +314,14 @@ export class CoursesService {
       );
     }
 
+    const thumbnailUrl = thumbnail
+      ? (await this.thumbnailStorage.uploadThumbnail(thumbnail)).url
+      : input.thumbnailUrl;
     const data = this.removeUndefinedFields({
       title: input.title,
       slug: input.slug,
       description: input.description,
-      thumbnailUrl: input.thumbnailUrl,
+      thumbnailUrl,
       level: input.level,
       visibility: input.visibility,
     });
@@ -771,6 +793,33 @@ export class CoursesService {
           }
         : {}),
     };
+  }
+
+  private async createUniqueCourseSlug(title: string): Promise<string> {
+    const normalized = title
+      .trim()
+      .toLowerCase()
+      .replace(/đ/g, 'd')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const base = (normalized || 'course').slice(0, 120).replace(/-+$/g, '');
+
+    for (let index = 1; ; index += 1) {
+      const suffix = index === 1 ? '' : `-${index}`;
+      const candidate = `${base
+        .slice(0, 120 - suffix.length)
+        .replace(/-+$/g, '')}${suffix}`;
+      const existingCourse = await this.prisma.course.findUnique({
+        where: { slug: candidate },
+        select: { id: true },
+      });
+
+      if (!existingCourse) {
+        return candidate;
+      }
+    }
   }
 
   private isCourseSlugConflict(error: unknown): boolean {

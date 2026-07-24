@@ -61,13 +61,18 @@ describe('CoursesController', () => {
     const { controller, service } = createController();
     const input = {
       title: 'AI Foundations',
-      slug: 'ai-foundations',
       level: CourseLevel.beginner,
     };
+    const thumbnail = {
+      buffer: Buffer.from('thumbnail'),
+      mimetype: 'image/png',
+      originalname: 'thumbnail.png',
+      size: 9,
+    };
 
-    await controller.createCourse(user, input);
+    await controller.createCourse(user, input, thumbnail);
 
-    expect(service.createCourse).toHaveBeenCalledWith(user, input);
+    expect(service.createCourse).toHaveBeenCalledWith(user, input, thumbnail);
   });
 
   it('lists courses for the authenticated instructor using query filters', async () => {

@@ -26,15 +26,17 @@ describe('Course DTO validation', () => {
     expect(messages).toEqual([]);
   });
 
-  it('requires create course title slug and level', async () => {
+  it('requires create course title and level while allowing the server to generate slug', async () => {
     const messages = await validationMessages(CreateCourseDto, {});
 
     expect(messages).toEqual(
       expect.arrayContaining([
         expect.stringContaining('title'),
-        expect.stringContaining('slug'),
         expect.stringContaining('level'),
       ]),
+    );
+    expect(messages).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('slug')]),
     );
   });
 

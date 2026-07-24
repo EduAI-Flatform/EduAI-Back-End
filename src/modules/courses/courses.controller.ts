@@ -7,12 +7,17 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBody,
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -27,6 +32,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import {
+  MAX_COURSE_THUMBNAIL_FILE_SIZE_BYTES,
+} from './course-thumbnail-storage.service';
+import {
   CourseDetailResponse,
   CourseCommandResponse,
   CourseResponse,
@@ -39,6 +47,20 @@ import {
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { UploadedCourseThumbnail } from './types/course-thumbnail-upload.types';
+
+const courseMutationMultipartProperties = {
+  title: { type: 'string' },
+  slug: { type: 'string' },
+  description: { type: 'string', nullable: true },
+  thumbnail: { type: 'string', format: 'binary' },
+  thumbnailUrl: { type: 'string', format: 'uri', nullable: true },
+  level: {
+    type: 'string',
+    enum: ['beginner', 'intermediate', 'advanced'],
+  },
+  visibility: { type: 'string', enum: ['public', 'private'] },
+};
 
 @ApiTags('Courses')
 @Controller()
@@ -78,7 +100,20 @@ export class CoursesController {
   @Post('courses')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
+  @UseInterceptors(
+    FileInterceptor('thumbnail', {
+      limits: { fileSize: MAX_COURSE_THUMBNAIL_FILE_SIZE_BYTES },
+    }),
+  )
   @ApiBearerAuth()
+  @ApiConsumes('application/json', 'multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['title', 'level'],
+      properties: courseMutationMultipartProperties,
+    },
+  })
   @ApiCreatedResponse({ description: 'Course created successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid course payload.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
@@ -87,14 +122,27 @@ export class CoursesController {
   createCourse(
     @CurrentUser() user: AuthenticatedUser,
     @Body() input: CreateCourseDto,
+    @UploadedFile() thumbnail?: UploadedCourseThumbnail,
   ): Promise<CourseCommandResponse> {
-    return this.coursesService.createCourse(user, input);
+    return this.coursesService.createCourse(user, input, thumbnail);
   }
 
   @Put('courses/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
+  @UseInterceptors(
+    FileInterceptor('thumbnail', {
+      limits: { fileSize: MAX_COURSE_THUMBNAIL_FILE_SIZE_BYTES },
+    }),
+  )
   @ApiBearerAuth()
+  @ApiConsumes('application/json', 'multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: courseMutationMultipartProperties,
+    },
+  })
   @ApiOkResponse({ description: 'Course updated successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid course id or payload.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
@@ -105,8 +153,9 @@ export class CoursesController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
     @Body() input: UpdateCourseDto,
+    @UploadedFile() thumbnail?: UploadedCourseThumbnail,
   ): Promise<CourseCommandResponse> {
-    return this.coursesService.updateCourse(user, courseId, input);
+    return this.coursesService.updateCourse(user, courseId, input, thumbnail);
   }
 
   @Post('courses/:id/publish')

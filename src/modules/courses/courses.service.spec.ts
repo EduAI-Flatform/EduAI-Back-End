@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -176,6 +177,7 @@ function createService(options?: {
       create: jest.Mock;
       findFirst: jest.Mock;
       findMany: jest.Mock;
+      findUnique: jest.Mock;
       update: jest.Mock;
     };
     enrollment: {
@@ -215,6 +217,7 @@ function createService(options?: {
         return Promise.resolve(storedCourse);
       }),
       findMany: jest.fn().mockResolvedValue([course]),
+      findUnique: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({
         ...course,
         status: CourseStatus.published,
@@ -258,9 +261,17 @@ function createService(options?: {
     },
   };
 
+  const storage = {
+    uploadThumbnail: jest.fn().mockResolvedValue({
+      key: 'course-thumbnails/generated.png',
+      url: 'https://cdn.example.com/course-thumbnails/generated.png',
+    }),
+  };
+
   return {
     prisma,
-    service: new CoursesService(prisma as never),
+    storage,
+    service: new CoursesService(prisma as never, storage as never),
   };
 }
 
@@ -390,14 +401,139 @@ describe('CoursesService', () => {
     });
   });
 
-  it('rejects updates by non-owners', async () => {
+  it('generates a unique Vietnamese slug when the client omits it', async () => {
     const { prisma, service } = createService();
+    prisma.course.findUnique
+      .mockResolvedValueOnce({ id: 'existing-course' })
+      .mockResolvedValueOnce(null);
+
+    await service.createCourse(instructor, {
+      title: 'Nền tảng Trí tuệ Nhân tạo',
+      level: CourseLevel.beginner,
+    });
+
+    expect(prisma.course.findUnique).toHaveBeenNthCalledWith(1, {
+      where: { slug: 'nen-tang-tri-tue-nhan-tao' },
+      select: { id: true },
+    });
+    expect(prisma.course.findUnique).toHaveBeenNthCalledWith(2, {
+      where: { slug: 'nen-tang-tri-tue-nhan-tao-2' },
+      select: { id: true },
+    });
+    expect(prisma.course.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          slug: 'nen-tang-tri-tue-nhan-tao-2',
+        }),
+      }),
+    );
+  });
+
+  it('retries with the next generated slug after a concurrent slug conflict', async () => {
+    const { prisma, service } = createService();
+    const slugConflict = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed',
+      {
+        code: 'P2002',
+        clientVersion: '7.8.0',
+        meta: { target: ['slug'] },
+      },
+    );
+    prisma.course.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'concurrent-course' })
+      .mockResolvedValueOnce(null);
+    prisma.course.create
+      .mockRejectedValueOnce(slugConflict)
+      .mockResolvedValueOnce(course);
+
+    await service.createCourse(instructor, {
+      title: 'AI Foundations',
+      level: CourseLevel.beginner,
+    });
+
+    expect(prisma.course.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          slug: 'ai-foundations-2',
+        }),
+      }),
+    );
+  });
+
+  it('uploads a selected thumbnail and stores only the generated R2 URL', async () => {
+    const { prisma, service, storage } = createService();
+    const thumbnail = {
+      buffer: Buffer.from('thumbnail'),
+      mimetype: 'image/png',
+      originalname: 'client-controlled-name.png',
+      size: 9,
+    };
+
+    await service.createCourse(
+      instructor,
+      {
+        title: 'AI Foundations',
+        level: CourseLevel.beginner,
+      },
+      thumbnail,
+    );
+
+    expect(storage.uploadThumbnail).toHaveBeenCalledWith(thumbnail);
+    expect(prisma.course.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          thumbnailUrl:
+            'https://cdn.example.com/course-thumbnails/generated.png',
+        }),
+      }),
+    );
+  });
+
+  it('does not create a course when thumbnail upload fails', async () => {
+    const { prisma, service, storage } = createService();
+    storage.uploadThumbnail.mockRejectedValue(
+      new InternalServerErrorException('R2 upload failed'),
+    );
 
     await expect(
-      service.updateCourse(otherInstructor, course.id, {
-        title: 'Updated title',
-      }),
+      service.createCourse(
+        instructor,
+        {
+          title: 'AI Foundations',
+          level: CourseLevel.beginner,
+        },
+        {
+          buffer: Buffer.from('thumbnail'),
+          mimetype: 'image/png',
+          originalname: 'thumbnail.png',
+          size: 9,
+        },
+      ),
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
+    expect(prisma.course.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects updates by non-owners', async () => {
+    const { prisma, service, storage } = createService();
+
+    await expect(
+      service.updateCourse(
+        otherInstructor,
+        course.id,
+        {
+          title: 'Updated title',
+        },
+        {
+          buffer: Buffer.from('thumbnail'),
+          mimetype: 'image/png',
+          originalname: 'thumbnail.png',
+          size: 9,
+        },
+      ),
     ).rejects.toBeInstanceOf(NotFoundException);
+    expect(storage.uploadThumbnail).not.toHaveBeenCalled();
     expect(prisma.course.update).not.toHaveBeenCalled();
   });
 
@@ -439,6 +575,26 @@ describe('CoursesService', () => {
         status: true,
       },
     });
+  });
+
+  it('keeps the existing slug when only the course title changes', async () => {
+    const { prisma, service } = createService();
+
+    await service.updateCourse(instructor, course.id, {
+      title: 'A completely new title',
+    });
+
+    expect(prisma.course.update).toHaveBeenCalledWith({
+      where: { id: course.id },
+      data: {
+        title: 'A completely new title',
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+    expect(prisma.course.findUnique).not.toHaveBeenCalled();
   });
 
   it('rejects publishing courses without lessons', async () => {
