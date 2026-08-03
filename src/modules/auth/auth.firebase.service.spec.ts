@@ -107,11 +107,30 @@ function createService(options?: {
 }
 
 describe('AuthService.loginWithFirebase', () => {
-  it('creates a student user and issues the existing JWT response', async () => {
-    const { service, tx, firebaseAdmin } = createService();
+  it('requires a role before creating a new Firebase user', async () => {
+    const { service, tx } = createService();
 
     await expect(
       service.loginWithFirebase({ idToken: 'firebase-id-token' }),
+    ).rejects.toMatchObject({
+      response: {
+        error: 'ACCOUNT_ROLE_REQUIRED',
+      },
+      status: 409,
+    });
+
+    expect(tx.user.create).not.toHaveBeenCalled();
+    expect(tx.userRole.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a Firebase user with the selected role', async () => {
+    const { service, tx, firebaseAdmin } = createService();
+
+    await expect(
+      service.loginWithFirebase({
+        idToken: 'firebase-id-token',
+        role: RoleName.student,
+      }),
     ).resolves.toMatchObject({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',

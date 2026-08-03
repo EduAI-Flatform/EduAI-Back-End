@@ -17,7 +17,7 @@ export class FirebaseLoginDto {
     enum: [RoleName.student, RoleName.instructor],
     required: false,
     description:
-      'Requested role for a new Firebase user. Existing user roles are preserved.',
+      'Requested role for a new Firebase user. Required when creating an account; existing user roles are preserved.',
   })
   @IsOptional()
   @IsIn([RoleName.student, RoleName.instructor])

@@ -84,6 +84,7 @@ interface FirebaseTokenClaims {
 }
 
 const FIREBASE_AUTH_ERROR_MESSAGES = {
+  accountRoleRequired: 'Account role is required to create a new account.',
   accountAlreadyExists:
     'Tài khoản này đã tồn tại. Vui lòng đăng nhập.',
   accountBlocked: 'Tài khoản đã bị khóa.',
@@ -292,6 +293,10 @@ export class AuthService {
         }
 
         const existingUser = existingByFirebaseUid ?? existingByEmail;
+
+        if (!existingUser && !input.role) {
+          throw this.accountRoleRequiredException();
+        }
 
         if (existingUser) {
           if (existingUser.status !== UserStatus.active) {
@@ -562,6 +567,13 @@ export class AuthService {
     return new ConflictException({
       error: 'ACCOUNT_ALREADY_EXISTS',
       message: FIREBASE_AUTH_ERROR_MESSAGES.accountAlreadyExists,
+    });
+  }
+
+  private accountRoleRequiredException(): ConflictException {
+    return new ConflictException({
+      error: 'ACCOUNT_ROLE_REQUIRED',
+      message: FIREBASE_AUTH_ERROR_MESSAGES.accountRoleRequired,
     });
   }
 
