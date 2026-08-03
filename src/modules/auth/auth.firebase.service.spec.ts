@@ -32,14 +32,16 @@ const baseUser = {
 
 function createService(options?: {
   firebaseClaims?: unknown;
+  role?: { id: string; name: RoleName };
   users?: unknown[];
 }) {
+  const role = options?.role ?? {
+    id: 'student-role-id',
+    name: RoleName.student,
+  };
   const tx = {
     role: {
-      findUnique: jest.fn().mockResolvedValue({
-        id: 'student-role-id',
-        name: RoleName.student,
-      }),
+      findUnique: jest.fn().mockResolvedValue(role),
     },
     refreshToken: {
       create: jest.fn().mockResolvedValue({ id: 'refresh-token-id' }),
@@ -154,6 +156,45 @@ describe('AuthService.loginWithFirebase', () => {
     );
   });
 
+  it('accepts a verified Firebase password user and preserves the requested role', async () => {
+    const claims = {
+      ...firebaseClaims,
+      firebase: { sign_in_provider: 'password' },
+    };
+    const { service, tx } = createService({
+      firebaseClaims: claims,
+      role: { id: 'instructor-role-id', name: RoleName.instructor },
+    });
+
+    await expect(
+      service.loginWithFirebase({
+        idToken: 'firebase-id-token',
+        role: RoleName.instructor,
+      }),
+    ).resolves.toMatchObject({
+      accessToken: 'access-token',
+      user: { roles: [RoleName.instructor] },
+    });
+
+    expect(tx.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          authProvider: AuthProvider.local,
+          emailVerified: true,
+          firebaseUid: 'firebase-uid',
+          passwordHash: null,
+        }),
+      }),
+    );
+    expect(tx.role.findUnique).toHaveBeenCalledWith({
+      where: { name: RoleName.instructor },
+      select: { id: true, name: true },
+    });
+    expect(tx.userRole.create).toHaveBeenCalledWith({
+      data: { roleId: 'instructor-role-id', userId: 'user-id' },
+    });
+  });
+
   it('links an existing email user without overwriting custom profile fields', async () => {
     const existingUser = {
       ...baseUser,
@@ -192,11 +233,23 @@ describe('AuthService.loginWithFirebase', () => {
     expect(tx.user.create).not.toHaveBeenCalled();
   });
 
+  it('rejects an email already linked to another Firebase UID', async () => {
+    const { service, tx } = createService({
+      users: [null, { ...baseUser, firebaseUid: 'another-firebase-uid' }],
+    });
+
+    await expect(
+      service.loginWithFirebase({ idToken: 'firebase-id-token' }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(tx.user.create).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ['unverified email', { ...firebaseClaims, email_verified: false }],
-    ['non-Google provider', {
+    ['unsupported provider', {
       ...firebaseClaims,
-      firebase: { sign_in_provider: 'password' },
+      firebase: { sign_in_provider: 'facebook.com' },
     }],
     ['missing email', { ...firebaseClaims, email: undefined }],
   ])('rejects %s', async (_label, claims) => {
@@ -206,6 +259,46 @@ describe('AuthService.loginWithFirebase', () => {
       service.loginWithFirebase({ idToken: 'firebase-id-token' }),
     ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unverified Firebase password user with the public error contract', async () => {
+    const { service, prisma } = createService({
+      firebaseClaims: {
+        ...firebaseClaims,
+        email_verified: false,
+        firebase: { sign_in_provider: 'password' },
+      },
+    });
+
+    await expect(
+      service.loginWithFirebase({ idToken: 'firebase-id-token' }),
+    ).rejects.toMatchObject({
+      response: {
+        error: 'EMAIL_NOT_VERIFIED',
+        message: 'Email chưa được xác minh. Vui lòng kiểm tra hộp thư.',
+      },
+      status: 403,
+    });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects blocked Firebase users without issuing a session', async () => {
+    const { service, prisma } = createService({
+      users: [{ ...baseUser, status: UserStatus.suspended }, null],
+    });
+
+    await expect(
+      service.loginWithFirebase({ idToken: 'firebase-id-token' }),
+    ).rejects.toMatchObject({
+      response: {
+        error: 'ACCOUNT_BLOCKED',
+        message: 'Tài khoản đã bị khóa.',
+      },
+      status: 403,
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalled();
   });
 
   it('maps Firebase verification failures to unauthorized errors', async () => {

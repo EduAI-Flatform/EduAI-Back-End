@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -81,6 +82,15 @@ interface FirebaseTokenClaims {
   picture?: string;
   uid?: string;
 }
+
+const FIREBASE_AUTH_ERROR_MESSAGES = {
+  accountBlocked: 'Tài khoản đã bị khóa.',
+  accountLinkConflict: 'Email này đã được liên kết với tài khoản khác.',
+  emailNotVerified:
+    'Email chưa được xác minh. Vui lòng kiểm tra hộp thư.',
+  firebaseNotConfigured: 'Hệ thống đăng nhập chưa được cấu hình.',
+  invalidFirebaseToken: 'Phiên đăng nhập không hợp lệ.',
+} as const;
 
 const FIREBASE_USER_SELECT = {
   avatarUrl: true,
@@ -223,18 +233,31 @@ export class AuthService {
     const token = await this.verifyFirebaseToken(input.idToken);
     const uid = token.uid?.trim();
     const email = token.email?.trim().toLowerCase();
+    const provider = token.firebase?.sign_in_provider;
 
     if (
       !uid ||
       !email ||
-      token.email_verified !== true ||
-      token.firebase?.sign_in_provider !== 'google.com'
+      (provider !== 'google.com' && provider !== 'password')
     ) {
-      throw new UnauthorizedException('Invalid Firebase authentication token');
+      throw this.invalidFirebaseTokenException();
+    }
+
+    if (token.email_verified !== true) {
+      if (provider === 'password') {
+        throw new ForbiddenException({
+          error: 'EMAIL_NOT_VERIFIED',
+          message: FIREBASE_AUTH_ERROR_MESSAGES.emailNotVerified,
+        });
+      }
+
+      throw this.invalidFirebaseTokenException();
     }
 
     const fullName = this.getFirebaseFullName(token.name, email);
     const avatarUrl = this.getOptionalValue(token.picture);
+    const authProvider =
+      provider === 'google.com' ? AuthProvider.google : AuthProvider.local;
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -252,18 +275,24 @@ export class AuthService {
           existingByEmail &&
           existingByFirebaseUid.id !== existingByEmail.id
         ) {
-          throw new ConflictException(
-            'Firebase account is linked to a different email',
-          );
+          throw this.accountLinkConflictException();
+        }
+
+        if (
+          existingByEmail?.firebaseUid &&
+          existingByEmail.firebaseUid !== uid
+        ) {
+          throw this.accountLinkConflictException();
         }
 
         const existingUser = existingByFirebaseUid ?? existingByEmail;
 
         if (existingUser) {
           if (existingUser.status !== UserStatus.active) {
-            throw new UnauthorizedException(
-              'Invalid Firebase authentication token',
-            );
+            throw new ForbiddenException({
+              error: 'ACCOUNT_BLOCKED',
+              message: FIREBASE_AUTH_ERROR_MESSAGES.accountBlocked,
+            });
           }
 
           const updateData: {
@@ -273,7 +302,7 @@ export class AuthService {
             firebaseUid?: string;
             fullName?: string;
           } = {
-            authProvider: AuthProvider.google,
+            authProvider,
             emailVerified: true,
           };
 
@@ -297,7 +326,7 @@ export class AuthService {
         }
 
         const role = await tx.role.findUnique({
-          where: { name: RoleName.student },
+          where: { name: input.role ?? RoleName.student },
           select: { id: true, name: true },
         });
 
@@ -307,7 +336,7 @@ export class AuthService {
 
         const user = await tx.user.create({
           data: {
-            authProvider: AuthProvider.google,
+            authProvider,
             avatarUrl,
             email,
             emailVerified: true,
@@ -335,7 +364,7 @@ export class AuthService {
         throw new ConflictException('Email is already registered');
       }
       if (this.isUniqueConflict(error, 'firebaseUid')) {
-        throw new ConflictException('Firebase account is already linked');
+        throw this.accountLinkConflictException();
       }
 
       throw error;
@@ -482,9 +511,7 @@ export class AuthService {
     idToken: string,
   ): Promise<FirebaseTokenClaims> {
     if (!this.firebaseAdmin) {
-      throw new InternalServerErrorException(
-        'Firebase authentication is not configured',
-      );
+      throw this.firebaseNotConfiguredException();
     }
 
     try {
@@ -494,8 +521,29 @@ export class AuthService {
         throw error;
       }
 
-      throw new UnauthorizedException('Invalid Firebase authentication token');
+      throw this.invalidFirebaseTokenException();
     }
+  }
+
+  private invalidFirebaseTokenException(): UnauthorizedException {
+    return new UnauthorizedException({
+      error: 'INVALID_FIREBASE_TOKEN',
+      message: FIREBASE_AUTH_ERROR_MESSAGES.invalidFirebaseToken,
+    });
+  }
+
+  private firebaseNotConfiguredException(): InternalServerErrorException {
+    return new InternalServerErrorException({
+      error: 'FIREBASE_NOT_CONFIGURED',
+      message: FIREBASE_AUTH_ERROR_MESSAGES.firebaseNotConfigured,
+    });
+  }
+
+  private accountLinkConflictException(): ConflictException {
+    return new ConflictException({
+      error: 'ACCOUNT_LINK_CONFLICT',
+      message: FIREBASE_AUTH_ERROR_MESSAGES.accountLinkConflict,
+    });
   }
 
   private getFirebaseFullName(name: string | undefined, email: string): string {

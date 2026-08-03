@@ -140,7 +140,7 @@ describe('Auth flow endpoints', () => {
   it('logs in with Firebase and preserves the standard response envelope', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/firebase')
-      .send({ idToken: 'firebase-id-token' })
+      .send({ idToken: 'firebase-id-token', role: RoleName.instructor })
       .expect(200)
       .expect(({ body }) => {
         expect(body).toMatchObject({
@@ -157,6 +157,7 @@ describe('Auth flow endpoints', () => {
 
     expect(authService.loginWithFirebase).toHaveBeenCalledWith({
       idToken: 'firebase-id-token',
+      role: RoleName.instructor,
     });
   });
 
