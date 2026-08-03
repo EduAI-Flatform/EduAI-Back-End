@@ -17,15 +17,35 @@ import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import {
   CertificateResponse,
+  CertificateListItem,
   CertificateVerificationResponse,
   CertificatesService,
 } from './certificates.service';
+import {
+  CertificateListItemDto,
+  CertificateVerificationDto,
+} from './dto/certificate-response.dto';
 import { IssueCertificateDto } from './dto/issue-certificate.dto';
 
 @ApiTags('Certificates')
 @Controller()
 export class CertificatesController {
   constructor(private readonly certificatesService: CertificatesService) {}
+
+  @Get('me/certificates')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({
+    description: 'Current user certificates returned successfully.',
+    type: CertificateListItemDto,
+    isArray: true,
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  listMyCertificates(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CertificateListItem[]> {
+    return this.certificatesService.listMyCertificates(user.id);
+  }
 
   @Post('certificates/issue')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -44,7 +64,10 @@ export class CertificatesController {
   }
 
   @Get('certificates/verify/:code')
-  @ApiOkResponse({ description: 'Public certificate verification returned successfully.' })
+  @ApiOkResponse({
+    description: 'Public certificate verification returned successfully.',
+    type: CertificateVerificationDto,
+  })
   @ApiNotFoundResponse({ description: 'Certificate not found.' })
   verifyCertificate(@Param('code') code: string): Promise<CertificateVerificationResponse> {
     return this.certificatesService.verifyCertificate(code);

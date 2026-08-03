@@ -1,8 +1,10 @@
 export type NodeEnvironment = 'development' | 'test' | 'production';
+export type AiProviderName = 'openai' | 'mock';
 
 export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
   PORT: number;
+  PUBLIC_APP_URL?: string;
   DATABASE_URL: string;
   REDIS_URL?: string;
   JWT_ACCESS_SECRET?: string;
@@ -15,6 +17,7 @@ export interface ValidatedEnv {
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   OPENAI_EMBEDDING_MODEL?: string;
+  AI_PROVIDER: AiProviderName;
 }
 
 export function loadBackendEnv(): ValidatedEnv {
@@ -31,6 +34,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   const validated: ValidatedEnv = {
     NODE_ENV: nodeEnv,
     PORT: parsePort(config.PORT),
+    PUBLIC_APP_URL: optionalUrl(config.PUBLIC_APP_URL, 'PUBLIC_APP_URL'),
     DATABASE_URL: requiredString(config.DATABASE_URL, 'DATABASE_URL'),
     REDIS_URL: optionalString(config.REDIS_URL),
     JWT_ACCESS_SECRET: requiredString(
@@ -49,7 +53,12 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     OPENAI_API_KEY: optionalString(config.OPENAI_API_KEY),
     OPENAI_MODEL: optionalString(config.OPENAI_MODEL),
     OPENAI_EMBEDDING_MODEL: optionalString(config.OPENAI_EMBEDDING_MODEL),
+    AI_PROVIDER: parseAiProvider(config.AI_PROVIDER),
   };
+
+  if (validated.NODE_ENV === 'production' && validated.AI_PROVIDER === 'mock') {
+    throw new Error('AI_PROVIDER=mock is not allowed in production');
+  }
 
   return validated;
 }
@@ -82,6 +91,33 @@ function parsePort(value: unknown): number {
   }
 
   return port;
+}
+
+function parseAiProvider(value: unknown): AiProviderName {
+  const provider = optionalString(value) ?? 'openai';
+
+  if (provider !== 'openai' && provider !== 'mock') {
+    throw new Error('AI_PROVIDER must be openai or mock');
+  }
+
+  return provider;
+}
+
+function optionalUrl(value: unknown, name: string): string | undefined {
+  const parsed = optionalString(value);
+  if (!parsed) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(parsed);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error();
+    }
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    throw new Error(`${name} must be a valid http or https URL`);
+  }
 }
 
 function isNodeEnvironment(value: string): value is NodeEnvironment {

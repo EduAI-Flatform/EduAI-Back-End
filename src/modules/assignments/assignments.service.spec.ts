@@ -12,6 +12,11 @@ import { AssignmentsService } from './assignments.service';
 
 const instructor = { id: 'instructor-id', roles: [RoleName.instructor] };
 const student = { id: 'student-id', roles: [RoleName.student] };
+const studentProfile = {
+  id: student.id,
+  fullName: 'Nguyễn Minh Anh',
+  avatarUrl: '/demo/avatars/student.svg',
+};
 const dueDate = new Date('2026-07-01T00:00:00.000Z');
 const submittedAt = new Date('2026-07-02T00:00:00.000Z');
 const course = { id: 'course-id', instructorId: instructor.id };
@@ -43,6 +48,7 @@ function createService() {
     gradedById: null,
     createdAt: submittedAt,
     updatedAt: submittedAt,
+    user: studentProfile,
   };
   const prisma = {
     course: { findFirst: jest.fn().mockResolvedValue(course) },
@@ -103,7 +109,12 @@ describe('AssignmentsService', () => {
 
     await expect(
       service.submitAssignment(student.id, assignment.id, { content: 'Bài làm' }),
-    ).resolves.toEqual(expect.objectContaining({ isLate: true }));
+    ).resolves.toEqual(
+      expect.objectContaining({
+        isLate: true,
+        student: studentProfile,
+      }),
+    );
     expect(prisma.submission.create).toHaveBeenCalledWith({
       data: {
         assignmentId: assignment.id,
@@ -114,6 +125,20 @@ describe('AssignmentsService', () => {
       },
       select: expect.any(Object),
     });
+  });
+
+  it('returns student identity with instructor submission lists', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.listSubmissions(instructor, assignment.id),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: 'submission-id',
+        userId: student.id,
+        student: studentProfile,
+      }),
+    ]);
   });
 
   it('hides assignments when the student is not enrolled', async () => {

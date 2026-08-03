@@ -11,12 +11,12 @@ describe('AiSummaryService', () => {
       lesson: { findFirst: jest.fn() },
       libraryResource: { findFirst: jest.fn() },
     };
-    const completion = jest.fn().mockResolvedValue({
-      choices: [{ message: { content: 'A concise summary.' } }],
-    });
+    const completion = jest
+      .fn()
+      .mockResolvedValue({ content: 'A concise summary.' });
     const openai = {
       getModel: jest.fn().mockReturnValue('gpt-5.4-mini'),
-      getClient: jest.fn().mockReturnValue({ chat: { completions: { create: completion } } }),
+      complete: completion,
     };
     const rateLimit = { assertSummaryAllowed: jest.fn() };
     return { service: new AiSummaryService(prisma as never, openai as never, rateLimit as never), prisma, completion, rateLimit };
@@ -30,7 +30,34 @@ describe('AiSummaryService', () => {
       sourceType: 'lesson', sourceId: 'lesson-id', title: 'Recursion', summary: 'A concise summary.',
     });
     expect(rateLimit.assertSummaryAllowed).toHaveBeenCalledWith(student.id);
-    expect(completion).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4-mini' }));
+    expect(prisma.lesson.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            {
+              isPreview: true,
+              course: {
+                status: 'published',
+                visibility: 'public',
+              },
+            },
+            {
+              course: {
+                enrollments: {
+                  some: {
+                    userId: student.id,
+                    status: { in: ['active', 'completed'] },
+                  },
+                },
+              },
+            },
+          ]),
+        }),
+      }),
+    );
+    expect(completion).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: expect.any(Array) }),
+    );
   });
 
   it('does not call the provider for an inaccessible resource', async () => {

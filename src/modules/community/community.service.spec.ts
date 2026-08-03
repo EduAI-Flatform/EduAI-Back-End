@@ -24,6 +24,7 @@ describe('CommunityService', () => {
       communityReaction: {
         create: jest.fn(),
         deleteMany: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
       },
     };
 
@@ -40,7 +41,12 @@ describe('CommunityService', () => {
         title: 'Study group',
         content: 'Discuss AI.',
       }),
-    ).resolves.toEqual(post);
+    ).resolves.toEqual({
+      ...post,
+      reactionCount: 0,
+      commentCount: 0,
+      viewerHasLiked: false,
+    });
 
     expect(prisma.communityPost.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -60,7 +66,7 @@ describe('CommunityService', () => {
     const { service, prisma } = createService();
     prisma.communityPost.findMany.mockResolvedValue([]);
 
-    await service.listPosts();
+    await service.listPosts(undefined);
 
     expect(prisma.communityPost.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -68,6 +74,97 @@ describe('CommunityService', () => {
         select: expect.any(Object),
       }),
     );
+  });
+
+  it('returns aggregate counters and the authenticated viewer like state without N+1 queries', async () => {
+    const { service, prisma } = createService();
+    prisma.communityPost.findMany.mockResolvedValue([
+      {
+        id: 'post-1',
+        title: 'Study group',
+        content: 'Discuss AI.',
+        visibility: 'public',
+        status: 'active',
+        createdAt: new Date('2026-07-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+        author: {
+          id: 'author-id',
+          fullName: 'Demo Author',
+          avatarUrl: null,
+        },
+        _count: { reactions: 3, comments: 2 },
+      },
+      {
+        id: 'post-2',
+        title: 'Second post',
+        content: 'More discussion.',
+        visibility: 'public',
+        status: 'active',
+        createdAt: new Date('2026-07-02T00:00:00.000Z'),
+        updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+        author: {
+          id: 'author-id',
+          fullName: 'Demo Author',
+          avatarUrl: null,
+        },
+        _count: { reactions: 1, comments: 0 },
+      },
+    ]);
+    prisma.communityReaction.findMany.mockResolvedValue([{ postId: 'post-2' }]);
+
+    await expect(service.listPosts(student)).resolves.toEqual([
+      expect.objectContaining({
+        id: 'post-1',
+        reactionCount: 3,
+        commentCount: 2,
+        viewerHasLiked: false,
+      }),
+      expect.objectContaining({
+        id: 'post-2',
+        reactionCount: 1,
+        commentCount: 0,
+        viewerHasLiked: true,
+      }),
+    ]);
+    expect(prisma.communityReaction.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.communityReaction.findMany).toHaveBeenCalledWith({
+      where: {
+        postId: { in: ['post-1', 'post-2'] },
+        userId: student.id,
+        type: 'like',
+      },
+      select: { postId: true },
+    });
+  });
+
+  it('does not query viewer reactions for anonymous community reads', async () => {
+    const { service, prisma } = createService();
+    prisma.communityPost.findMany.mockResolvedValue([
+      {
+        id: 'post-id',
+        title: 'Study group',
+        content: 'Discuss AI.',
+        visibility: 'public',
+        status: 'active',
+        createdAt: new Date('2026-07-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+        author: {
+          id: 'author-id',
+          fullName: 'Demo Author',
+          avatarUrl: null,
+        },
+        _count: { reactions: 2, comments: 1 },
+      },
+    ]);
+
+    await expect(service.listPosts(undefined)).resolves.toEqual([
+      expect.objectContaining({
+        reactionCount: 2,
+        commentCount: 1,
+        viewerHasLiked: false,
+      }),
+    ]);
+    expect(prisma.communityReaction.findMany).not.toHaveBeenCalled();
   });
 
   it('allows an author to update their post', async () => {

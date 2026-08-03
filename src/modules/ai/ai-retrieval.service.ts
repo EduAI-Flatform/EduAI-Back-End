@@ -1,8 +1,8 @@
-import { BadGatewayException, Injectable } from '@nestjs/common';
+import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
 import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
-import { OpenAiService } from './openai.service';
+import { AI_PROVIDER, AiProvider } from './ai-provider';
 
 const DEFAULT_TOP_K = 5;
 const MAX_TOP_K = 20;
@@ -37,7 +37,7 @@ interface RetrievalRow {
 export class AiRetrievalService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly openai: OpenAiService,
+    @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
   ) {}
 
   async retrieve(
@@ -49,11 +49,7 @@ export class AiRetrievalService {
     if (!normalizedQuery) return [];
 
     const topK = this.normalizeTopK(options.topK);
-    const response = await this.openai.getClient().embeddings.create({
-      model: this.openai.getEmbeddingModel(),
-      input: normalizedQuery,
-    });
-    const embedding = response.data[0]?.embedding;
+    const [embedding] = await this.aiProvider.embed(normalizedQuery);
 
     if (!Array.isArray(embedding) || embedding.some((value) => !Number.isFinite(value))) {
       throw new BadGatewayException('Embedding provider returned invalid data');
@@ -80,11 +76,17 @@ export class AiRetrievalService {
           AND c.deleted_at IS NULL
           AND (
             ${isAdmin}
-            OR (c.status = 'published' AND c.visibility = 'public')
+            OR (
+              l.is_preview = TRUE
+              AND c.status = 'published'
+              AND c.visibility = 'public'
+            )
             OR c.instructor_id = ${user.id}::uuid
             OR EXISTS (
               SELECT 1 FROM "enrollments" en
-              WHERE en.course_id = c.id AND en.user_id = ${user.id}::uuid AND en.status = 'active'
+              WHERE en.course_id = c.id
+                AND en.user_id = ${user.id}::uuid
+                AND en.status IN ('active', 'completed')
             )
           )
         UNION ALL

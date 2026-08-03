@@ -24,6 +24,11 @@ const otherInstructor: AuthenticatedUser = {
   roles: [RoleName.instructor],
 };
 
+const student: AuthenticatedUser = {
+  id: 'student-id',
+  roles: [RoleName.student],
+};
+
 interface TestCourse {
   id: string;
   instructorId: string;
@@ -93,6 +98,120 @@ function createService(options?: { storedCourse?: typeof course | null; storedLe
 }
 
 describe('LessonsService', () => {
+  it('returns complete lesson content for an anonymous public preview', async () => {
+    const { prisma, service } = createService();
+    prisma.lesson.findFirst.mockResolvedValue({
+      ...lesson,
+      course: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+        enrollments: [],
+      },
+    });
+
+    await expect(service.getLesson(undefined, lesson.id)).resolves.toEqual(
+      expect.objectContaining({
+        id: lesson.id,
+        content: lesson.content,
+        videoUrl: lesson.videoUrl,
+        documentUrl: lesson.documentUrl,
+      }),
+    );
+    expect(prisma.lesson.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.lesson.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: lesson.id,
+          deletedAt: null,
+          course: { deletedAt: null },
+        }),
+        select: expect.objectContaining({
+          content: true,
+          videoUrl: true,
+          documentUrl: true,
+          course: expect.any(Object),
+        }),
+      }),
+    );
+  });
+
+  it('returns a non-preview lesson to an enrolled student', async () => {
+    const { prisma, service } = createService();
+    prisma.lesson.findFirst.mockResolvedValue({
+      ...lesson,
+      isPreview: false,
+      course: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.private,
+        enrollments: [{ id: 'enrollment-id' }],
+      },
+    });
+
+    await expect(service.getLesson(student, lesson.id)).resolves.toEqual(
+      expect.objectContaining({ id: lesson.id, isPreview: false }),
+    );
+    expect(prisma.lesson.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          course: {
+            select: expect.objectContaining({
+              enrollments: {
+                where: {
+                  userId: student.id,
+                  status: { in: ['active', 'completed'] },
+                },
+                select: { id: true },
+                take: 1,
+              },
+            }),
+          },
+        }),
+      }),
+    );
+  });
+
+  it('returns draft lesson content to its instructor and platform admins', async () => {
+    const { prisma, service } = createService();
+    prisma.lesson.findFirst.mockResolvedValue({
+      ...lesson,
+      isPreview: false,
+      course: {
+        ...course,
+        enrollments: [],
+      },
+    });
+
+    await expect(service.getLesson(instructor, lesson.id)).resolves.toEqual(
+      expect.objectContaining({ id: lesson.id }),
+    );
+    await expect(service.getLesson(admin, lesson.id)).resolves.toEqual(
+      expect.objectContaining({ id: lesson.id }),
+    );
+  });
+
+  it('does not expose a protected lesson to an anonymous or unenrolled viewer', async () => {
+    const { prisma, service } = createService();
+    prisma.lesson.findFirst.mockResolvedValue({
+      ...lesson,
+      isPreview: false,
+      course: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+        enrollments: [],
+      },
+    });
+
+    await expect(service.getLesson(undefined, lesson.id)).rejects.toEqual(
+      new NotFoundException('Lesson not found'),
+    );
+    await expect(service.getLesson(student, lesson.id)).rejects.toEqual(
+      new NotFoundException('Lesson not found'),
+    );
+  });
+
   it('lists ordered non-deleted lesson metadata for published public courses', async () => {
     const { prisma, service } = createService({
       storedCourse: {

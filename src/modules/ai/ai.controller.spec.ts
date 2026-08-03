@@ -4,7 +4,12 @@ import { AiController } from './ai.controller';
 describe('AiController', () => {
   it('delegates chat requests with the authenticated user', async () => {
     const service = { createChat: jest.fn().mockResolvedValue({ conversationId: 'conversation-id' }) };
-    const controller = new AiController(service as never, {} as never, {} as never);
+    const controller = new AiController(
+      service as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
     const user = { id: 'user-id', roles: [] };
     const input = { message: 'Hello AI' };
 
@@ -17,7 +22,12 @@ describe('AiController', () => {
   it('delegates summary requests with the authenticated user', async () => {
     const chat = { createChat: jest.fn() };
     const summary = { summarize: jest.fn().mockResolvedValue({ sourceType: 'lesson', summary: 'Summary' }) };
-    const controller = new AiController(chat as never, summary as never, {} as never);
+    const controller = new AiController(
+      chat as never,
+      summary as never,
+      {} as never,
+      {} as never,
+    );
     const user = { id: 'user-id', roles: [] };
     const input = { sourceType: 'lesson' as const, sourceId: 'lesson-id' };
 
@@ -31,5 +41,30 @@ describe('AiController', () => {
 
   it('protects summary with JWT authentication', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, AiController.prototype.createSummary)).toBeDefined();
+  });
+
+  it('delegates source listing and protects it with JWT authentication', async () => {
+    const sources = {
+      listSources: jest.fn().mockResolvedValue([{ sourceId: 'lesson-id' }]),
+    };
+    const controller = new AiController(
+      {} as never,
+      {} as never,
+      {} as never,
+      sources as never,
+    );
+    const user = { id: 'user-id', roles: [] };
+    const query = { sourceType: 'lesson' as const };
+
+    await expect(controller.listSources(user, query)).resolves.toEqual([
+      { sourceId: 'lesson-id' },
+    ]);
+    expect(sources.listSources).toHaveBeenCalledWith(user, query);
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        AiController.prototype.listSources,
+      ),
+    ).toBeDefined();
   });
 });

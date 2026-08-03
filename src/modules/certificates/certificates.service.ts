@@ -33,6 +33,25 @@ const certificateVerificationSelect = {
       title: true,
     },
   },
+  user: {
+    select: {
+      fullName: true,
+    },
+  },
+} satisfies Prisma.CertificateSelect;
+
+const certificateListSelect = {
+  id: true,
+  certificateCode: true,
+  title: true,
+  issuedAt: true,
+  verificationUrl: true,
+  qrCodeUrl: true,
+  course: {
+    select: {
+      title: true,
+    },
+  },
 } satisfies Prisma.CertificateSelect;
 
 export type CertificateResponse = Prisma.CertificateGetPayload<{
@@ -45,6 +64,17 @@ export interface CertificateVerificationResponse {
   issuedAt: Date;
   verificationUrl: string | null;
   courseTitle: string;
+  recipientName: string;
+}
+
+export interface CertificateListItem {
+  id: string;
+  certificateCode: string;
+  title: string;
+  issuedAt: Date;
+  verificationUrl: string | null;
+  qrCodeUrl: string | null;
+  courseTitle: string;
 }
 
 type CompletedEnrollment = {
@@ -56,6 +86,19 @@ type CompletedEnrollment = {
 @Injectable()
 export class CertificatesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async listMyCertificates(userId: string): Promise<CertificateListItem[]> {
+    const certificates = await this.prisma.certificate.findMany({
+      where: { userId },
+      orderBy: { issuedAt: 'desc' },
+      select: certificateListSelect,
+    });
+
+    return certificates.map(({ course, ...certificate }) => ({
+      ...certificate,
+      courseTitle: course.title,
+    }));
+  }
 
   async issueCertificate(
     userId: string,
@@ -167,6 +210,7 @@ export class CertificatesService {
       issuedAt: certificate.issuedAt,
       verificationUrl: certificate.verificationUrl,
       courseTitle: certificate.course.title,
+      recipientName: certificate.user.fullName,
     };
   }
 }

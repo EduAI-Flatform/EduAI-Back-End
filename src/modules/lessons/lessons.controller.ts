@@ -23,10 +23,12 @@ import {
 import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateLessonDto } from './dto/create-lesson.dto';
+import { LessonDetailDto } from './dto/lesson-response.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
 import {
   DeleteLessonResponse,
@@ -48,6 +50,23 @@ export class LessonsController {
     @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
   ): Promise<LessonSummary[]> {
     return this.lessonsService.listLessons(courseId);
+  }
+
+  @Get('lessons/:id')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({
+    description: 'Authorized lesson content returned successfully.',
+    type: LessonDetailDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid lesson id.' })
+  @ApiUnauthorizedResponse({ description: 'Supplied access token is invalid.' })
+  @ApiNotFoundResponse({ description: 'Lesson not found or not accessible.' })
+  getLesson(
+    @CurrentUser() user: AuthenticatedUser | undefined,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,
+  ): Promise<LessonResponse> {
+    return this.lessonsService.getLesson(user, lessonId);
   }
 
   @Get('instructor/courses/:courseId/lessons')

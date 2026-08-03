@@ -117,6 +117,7 @@ describe('CertificatesService.verifyCertificate', () => {
       issuedAt: new Date('2026-07-17T00:00:00.000Z'),
       verificationUrl: '/api/v1/certificates/verify/CERT-abc123',
       courseTitle: 'AI Foundations',
+      recipientName: 'Nguyễn Minh Anh',
     };
     const { service } = createService({
       certificate: {
@@ -126,8 +127,9 @@ describe('CertificatesService.verifyCertificate', () => {
           issuedAt: publicCertificate.issuedAt,
           verificationUrl: publicCertificate.verificationUrl,
           course: { title: publicCertificate.courseTitle },
+          user: { fullName: publicCertificate.recipientName },
           id: 'internal-id',
-          user: { email: 'student@example.com' },
+          metadataJson: { private: true },
         }),
         create: jest.fn(),
       },
@@ -149,5 +151,45 @@ describe('CertificatesService.verifyCertificate', () => {
     await expect(service.verifyCertificate('CERT-missing')).rejects.toThrow(
       'Certificate not found',
     );
+  });
+});
+
+describe('CertificatesService.listMyCertificates', () => {
+  it('returns only the current user certificates in newest-first order', async () => {
+    const prisma = {
+      certificate: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: certificate.id,
+            certificateCode: certificate.certificateCode,
+            title: certificate.title,
+            issuedAt: certificate.issuedAt,
+            verificationUrl: certificate.verificationUrl,
+            qrCodeUrl: certificate.qrCodeUrl,
+            course: { title: 'AI Foundations' },
+          },
+        ]),
+      },
+    };
+    const service = new CertificatesService(prisma as never);
+
+    await expect(service.listMyCertificates(userId)).resolves.toEqual([
+      {
+        id: certificate.id,
+        certificateCode: certificate.certificateCode,
+        title: certificate.title,
+        issuedAt: certificate.issuedAt,
+        verificationUrl: certificate.verificationUrl,
+        qrCodeUrl: certificate.qrCodeUrl,
+        courseTitle: 'AI Foundations',
+      },
+    ]);
+    expect(prisma.certificate.findMany).toHaveBeenCalledWith({
+      where: { userId },
+      orderBy: { issuedAt: 'desc' },
+      select: expect.objectContaining({
+        course: { select: { title: true } },
+      }),
+    });
   });
 });

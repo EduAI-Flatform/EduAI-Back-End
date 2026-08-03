@@ -1,8 +1,13 @@
-import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
-import { OpenAiService } from './openai.service';
+import { AI_PROVIDER, AiProvider } from './ai-provider';
 import { chunkText, TextChunk } from './text-chunker';
 
 type EmbeddingSourceType = 'lesson' | 'library_resource';
@@ -23,7 +28,7 @@ interface EmbeddingMetadata {
 export class AiEmbeddingService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly openai: OpenAiService,
+    @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
   ) {}
 
   async embedLesson(
@@ -103,15 +108,17 @@ export class AiEmbeddingService {
       throw new NotFoundException('No indexable text found');
     }
 
-    const response = await this.openai.getClient().embeddings.create({
-      model: this.openai.getEmbeddingModel(),
-      input: chunks.map(({ text }) => text),
-    });
-    const embeddings = [...response.data].sort((left, right) => left.index - right.index);
+    const embeddings = await this.aiProvider.embed(
+      chunks.map(({ text }) => text),
+    );
 
     if (
       embeddings.length !== chunks.length ||
-      embeddings.some((item) => !Array.isArray(item.embedding) || item.embedding.some((value) => !Number.isFinite(value)))
+      embeddings.some(
+        (embedding) =>
+          !Array.isArray(embedding) ||
+          embedding.some((value) => !Number.isFinite(value)),
+      )
     ) {
       throw new BadGatewayException('Embedding provider returned invalid data');
     }
@@ -122,7 +129,7 @@ export class AiEmbeddingService {
           INSERT INTO "ai_embeddings"
             ("source_type", "source_id", "chunk_text", "embedding", "metadata_json")
           VALUES
-            (${sourceType}, ${sourceId}::uuid, ${chunk.text}, ${JSON.stringify(embeddings[index].embedding)}::vector, ${JSON.stringify({ sourceType, sourceId, chunkIndex: String(chunk.index), ...metadata })}::jsonb)
+            (${sourceType}, ${sourceId}::uuid, ${chunk.text}, ${JSON.stringify(embeddings[index])}::vector, ${JSON.stringify({ sourceType, sourceId, chunkIndex: String(chunk.index), ...metadata })}::jsonb)
         `,
       );
     }

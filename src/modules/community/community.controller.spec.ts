@@ -21,6 +21,8 @@ describe('CommunityController', () => {
     const user = { id: 'user-id', roles: [RoleName.student] };
 
     await controller.createPost(user, { title: 'Title', content: 'Content' });
+    await controller.listPosts(user);
+    await controller.getPost(user, 'post-id');
     await controller.updatePost(user, 'post-id', { title: 'Updated' });
     await controller.deletePost(user, 'post-id');
     await controller.createComment(user, 'post-id', { content: 'Comment' });
@@ -30,6 +32,8 @@ describe('CommunityController', () => {
     await controller.unlikePost(user, 'post-id');
 
     expect(service.createPost).toHaveBeenCalledWith(user, { title: 'Title', content: 'Content' });
+    expect(service.listPosts).toHaveBeenCalledWith(user);
+    expect(service.getPost).toHaveBeenCalledWith(user, 'post-id');
     expect(service.updatePost).toHaveBeenCalledWith(user, 'post-id', { title: 'Updated' });
     expect(service.deletePost).toHaveBeenCalledWith(user, 'post-id');
     expect(service.createComment).toHaveBeenCalledWith(user, 'post-id', { content: 'Comment' });
@@ -37,6 +41,32 @@ describe('CommunityController', () => {
     expect(service.deleteComment).toHaveBeenCalledWith(user, 'comment-id');
     expect(service.likePost).toHaveBeenCalledWith(user, 'post-id');
     expect(service.unlikePost).toHaveBeenCalledWith(user, 'post-id');
+  });
+
+  it('supports anonymous community reads through optional authentication', async () => {
+    const service = {
+      listPosts: jest.fn().mockResolvedValue([]),
+      getPost: jest.fn().mockResolvedValue({ id: 'post-id' }),
+    };
+    const controller = new CommunityController(service as never);
+
+    await controller.listPosts(undefined);
+    await controller.getPost(undefined, 'post-id');
+
+    expect(service.listPosts).toHaveBeenCalledWith(undefined);
+    expect(service.getPost).toHaveBeenCalledWith(undefined, 'post-id');
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        CommunityController.prototype.listPosts,
+      ),
+    ).toBeDefined();
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        CommunityController.prototype.getPost,
+      ),
+    ).toBeDefined();
   });
 
   it('protects post mutations with JWT authentication', () => {

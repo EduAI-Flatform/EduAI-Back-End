@@ -19,12 +19,21 @@ import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-que
 import { UpdateCourseDto } from './dto/update-course.dto';
 import { UploadedCourseThumbnail } from './types/course-thumbnail-upload.types';
 
+const ENROLLMENT_ACTIVE_STATUS = 'active';
+const ENROLLMENT_COMPLETED_STATUS = 'completed';
+const PROGRESS_NOT_STARTED_STATUS = 'not_started';
+const PROGRESS_COMPLETED_STATUS = 'completed';
+
 const courseResponseSelect = {
   id: true,
   title: true,
   slug: true,
   description: true,
   thumbnailUrl: true,
+  badge: true,
+  featuredRank: true,
+  priceAmountMinor: true,
+  priceCurrency: true,
   level: true,
   status: true,
   visibility: true,
@@ -32,15 +41,52 @@ const courseResponseSelect = {
   updatedAt: true,
 } satisfies Prisma.CourseSelect;
 
+const courseCatalogSelect = {
+  ...courseResponseSelect,
+  instructor: {
+    select: {
+      id: true,
+      fullName: true,
+      avatarUrl: true,
+      profile: {
+        select: {
+          headline: true,
+          bio: true,
+        },
+      },
+    },
+  },
+  lessons: {
+    where: {
+      deletedAt: null,
+    },
+    select: {
+      durationMinutes: true,
+    },
+  },
+  _count: {
+    select: {
+      lessons: {
+        where: {
+          deletedAt: null,
+        },
+      },
+      enrollments: {
+        where: {
+          status: {
+            in: [ENROLLMENT_ACTIVE_STATUS, ENROLLMENT_COMPLETED_STATUS],
+          },
+        },
+      },
+      reviews: true,
+    },
+  },
+} satisfies Prisma.CourseSelect;
+
 const courseCommandResponseSelect = {
   id: true,
   status: true,
 } satisfies Prisma.CourseSelect;
-
-const ENROLLMENT_ACTIVE_STATUS = 'active';
-const ENROLLMENT_COMPLETED_STATUS = 'completed';
-const PROGRESS_NOT_STARTED_STATUS = 'not_started';
-const PROGRESS_COMPLETED_STATUS = 'completed';
 
 const enrollmentCourseSelect = {
   id: true,
@@ -133,16 +179,57 @@ export type CourseResponse = Prisma.CourseGetPayload<{
   select: typeof courseResponseSelect;
 }>;
 
+type CourseCatalogRecord = Prisma.CourseGetPayload<{
+  select: typeof courseCatalogSelect;
+}>;
+
 export type CourseCommandResponse = Prisma.CourseGetPayload<{
   select: typeof courseCommandResponseSelect;
 }>;
 
-export type CourseDetailResponse = CourseResponse & {
+export interface CoursePriceResponse {
+  amountMinor: number;
+  currency: string;
+}
+
+export interface CourseInstructorResponse {
+  id: string;
+  fullName: string;
+  avatarUrl: string | null;
+  headline: string | null;
+}
+
+export interface CourseMetricsResponse {
   lessonCount: number;
+  durationMinutes: number;
+  enrollmentCount: number;
+  ratingAverage: number | null;
+  ratingCount: number;
+}
+
+interface CourseRatingAggregate {
+  ratingAverage: number | null;
+  ratingCount: number;
+}
+
+export type CourseCatalogResponse = Omit<
+  CourseResponse,
+  'priceAmountMinor' | 'priceCurrency'
+> & {
+  price: CoursePriceResponse | null;
+  instructor: CourseInstructorResponse;
+  metrics: CourseMetricsResponse;
+};
+
+export type CourseDetailResponse = CourseCatalogResponse & {
+  lessonCount: number;
+  instructor: CourseInstructorResponse & {
+    bio: string | null;
+  };
 };
 
 export interface PaginatedCourseResponse {
-  items: CourseResponse[];
+  items: CourseCatalogResponse[];
   total: number;
   page: number;
   pageSize: number;
@@ -200,10 +287,32 @@ export interface CourseProgressResponse {
   completed: boolean;
 }
 
-type ManageableCourse = CourseResponse & {
-  instructorId: string;
-  _count: { lessons: number };
-};
+const manageableCourseSelect = {
+  ...courseResponseSelect,
+  instructorId: true,
+  _count: {
+    select: {
+      lessons: {
+        where: {
+          deletedAt: null,
+        },
+      },
+    },
+  },
+} satisfies Prisma.CourseSelect;
+
+type ManageableCourse = Prisma.CourseGetPayload<{
+  select: typeof manageableCourseSelect;
+}>;
+
+const courseDetailSelect = {
+  ...courseCatalogSelect,
+  instructorId: true,
+} satisfies Prisma.CourseSelect;
+
+type CourseDetailRecord = Prisma.CourseGetPayload<{
+  select: typeof courseDetailSelect;
+}>;
 
 @Injectable()
 export class CoursesService {
@@ -212,18 +321,23 @@ export class CoursesService {
     private readonly thumbnailStorage: CourseThumbnailStorageService,
   ) {}
 
-  async listCourses(): Promise<CourseResponse[]> {
-    return this.prisma.course.findMany({
+  async listCourses(): Promise<CourseCatalogResponse[]> {
+    const courses = await this.prisma.course.findMany({
       where: {
         deletedAt: null,
         status: CourseStatus.published,
         visibility: CourseVisibility.public,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      select: courseResponseSelect,
+      orderBy: [{ featuredRank: 'asc' }, { createdAt: 'desc' }],
+      select: courseCatalogSelect,
     });
+    const ratingByCourseId = await this.getCourseRatingAggregates(
+      courses.map((course) => course.id),
+    );
+
+    return courses.map((course) =>
+      this.toCourseCatalogResponse(course, ratingByCourseId.get(course.id)),
+    );
   }
 
   async listInstructorCourses(
@@ -244,12 +358,18 @@ export class CoursesService {
         },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        select: courseResponseSelect,
+        select: courseCatalogSelect,
       }),
     ]);
 
+    const ratingByCourseId = await this.getCourseRatingAggregates(
+      items.map((course) => course.id),
+    );
+
     return {
-      items,
+      items: items.map((course) =>
+        this.toCourseCatalogResponse(course, ratingByCourseId.get(course.id)),
+      ),
       total,
       page,
       pageSize,
@@ -263,6 +383,7 @@ export class CoursesService {
     thumbnail?: UploadedCourseThumbnail,
   ): Promise<CourseCommandResponse> {
     this.assertCanCreateCourse(user);
+    this.assertValidPricePair(input.priceAmountMinor, input.priceCurrency);
     let slug = input.slug ?? (await this.createUniqueCourseSlug(input.title));
     const thumbnailUrl = thumbnail
       ? (await this.thumbnailStorage.uploadThumbnail(thumbnail)).url
@@ -277,6 +398,9 @@ export class CoursesService {
             slug,
             description: input.description,
             thumbnailUrl,
+            badge: input.badge,
+            priceAmountMinor: input.priceAmountMinor,
+            priceCurrency: input.priceCurrency,
             level: input.level,
             status: CourseStatus.draft,
             visibility: input.visibility ?? CourseVisibility.public,
@@ -314,6 +438,16 @@ export class CoursesService {
       );
     }
 
+    const priceAmountMinor =
+      input.priceAmountMinor !== undefined
+        ? input.priceAmountMinor
+        : course.priceAmountMinor;
+    const priceCurrency =
+      input.priceCurrency !== undefined
+        ? input.priceCurrency
+        : course.priceCurrency;
+    this.assertValidPricePair(priceAmountMinor, priceCurrency);
+
     const thumbnailUrl = thumbnail
       ? (await this.thumbnailStorage.uploadThumbnail(thumbnail)).url
       : input.thumbnailUrl;
@@ -322,6 +456,9 @@ export class CoursesService {
       slug: input.slug,
       description: input.description,
       thumbnailUrl,
+      badge: input.badge,
+      priceAmountMinor: input.priceAmountMinor,
+      priceCurrency: input.priceCurrency,
       level: input.level,
       visibility: input.visibility,
     });
@@ -383,20 +520,21 @@ export class CoursesService {
     courseId: string,
     user?: AuthenticatedUser,
   ): Promise<CourseDetailResponse> {
-    const course = await this.findCourseOrThrow(courseId);
-
-    if (
+    const course = await this.findCourseDetailOrThrow(courseId);
+    const isPublic =
       course.status === CourseStatus.published &&
-      course.visibility === CourseVisibility.public
-    ) {
-      return this.toCourseDetailResponse(course);
+      course.visibility === CourseVisibility.public;
+    const canManage = user ? this.canManageCourse(user, course) : false;
+
+    if (!isPublic && !canManage) {
+      throw new NotFoundException('Course not found');
     }
 
-    if (user && this.canManageCourse(user, course)) {
-      return this.toCourseDetailResponse(course);
-    }
-
-    throw new NotFoundException('Course not found');
+    const ratingByCourseId = await this.getCourseRatingAggregates([course.id]);
+    return this.toCourseDetailResponse(
+      course,
+      ratingByCourseId.get(course.id),
+    );
   }
 
   async enrollCourse(
@@ -609,13 +747,7 @@ export class CoursesService {
         deletedAt: null,
       },
       select: {
-        ...courseResponseSelect,
-        instructorId: true,
-        _count: {
-          select: {
-            lessons: true,
-          },
-        },
+        ...manageableCourseSelect,
       },
     });
 
@@ -626,20 +758,120 @@ export class CoursesService {
     return course;
   }
 
-  private toCourseDetailResponse(course: ManageableCourse): CourseDetailResponse {
+  private async findCourseDetailOrThrow(
+    courseId: string,
+  ): Promise<CourseDetailRecord> {
+    const course = await this.prisma.course.findFirst({
+      where: {
+        id: courseId,
+        deletedAt: null,
+      },
+      select: courseDetailSelect,
+    });
+
+    if (!course) {
+      throw new NotFoundException('Course not found');
+    }
+
+    return course;
+  }
+
+  private toCourseDetailResponse(
+    course: CourseDetailRecord,
+    rating?: CourseRatingAggregate,
+  ): CourseDetailResponse {
+    const catalog = this.toCourseCatalogResponse(course, rating);
+
+    return {
+      ...catalog,
+      instructor: {
+        ...catalog.instructor,
+        bio: course.instructor.profile?.bio ?? null,
+      },
+      lessonCount: catalog.metrics.lessonCount,
+    };
+  }
+
+  private toCourseCatalogResponse(
+    course: CourseCatalogRecord,
+    rating: CourseRatingAggregate = {
+      ratingAverage: null,
+      ratingCount: 0,
+    },
+  ): CourseCatalogResponse {
     return {
       id: course.id,
       title: course.title,
       slug: course.slug,
       description: course.description,
       thumbnailUrl: course.thumbnailUrl,
+      badge: course.badge,
+      featuredRank: course.featuredRank,
+      price:
+        course.priceAmountMinor !== null && course.priceCurrency !== null
+          ? {
+              amountMinor: course.priceAmountMinor,
+              currency: course.priceCurrency,
+            }
+          : null,
       level: course.level,
       status: course.status,
       visibility: course.visibility,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
-      lessonCount: course._count.lessons,
+      instructor: {
+        id: course.instructor.id,
+        fullName: course.instructor.fullName,
+        avatarUrl: course.instructor.avatarUrl,
+        headline: course.instructor.profile?.headline ?? null,
+      },
+      metrics: {
+        lessonCount: course._count.lessons,
+        durationMinutes: course.lessons.reduce(
+          (sum, lesson) => sum + (lesson.durationMinutes ?? 0),
+          0,
+        ),
+        enrollmentCount: course._count.enrollments,
+        ratingAverage: rating.ratingAverage,
+        ratingCount: rating.ratingCount,
+      },
     };
+  }
+
+  private async getCourseRatingAggregates(
+    courseIds: string[],
+  ): Promise<Map<string, CourseRatingAggregate>> {
+    if (courseIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.prisma.courseReview.groupBy({
+      by: ['courseId'],
+      where: {
+        courseId: {
+          in: courseIds,
+        },
+      },
+      _avg: {
+        rating: true,
+      },
+      _count: {
+        rating: true,
+      },
+    });
+
+    return new Map(
+      rows.map((row) => [
+        row.courseId,
+        {
+          ratingAverage:
+            row._avg.rating === null
+              ? null
+              : Math.round(row._avg.rating * 10) / 10,
+          ratingCount: row._count.rating,
+        },
+      ]),
+    );
   }
 
   private toEnrollmentResponse(
@@ -772,6 +1004,20 @@ export class CoursesService {
     return Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined),
     ) as T;
+  }
+
+  private assertValidPricePair(
+    priceAmountMinor: number | null | undefined,
+    priceCurrency: string | null | undefined,
+  ): void {
+    const hasAmount = priceAmountMinor !== null && priceAmountMinor !== undefined;
+    const hasCurrency = priceCurrency !== null && priceCurrency !== undefined;
+
+    if (hasAmount !== hasCurrency) {
+      throw new BadRequestException(
+        'priceAmountMinor and priceCurrency must be provided together',
+      );
+    }
   }
 
   private buildInstructorCoursesWhere(

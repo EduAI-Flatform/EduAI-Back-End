@@ -10,6 +10,7 @@ describe('LessonsController', () => {
     const service = {
       createLesson: jest.fn().mockResolvedValue({ id: 'lesson-id' }),
       deleteLesson: jest.fn().mockResolvedValue({ deleted: true }),
+      getLesson: jest.fn().mockResolvedValue({ id: 'lesson-id' }),
       listInstructorLessons: jest.fn().mockResolvedValue([{ id: 'lesson-id' }]),
       listLessons: jest.fn().mockResolvedValue([{ id: 'lesson-id' }]),
       updateLesson: jest.fn().mockResolvedValue({ id: 'lesson-id' }),
@@ -27,6 +28,16 @@ describe('LessonsController', () => {
     await controller.listLessons('course-id');
 
     expect(service.listLessons).toHaveBeenCalledWith('course-id');
+  });
+
+  it('returns a lesson detail for an anonymous or authenticated viewer', async () => {
+    const { controller, service } = createController();
+
+    await controller.getLesson(undefined, 'lesson-id');
+    await controller.getLesson(user, 'lesson-id');
+
+    expect(service.getLesson).toHaveBeenNthCalledWith(1, undefined, 'lesson-id');
+    expect(service.getLesson).toHaveBeenNthCalledWith(2, user, 'lesson-id');
   });
 
   it('lists instructor lessons for an owned course', async () => {
@@ -76,5 +87,17 @@ describe('LessonsController', () => {
       ]);
       expect(Reflect.getMetadata(GUARDS_METADATA, method)).toBeDefined();
     }
+  });
+
+  it('uses optional authentication for lesson detail access', () => {
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        LessonsController.prototype.getLesson,
+      ),
+    ).toBeDefined();
+    expect(
+      Reflect.getMetadata(ROLES_KEY, LessonsController.prototype.getLesson),
+    ).toBeUndefined();
   });
 });

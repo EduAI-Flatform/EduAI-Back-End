@@ -54,7 +54,7 @@ describe('CoursesController', () => {
 
     await controller.getCourse('course-id');
 
-    expect(service.getCourse).toHaveBeenCalledWith('course-id');
+    expect(service.getCourse).toHaveBeenCalledWith('course-id', undefined);
   });
 
   it('creates a course for the authenticated instructor', async () => {

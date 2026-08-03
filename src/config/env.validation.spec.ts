@@ -27,6 +27,8 @@ describe('validateEnv', () => {
       R2_PUBLIC_URL: 'https://cdn.example.com',
       OPENAI_API_KEY: 'openai-key',
       OPENAI_MODEL: 'model-name',
+      AI_PROVIDER: 'mock',
+      PUBLIC_APP_URL: 'http://localhost:5173',
     });
 
     expect(env).toMatchObject({
@@ -42,6 +44,31 @@ describe('validateEnv', () => {
       R2_PUBLIC_URL: 'https://cdn.example.com',
       OPENAI_API_KEY: 'openai-key',
       OPENAI_MODEL: 'model-name',
+      AI_PROVIDER: 'mock',
+      PUBLIC_APP_URL: 'http://localhost:5173',
     });
+  });
+
+  it('rejects the mock AI provider in production', () => {
+    expect(() =>
+      validateEnv({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+        JWT_ACCESS_SECRET: 'access-secret',
+        JWT_REFRESH_SECRET: 'refresh-secret',
+        AI_PROVIDER: 'mock',
+      }),
+    ).toThrow('AI_PROVIDER=mock is not allowed in production');
+  });
+
+  it('rejects unknown AI providers', () => {
+    expect(() =>
+      validateEnv({
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+        JWT_ACCESS_SECRET: 'access-secret',
+        JWT_REFRESH_SECRET: 'refresh-secret',
+        AI_PROVIDER: 'local-llm',
+      }),
+    ).toThrow('AI_PROVIDER must be openai or mock');
   });
 });

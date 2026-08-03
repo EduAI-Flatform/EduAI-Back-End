@@ -24,8 +24,9 @@ describe('AiConversationService', () => {
     const retrieval = { retrieve: jest.fn().mockResolvedValue([]) };
     const openai = {
       getModel: jest.fn().mockReturnValue('gpt-5.4-mini'),
-      getClient: jest.fn().mockReturnValue({
-        chat: { completions: { create: jest.fn().mockResolvedValue({ choices: [{ message: { content: 'Use [Source 1].' } }], usage: { total_tokens: 12 } }) } },
+      complete: jest.fn().mockResolvedValue({
+        content: 'Use [Source 1].',
+        totalTokens: 12,
       }),
     };
 

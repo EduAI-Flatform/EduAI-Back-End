@@ -5,6 +5,7 @@ import { RoleName } from '../../../../generated/prisma/client';
 import { AppConfigService } from '../../../config/app-config.service';
 import { ROLES_KEY } from '../roles.decorator';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 
 function createHttpContext(headers: Record<string, string | undefined> = {}): ExecutionContext {
@@ -76,6 +77,62 @@ describe('JwtAuthGuard', () => {
       email: 'admin@example.com',
       roles: [RoleName.platform_admin],
     });
+  });
+});
+
+describe('OptionalJwtAuthGuard', () => {
+  function createGuard(options?: { verifyFails?: boolean }) {
+    const jwtService = {
+      verifyAsync: jest.fn(
+        options?.verifyFails
+          ? async () => {
+              throw new Error('invalid token');
+            }
+          : async () => ({
+              sub: 'user-id',
+              roles: [RoleName.student],
+            }),
+      ),
+    } as unknown as JwtService;
+    const appConfig = {
+      jwt: {
+        accessSecret: 'access-secret',
+      },
+    } as AppConfigService;
+
+    return {
+      guard: new OptionalJwtAuthGuard(jwtService, appConfig),
+      jwtService,
+    };
+  }
+
+  it('allows anonymous requests without attaching a user', async () => {
+    const { guard, jwtService } = createGuard();
+    const context = createHttpContext();
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(jwtService.verifyAsync).not.toHaveBeenCalled();
+    expect(context.switchToHttp().getRequest().user).toBeUndefined();
+  });
+
+  it('attaches a user when a valid bearer token is supplied', async () => {
+    const { guard } = createGuard();
+    const context = createHttpContext({ authorization: 'Bearer access-token' });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(context.switchToHttp().getRequest().user).toEqual({
+      id: 'user-id',
+      email: undefined,
+      roles: [RoleName.student],
+    });
+  });
+
+  it('rejects an invalid supplied bearer token instead of treating it as anonymous', async () => {
+    const { guard } = createGuard({ verifyFails: true });
+
+    await expect(
+      guard.canActivate(createHttpContext({ authorization: 'Bearer bad-token' })),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });
 

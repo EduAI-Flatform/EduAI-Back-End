@@ -1,9 +1,10 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiNotFoundResponse,
+  ApiOkResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
@@ -16,6 +17,9 @@ import { AiGenerationService } from './ai-generation.service';
 import { CreateAiChatDto } from './dto/create-ai-chat.dto';
 import { CreateAiSummaryDto } from './dto/create-ai-summary.dto';
 import { CreateAiGenerationDto } from './dto/create-ai-generation.dto';
+import { AiSourcesService } from './ai-sources.service';
+import { ListAiSourcesQueryDto } from './dto/list-ai-sources-query.dto';
+import { AiSourceResponseDto } from './dto/ai-source-response.dto';
 
 @ApiTags('AI')
 @Controller('ai')
@@ -24,7 +28,24 @@ export class AiController {
     private readonly aiConversationService: AiConversationService,
     private readonly aiSummaryService: AiSummaryService,
     private readonly aiGenerationService: AiGenerationService,
+    private readonly aiSourcesService: AiSourcesService,
   ) {}
+
+  @Get('sources')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({
+    description: 'Accessible AI sources returned successfully.',
+    type: AiSourceResponseDto,
+    isArray: true,
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  listSources(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: ListAiSourcesQueryDto,
+  ) {
+    return this.aiSourcesService.listSources(user, query);
+  }
 
   @Post('chat')
   @UseGuards(JwtAuthGuard)

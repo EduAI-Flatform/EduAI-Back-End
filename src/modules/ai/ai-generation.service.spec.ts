@@ -18,7 +18,9 @@ describe('AiGenerationService', () => {
     };
     const openai = {
       getModel: jest.fn().mockReturnValue('gpt-5.4-mini'),
-      getClient: jest.fn().mockReturnValue({ chat: { completions: { create: jest.fn().mockResolvedValue({ choices: [{ message: { content: JSON.stringify(payload) } }] }) } } }),
+      complete: jest
+        .fn()
+        .mockResolvedValue({ content: JSON.stringify(payload) }),
     };
     const rateLimit = { assertQuizAllowed: jest.fn(), assertFlashcardsAllowed: jest.fn() };
     const summary = { resolveSource: jest.fn().mockResolvedValue({ title: 'Recursion', content: 'A function calls itself.' }) };

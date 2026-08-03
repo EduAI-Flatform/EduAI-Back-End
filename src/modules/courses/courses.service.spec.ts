@@ -43,6 +43,10 @@ interface TestCourse {
   slug: string;
   description: string | null;
   thumbnailUrl: string | null;
+  badge: string | null;
+  featuredRank: number | null;
+  priceAmountMinor: number | null;
+  priceCurrency: string | null;
   level: CourseLevel;
   status: CourseStatus;
   visibility: CourseVisibility;
@@ -51,7 +55,21 @@ interface TestCourse {
   deletedAt: Date | null;
   _count: {
     lessons: number;
+    enrollments: number;
+    reviews: number;
   };
+  instructor: {
+    id: string;
+    fullName: string;
+    avatarUrl: string | null;
+    profile: {
+      headline: string | null;
+      bio: string | null;
+    } | null;
+  };
+  lessons: Array<{ durationMinutes: number | null }>;
+  enrollments: Array<{ id: string }>;
+  reviews: Array<{ rating: number }>;
 }
 
 const course: TestCourse = {
@@ -61,6 +79,10 @@ const course: TestCourse = {
   slug: 'ai-foundations',
   description: null,
   thumbnailUrl: null,
+  badge: 'Phổ biến',
+  featuredRank: 1,
+  priceAmountMinor: 1499000,
+  priceCurrency: 'VND',
   level: CourseLevel.beginner,
   status: CourseStatus.draft,
   visibility: CourseVisibility.public,
@@ -69,7 +91,21 @@ const course: TestCourse = {
   deletedAt: null,
   _count: {
     lessons: 1,
+    enrollments: 2,
+    reviews: 2,
   },
+  instructor: {
+    id: instructor.id,
+    fullName: 'Sarah Nguyen',
+    avatarUrl: '/demo/avatars/sarah-nguyen.svg',
+    profile: {
+      headline: 'AI Instructor',
+      bio: 'Giảng viên AI ứng dụng.',
+    },
+  },
+  lessons: [{ durationMinutes: 42 }],
+  enrollments: [{ id: 'enrollment-1' }, { id: 'enrollment-2' }],
+  reviews: [{ rating: 5 }, { rating: 4 }],
 };
 
 const lesson = {
@@ -192,6 +228,10 @@ function createService(options?: {
       upsert: jest.Mock;
     };
     lesson: { findFirst: jest.Mock };
+    courseReview: {
+      aggregate: jest.Mock;
+      groupBy: jest.Mock;
+    };
   };
 
   prisma = {
@@ -206,7 +246,7 @@ function createService(options?: {
       count: jest.fn().mockResolvedValue(1),
       create: jest.fn().mockResolvedValue(course),
       findFirst: jest.fn().mockImplementation((args) => {
-        if (args?.select?.lessons) {
+        if (args?.select?.lessons && !args?.select?.instructorId) {
           return Promise.resolve(
             options && 'storedPublishedCourse' in options
               ? options.storedPublishedCourse
@@ -259,6 +299,19 @@ function createService(options?: {
           options && 'storedLesson' in options ? options.storedLesson : progressLesson,
         ),
     },
+    courseReview: {
+      aggregate: jest.fn().mockResolvedValue({
+        _avg: { rating: 4.5 },
+        _count: { rating: 2 },
+      }),
+      groupBy: jest.fn().mockResolvedValue([
+        {
+          courseId: course.id,
+          _avg: { rating: 4.5 },
+          _count: { rating: 2 },
+        },
+      ]),
+    },
   };
 
   const storage = {
@@ -276,10 +329,32 @@ function createService(options?: {
 }
 
 describe('CoursesService', () => {
-  it('lists only published public courses for public browsing', async () => {
+  it('lists published public courses with real catalog aggregates', async () => {
     const { prisma, service } = createService();
 
-    await service.listCourses();
+    const result = await service.listCourses();
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: course.id,
+        badge: 'Phổ biến',
+        featuredRank: 1,
+        price: { amountMinor: 1499000, currency: 'VND' },
+        instructor: {
+          id: instructor.id,
+          fullName: 'Sarah Nguyen',
+          avatarUrl: '/demo/avatars/sarah-nguyen.svg',
+          headline: 'AI Instructor',
+        },
+        metrics: {
+          lessonCount: 1,
+          durationMinutes: 42,
+          enrollmentCount: 2,
+          ratingAverage: 4.5,
+          ratingCount: 2,
+        },
+      }),
+    ]);
 
     expect(prisma.course.findMany).toHaveBeenCalledWith({
       where: {
@@ -287,21 +362,25 @@ describe('CoursesService', () => {
         status: CourseStatus.published,
         visibility: CourseVisibility.public,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      select: {
-        id: true,
-        title: true,
-        slug: true,
-        description: true,
-        thumbnailUrl: true,
-        level: true,
-        status: true,
-        visibility: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      orderBy: [{ featuredRank: 'asc' }, { createdAt: 'desc' }],
+      select: expect.objectContaining({
+        badge: true,
+        featuredRank: true,
+        priceAmountMinor: true,
+        priceCurrency: true,
+        instructor: expect.any(Object),
+        lessons: expect.any(Object),
+        _count: expect.any(Object),
+      }),
+    });
+    const catalogSelect = prisma.course.findMany.mock.calls[0][0].select;
+    expect(catalogSelect).not.toHaveProperty('enrollments');
+    expect(catalogSelect).not.toHaveProperty('reviews');
+    expect(prisma.courseReview.groupBy).toHaveBeenCalledWith({
+      by: ['courseId'],
+      where: { courseId: { in: [course.id] } },
+      _avg: { rating: true },
+      _count: { rating: true },
     });
   });
 
@@ -333,18 +412,15 @@ describe('CoursesService', () => {
       },
       skip: 10,
       take: 10,
-      select: {
-        id: true,
-        title: true,
-        slug: true,
-        description: true,
-        thumbnailUrl: true,
-        level: true,
-        status: true,
-        visibility: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: expect.objectContaining({
+        badge: true,
+        featuredRank: true,
+        priceAmountMinor: true,
+        priceCurrency: true,
+        instructor: expect.any(Object),
+        lessons: expect.any(Object),
+        _count: expect.any(Object),
+      }),
     });
   });
 
@@ -379,6 +455,9 @@ describe('CoursesService', () => {
     await service.createCourse(instructor, {
       title: 'AI Foundations',
       slug: 'ai-foundations',
+      badge: 'Mới',
+      priceAmountMinor: 1499000,
+      priceCurrency: 'VND',
       level: CourseLevel.beginner,
       visibility: CourseVisibility.private,
     });
@@ -390,6 +469,9 @@ describe('CoursesService', () => {
         slug: 'ai-foundations',
         description: undefined,
         thumbnailUrl: undefined,
+        badge: 'Mới',
+        priceAmountMinor: 1499000,
+        priceCurrency: 'VND',
         level: CourseLevel.beginner,
         status: CourseStatus.draft,
         visibility: CourseVisibility.private,
@@ -399,6 +481,23 @@ describe('CoursesService', () => {
         status: true,
       },
     });
+  });
+
+  it('rejects a course price without its currency pair', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.createCourse(instructor, {
+        title: 'AI Foundations',
+        level: CourseLevel.beginner,
+        priceAmountMinor: 1499000,
+      }),
+    ).rejects.toEqual(
+      new BadRequestException(
+        'priceAmountMinor and priceCurrency must be provided together',
+      ),
+    );
+    expect(prisma.course.create).not.toHaveBeenCalled();
   });
 
   it('generates a unique Vietnamese slug when the client omits it', async () => {
@@ -575,6 +674,11 @@ describe('CoursesService', () => {
         status: true,
       },
     });
+    const managementLookup = prisma.course.findFirst.mock.calls[0][0];
+    expect(managementLookup.select).not.toHaveProperty('enrollments');
+    expect(managementLookup.select).not.toHaveProperty('reviews');
+    expect(managementLookup.select).not.toHaveProperty('instructor');
+    expect(managementLookup.select).not.toHaveProperty('lessons');
   });
 
   it('keeps the existing slug when only the course title changes', async () => {
@@ -603,6 +707,8 @@ describe('CoursesService', () => {
         ...course,
         _count: {
           lessons: 0,
+          enrollments: 2,
+          reviews: 2,
         },
       },
     });
@@ -664,12 +770,32 @@ describe('CoursesService', () => {
       slug: course.slug,
       description: course.description,
       thumbnailUrl: course.thumbnailUrl,
+      badge: course.badge,
+      featuredRank: course.featuredRank,
+      price: {
+        amountMinor: course.priceAmountMinor,
+        currency: course.priceCurrency,
+      },
       level: course.level,
       status: CourseStatus.published,
       visibility: CourseVisibility.public,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
       lessonCount: 1,
+      instructor: {
+        id: instructor.id,
+        fullName: 'Sarah Nguyen',
+        avatarUrl: '/demo/avatars/sarah-nguyen.svg',
+        headline: 'AI Instructor',
+        bio: 'Giảng viên AI ứng dụng.',
+      },
+      metrics: {
+        lessonCount: 1,
+        durationMinutes: 42,
+        enrollmentCount: 2,
+        ratingAverage: 4.5,
+        ratingCount: 2,
+      },
     });
   });
 

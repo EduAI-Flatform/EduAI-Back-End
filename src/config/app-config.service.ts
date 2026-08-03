@@ -34,6 +34,10 @@ export class AppConfigService {
     return this.getConfigValue('openai');
   }
 
+  get ai(): BackendConfig['ai'] {
+    return this.getConfigValue('ai');
+  }
+
   private getConfigValue<T extends keyof BackendConfig>(key: T): BackendConfig[T] {
     const value = this.configService.get<BackendConfig[T]>(key);
 

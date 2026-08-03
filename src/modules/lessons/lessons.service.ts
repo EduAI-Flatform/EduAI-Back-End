@@ -51,9 +51,63 @@ type LessonWithCourse = LessonResponse & {
   course: Pick<Course, 'instructorId'>;
 };
 
+type LessonDetailRecord = LessonResponse & {
+  course: {
+    instructorId: string;
+    status: CourseStatus;
+    visibility: CourseVisibility;
+    enrollments?: Array<{ id: string }>;
+  };
+};
+
 @Injectable()
 export class LessonsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async getLesson(
+    user: AuthenticatedUser | undefined,
+    lessonId: string,
+  ): Promise<LessonResponse> {
+    const courseAccessSelect = {
+      instructorId: true,
+      status: true,
+      visibility: true,
+      ...(user
+        ? {
+            enrollments: {
+              where: {
+                userId: user.id,
+                status: { in: ['active', 'completed'] },
+              },
+              select: { id: true },
+              take: 1,
+            },
+          }
+        : {}),
+    } satisfies Prisma.CourseSelect;
+    const lesson = (await this.prisma.lesson.findFirst({
+      where: {
+        id: lessonId,
+        deletedAt: null,
+        course: {
+          deletedAt: null,
+        },
+      },
+      select: {
+        ...lessonResponseSelect,
+        course: {
+          select: courseAccessSelect,
+        },
+      },
+    })) as LessonDetailRecord | null;
+
+    if (!lesson || !this.canViewLesson(user, lesson)) {
+      throw new NotFoundException('Lesson not found');
+    }
+
+    const { course: _course, ...response } = lesson;
+    return response;
+  }
 
   async listLessons(courseId: string): Promise<LessonSummary[]> {
     const course = await this.prisma.course.findFirst({
@@ -248,6 +302,24 @@ export class LessonsService {
       this.hasRole(user, RoleName.platform_admin) ||
       (this.hasRole(user, RoleName.instructor) && course.instructorId === user.id)
     );
+  }
+
+  private canViewLesson(
+    user: AuthenticatedUser | undefined,
+    lesson: LessonDetailRecord,
+  ): boolean {
+    const publicPreview =
+      lesson.isPreview &&
+      lesson.course.status === CourseStatus.published &&
+      lesson.course.visibility === CourseVisibility.public;
+    const canManage = Boolean(
+      user && this.canManageCourse(user, lesson.course),
+    );
+    const isEnrolled = Boolean(
+      user && lesson.course.enrollments && lesson.course.enrollments.length > 0,
+    );
+
+    return publicPreview || canManage || isEnrolled;
   }
 
   private hasRole(user: AuthenticatedUser, role: RoleName): boolean {

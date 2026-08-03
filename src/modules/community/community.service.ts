@@ -11,7 +11,7 @@ import { CreateCommunityPostDto } from './dto/create-community-post.dto';
 import { CreateCommunityCommentDto } from './dto/create-community-comment.dto';
 import { UpdateCommunityPostDto } from './dto/update-community-post.dto';
 
-const communityPostResponseSelect = {
+const communityPostRecordSelect = {
   id: true,
   title: true,
   content: true,
@@ -24,6 +24,21 @@ const communityPostResponseSelect = {
       id: true,
       fullName: true,
       avatarUrl: true,
+    },
+  },
+  _count: {
+    select: {
+      reactions: {
+        where: {
+          type: 'like',
+        },
+      },
+      comments: {
+        where: {
+          deletedAt: null,
+          status: 'active',
+        },
+      },
     },
   },
 } satisfies Prisma.CommunityPostSelect;
@@ -45,9 +60,15 @@ const communityCommentResponseSelect = {
   },
 } satisfies Prisma.CommunityCommentSelect;
 
-type CommunityPostResponse = Prisma.CommunityPostGetPayload<{
-  select: typeof communityPostResponseSelect;
+type CommunityPostRecord = Prisma.CommunityPostGetPayload<{
+  select: typeof communityPostRecordSelect;
 }>;
+
+export type CommunityPostResponse = Omit<CommunityPostRecord, '_count'> & {
+  reactionCount: number;
+  commentCount: number;
+  viewerHasLiked: boolean;
+};
 
 type CommunityCommentResponse = Prisma.CommunityCommentGetPayload<{
   select: typeof communityCommentResponseSelect;
@@ -62,19 +83,26 @@ export interface CommunitySuccessResponse {
 export class CommunityService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listPosts(): Promise<CommunityPostResponse[]> {
-    return this.prisma.communityPost.findMany({
+  async listPosts(
+    user: AuthenticatedUser | undefined,
+  ): Promise<CommunityPostResponse[]> {
+    const posts = await this.prisma.communityPost.findMany({
       where: {
         deletedAt: null,
         status: 'active',
         visibility: 'public',
       },
       orderBy: { createdAt: 'desc' },
-      select: communityPostResponseSelect,
+      select: communityPostRecordSelect,
     });
+
+    return this.toCommunityPostResponses(posts, user?.id);
   }
 
-  async getPost(id: string): Promise<CommunityPostResponse> {
+  async getPost(
+    user: AuthenticatedUser | undefined,
+    id: string,
+  ): Promise<CommunityPostResponse> {
     const post = await this.prisma.communityPost.findFirst({
       where: {
         id,
@@ -82,21 +110,21 @@ export class CommunityService {
         status: 'active',
         visibility: 'public',
       },
-      select: communityPostResponseSelect,
+      select: communityPostRecordSelect,
     });
 
     if (!post) {
       throw new NotFoundException('Community post not found');
     }
 
-    return post;
+    return (await this.toCommunityPostResponses([post], user?.id))[0];
   }
 
-  createPost(
+  async createPost(
     user: AuthenticatedUser,
     input: CreateCommunityPostDto,
   ): Promise<CommunityPostResponse> {
-    return this.prisma.communityPost.create({
+    const post = await this.prisma.communityPost.create({
       data: {
         authorId: user.id,
         title: input.title,
@@ -104,8 +132,10 @@ export class CommunityService {
         visibility: input.visibility ?? 'public',
         status: 'active',
       },
-      select: communityPostResponseSelect,
+      select: communityPostRecordSelect,
     });
+
+    return this.toCommunityPostResponse(post, false);
   }
 
   async updatePost(
@@ -133,11 +163,16 @@ export class CommunityService {
       }).filter(([, value]) => value !== undefined),
     );
 
-    return this.prisma.communityPost.update({
+    const updatedPost = await this.prisma.communityPost.update({
       where: { id },
       data,
-      select: communityPostResponseSelect,
+      select: communityPostRecordSelect,
     });
+    const [response] = await this.toCommunityPostResponses(
+      [updatedPost],
+      user.id,
+    );
+    return response;
   }
 
   async deletePost(
@@ -329,5 +364,42 @@ export class CommunityService {
       'code' in error &&
       error.code === 'P2002'
     );
+  }
+
+  private async toCommunityPostResponses(
+    posts: CommunityPostRecord[],
+    viewerId: string | undefined,
+  ): Promise<CommunityPostResponse[]> {
+    if (!viewerId || posts.length === 0) {
+      return posts.map((post) => this.toCommunityPostResponse(post, false));
+    }
+
+    const reactions = await this.prisma.communityReaction.findMany({
+      where: {
+        postId: { in: posts.map((post) => post.id) },
+        userId: viewerId,
+        type: 'like',
+      },
+      select: { postId: true },
+    });
+    const likedPostIds = new Set(reactions.map((reaction) => reaction.postId));
+
+    return posts.map((post) =>
+      this.toCommunityPostResponse(post, likedPostIds.has(post.id)),
+    );
+  }
+
+  private toCommunityPostResponse(
+    post: CommunityPostRecord,
+    viewerHasLiked: boolean,
+  ): CommunityPostResponse {
+    const { _count, ...response } = post;
+
+    return {
+      ...response,
+      reactionCount: _count?.reactions ?? 0,
+      commentCount: _count?.comments ?? 0,
+      viewerHasLiked,
+    };
   }
 }

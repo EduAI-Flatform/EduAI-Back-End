@@ -45,6 +45,13 @@ const submissionResponseSelect = {
   gradedById: true,
   createdAt: true,
   updatedAt: true,
+  user: {
+    select: {
+      id: true,
+      fullName: true,
+      avatarUrl: true,
+    },
+  },
 } satisfies Prisma.SubmissionSelect;
 
 export type AssignmentResponse = Prisma.AssignmentGetPayload<{
@@ -55,7 +62,10 @@ type StoredSubmissionResponse = Prisma.SubmissionGetPayload<{
   select: typeof submissionResponseSelect;
 }>;
 
-export type SubmissionResponse = StoredSubmissionResponse & { isLate: boolean };
+export type SubmissionResponse = Omit<StoredSubmissionResponse, 'user'> & {
+  student: StoredSubmissionResponse['user'];
+  isLate: boolean;
+};
 
 export interface DeletedAssignmentResponse {
   deleted: true;
@@ -414,8 +424,11 @@ export class AssignmentsService {
     submission: StoredSubmissionResponse,
     dueDate: Date | null,
   ): SubmissionResponse {
+    const { user, ...response } = submission;
+
     return {
-      ...submission,
+      ...response,
+      student: user,
       isLate: Boolean(dueDate && submission.submittedAt > dueDate),
     };
   }

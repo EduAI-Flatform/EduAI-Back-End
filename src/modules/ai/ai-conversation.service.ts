@@ -1,4 +1,9 @@
-import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
@@ -6,7 +11,7 @@ import { CreateAiChatDto } from './dto/create-ai-chat.dto';
 import { AiRateLimitService } from './ai-rate-limit.service';
 import { AiRetrievalService, AiRetrievalSource } from './ai-retrieval.service';
 import { AI_TUTOR_SYSTEM_PROMPT, buildAiTutorPrompt } from './ai-prompt-builder';
-import { OpenAiService } from './openai.service';
+import { AI_PROVIDER, AiProvider } from './ai-provider';
 
 const aiMessageResponseSelect = {
   id: true,
@@ -33,7 +38,7 @@ export class AiConversationService {
     private readonly prisma: PrismaService,
     private readonly rateLimit: AiRateLimitService,
     private readonly retrieval: AiRetrievalService,
-    private readonly openai: OpenAiService,
+    @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
   ) {}
 
   async createChat(
@@ -56,14 +61,13 @@ export class AiConversationService {
     });
 
     const sources = await this.retrieval.retrieve(user, input.message);
-    const completion = await this.openai.getClient().chat.completions.create({
-      model: this.openai.getModel(),
+    const completion = await this.aiProvider.complete({
       messages: [
         { role: 'system', content: AI_TUTOR_SYSTEM_PROMPT },
         { role: 'user', content: buildAiTutorPrompt(input.message, sources) },
       ],
     });
-    const content = completion.choices[0]?.message?.content?.trim();
+    const content = completion.content?.trim();
     if (!content) throw new BadGatewayException('AI provider returned an empty response');
 
     const message = await this.prisma.aiMessage.create({
@@ -71,8 +75,8 @@ export class AiConversationService {
         conversationId,
         role: 'assistant',
         content,
-        model: this.openai.getModel(),
-        tokenCount: completion.usage?.total_tokens,
+        model: this.aiProvider.getModel(),
+        tokenCount: completion.totalTokens,
       },
       select: aiMessageResponseSelect,
     });

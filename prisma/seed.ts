@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, RoleName } from '../generated/prisma/client';
 import { loadBackendEnv } from '../src/config/env.validation';
+import { requireDemoSeedPassword } from './demo-contract';
+import { seedDemoData } from './demo-seed';
 
 const env = loadBackendEnv();
 const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
@@ -23,6 +25,10 @@ const defaultRoles: Array<{ name: RoleName; description: string }> = [
 ];
 
 async function main(): Promise<void> {
+  const demoPassword = process.argv.includes('--demo')
+    ? requireDemoSeedPassword(process.env)
+    : undefined;
+
   for (const role of defaultRoles) {
     await prisma.role.upsert({
       where: { name: role.name },
@@ -30,13 +36,17 @@ async function main(): Promise<void> {
       update: { description: role.description },
     });
   }
+
+  if (demoPassword) {
+    await seedDemoData(prisma, demoPassword);
+  }
 }
 
 main()
   .finally(async () => {
     await prisma.$disconnect();
   })
-  .catch((error) => {
+  .catch((error: unknown) => {
     console.error(error);
-    process.exit(1);
+    process.exitCode = 1;
   });

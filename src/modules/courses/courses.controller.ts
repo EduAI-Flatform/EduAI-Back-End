@@ -28,6 +28,7 @@ import {
 import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
@@ -36,8 +37,8 @@ import {
 } from './course-thumbnail-storage.service';
 import {
   CourseDetailResponse,
+  CourseCatalogResponse,
   CourseCommandResponse,
-  CourseResponse,
   CourseProgressResponse,
   CoursesService,
   EnrollmentResponse,
@@ -47,6 +48,11 @@ import {
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import {
+  CourseCatalogResponseDto,
+  CourseDetailResponseDto,
+  PaginatedCourseResponseDto,
+} from './dto/course-response.dto';
 import { UploadedCourseThumbnail } from './types/course-thumbnail-upload.types';
 
 const courseMutationMultipartProperties = {
@@ -55,6 +61,18 @@ const courseMutationMultipartProperties = {
   description: { type: 'string', nullable: true },
   thumbnail: { type: 'string', format: 'binary' },
   thumbnailUrl: { type: 'string', format: 'uri', nullable: true },
+  badge: { type: 'string', maxLength: 50, nullable: true },
+  priceAmountMinor: {
+    type: 'integer',
+    minimum: 0,
+    maximum: 2147483647,
+    nullable: true,
+  },
+  priceCurrency: {
+    type: 'string',
+    pattern: '^[A-Z]{3}$',
+    nullable: true,
+  },
   level: {
     type: 'string',
     enum: ['beginner', 'intermediate', 'advanced'],
@@ -68,26 +86,38 @@ export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
   @Get('courses')
-  @ApiOkResponse({ description: 'Published public courses returned successfully.' })
-  listCourses(): Promise<CourseResponse[]> {
+  @ApiOkResponse({
+    description: 'Published public courses returned successfully.',
+    type: CourseCatalogResponseDto,
+    isArray: true,
+  })
+  listCourses(): Promise<CourseCatalogResponse[]> {
     return this.coursesService.listCourses();
   }
 
   @Get('courses/:id')
-  @ApiOkResponse({ description: 'Published public course returned successfully.' })
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOkResponse({
+    description: 'Visible course returned successfully.',
+    type: CourseDetailResponseDto,
+  })
   @ApiBadRequestResponse({ description: 'Invalid course id.' })
   @ApiNotFoundResponse({ description: 'Course not found.' })
   getCourse(
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
+    @CurrentUser() user?: AuthenticatedUser,
   ): Promise<CourseDetailResponse> {
-    return this.coursesService.getCourse(courseId);
+    return this.coursesService.getCourse(courseId, user);
   }
 
   @Get('instructor/courses')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor)
   @ApiBearerAuth()
-  @ApiOkResponse({ description: 'Instructor courses returned successfully.' })
+  @ApiOkResponse({
+    description: 'Instructor courses returned successfully.',
+    type: PaginatedCourseResponseDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   @ApiForbiddenResponse({ description: 'Instructor role required.' })
   listInstructorCourses(

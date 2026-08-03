@@ -1,11 +1,16 @@
-import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { AiRateLimitService } from './ai-rate-limit.service';
 import { AiSummaryService } from './ai-summary.service';
 import { CreateAiGenerationDto } from './dto/create-ai-generation.dto';
-import { OpenAiService } from './openai.service';
+import { AI_PROVIDER, AiProvider } from './ai-provider';
 
 interface GeneratedQuestion {
   question: string;
@@ -36,7 +41,7 @@ export interface AiFlashcardsResponse {
 export class AiGenerationService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly openai: OpenAiService,
+    @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
     private readonly rateLimit: AiRateLimitService,
     private readonly summary: AiSummaryService,
   ) {}
@@ -84,15 +89,14 @@ export class AiGenerationService {
   }
 
   private async generateJson<T>(instruction: string, title: string, content: string, count: number): Promise<T> {
-    const completion = await this.openai.getClient().chat.completions.create({
-      model: this.openai.getModel(),
-      response_format: { type: 'json_object' },
+    const completion = await this.aiProvider.complete({
+      json: true,
       messages: [
         { role: 'system', content: 'You generate structured educational content. Return valid JSON only.' },
         { role: 'user', content: `${instruction}\nGenerate exactly ${count} items.\nTitle: ${title}\nContent:\n${content}` },
       ],
     });
-    const raw = completion.choices[0]?.message?.content;
+    const raw = completion.content;
     if (!raw) throw new BadGatewayException('AI provider returned empty generated content');
 
     try {

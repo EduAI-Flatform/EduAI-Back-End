@@ -5,6 +5,10 @@ model Course {
   slug         String             @unique
   description  String?
   thumbnailUrl String?            @map("thumbnail_url")
+  badge        String?
+  featuredRank Int?               @map("featured_rank")
+  priceAmountMinor Int?           @map("price_amount_minor")
+  priceCurrency String?           @map("price_currency") @db.VarChar(3)
   level        CourseLevel
   status       CourseStatus       @default(draft)
   visibility   CourseVisibility   @default(public)
@@ -19,9 +23,27 @@ model Course {
   assignments  Assignment[]
   classroomSessions ClassroomSession[]
   certificates Certificate[]
+  reviews      CourseReview[]
 
   @@index([instructorId])
   @@index([status])
+  @@index([featuredRank])
   @@index([deletedAt])
   @@map("courses")
+}
+
+model CourseReview {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId  String   @map("course_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@index([userId])
+  @@map("course_reviews")
 }

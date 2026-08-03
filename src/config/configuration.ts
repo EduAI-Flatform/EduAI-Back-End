@@ -1,9 +1,14 @@
-import { loadBackendEnv, NodeEnvironment } from './env.validation';
+import {
+  loadBackendEnv,
+  NodeEnvironment,
+  ValidatedEnv,
+} from './env.validation';
 
 export interface BackendConfig {
   app: {
     nodeEnv: NodeEnvironment;
     port: number;
+    publicAppUrl?: string;
   };
   database: {
     url: string;
@@ -27,6 +32,9 @@ export interface BackendConfig {
     model?: string;
     embeddingModel?: string;
   };
+  ai: {
+    provider: ValidatedEnv['AI_PROVIDER'];
+  };
 }
 
 export default function configuration(): BackendConfig {
@@ -36,6 +44,7 @@ export default function configuration(): BackendConfig {
     app: {
       nodeEnv: env.NODE_ENV,
       port: env.PORT,
+      publicAppUrl: env.PUBLIC_APP_URL,
     },
     database: {
       url: env.DATABASE_URL,
@@ -58,6 +67,9 @@ export default function configuration(): BackendConfig {
       apiKey: env.OPENAI_API_KEY,
       model: env.OPENAI_MODEL,
       embeddingModel: env.OPENAI_EMBEDDING_MODEL,
+    },
+    ai: {
+      provider: env.AI_PROVIDER,
     },
   };
 }

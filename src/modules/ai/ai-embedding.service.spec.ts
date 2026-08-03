@@ -17,7 +17,7 @@ describe('AiEmbeddingService', () => {
       $executeRaw: jest.fn(),
     };
     const openai = {
-      getClient: jest.fn(),
+      embed: jest.fn(),
       getEmbeddingModel: jest.fn().mockReturnValue('text-embedding-3-small'),
     };
 
@@ -36,20 +36,16 @@ describe('AiEmbeddingService', () => {
       content: 'Gradient descent updates model weights.',
       course: { id: 'course-id', instructorId: instructor.id },
     });
-    const embeddingsCreate = jest.fn().mockResolvedValue({
-      data: [{ embedding: [0.1, 0.2] }],
-    });
-    openai.getClient.mockReturnValue({ embeddings: { create: embeddingsCreate } });
+    openai.embed.mockResolvedValue([[0.1, 0.2]]);
 
     await expect(service.embedLesson(instructor, 'lesson-id')).resolves.toEqual({
       sourceType: 'lesson',
       sourceId: 'lesson-id',
       chunkCount: 1,
     });
-    expect(embeddingsCreate).toHaveBeenCalledWith({
-      model: 'text-embedding-3-small',
-      input: ['Gradient descent Gradient descent updates model weights.'],
-    });
+    expect(openai.embed).toHaveBeenCalledWith([
+      'Gradient descent Gradient descent updates model weights.',
+    ]);
     expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
@@ -65,7 +61,7 @@ describe('AiEmbeddingService', () => {
     await expect(service.embedLesson(student, 'lesson-id')).rejects.toEqual(
       new NotFoundException('Lesson not found'),
     );
-    expect(openai.getClient).not.toHaveBeenCalled();
+    expect(openai.embed).not.toHaveBeenCalled();
     expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
@@ -77,9 +73,7 @@ describe('AiEmbeddingService', () => {
       title: 'AI glossary',
       description: 'A short glossary of machine-learning terms.',
     });
-    openai.getClient.mockReturnValue({
-      embeddings: { create: jest.fn().mockResolvedValue({ data: [{ embedding: [0.3] }] }) },
-    });
+    openai.embed.mockResolvedValue([[0.3]]);
 
     await service.embedLibraryResource(instructor, 'resource-id');
 

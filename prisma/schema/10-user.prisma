@@ -30,6 +30,7 @@ model User {
   aiGeneratedQuizzes AiGeneratedQuiz[]
   aiFlashcards AiFlashcard[]
   certificates  Certificate[]
+  courseReviews CourseReview[]
 
   @@index([status])
   @@map("users")

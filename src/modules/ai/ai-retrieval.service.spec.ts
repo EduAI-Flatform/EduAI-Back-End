@@ -17,12 +17,11 @@ describe('AiRetrievalService', () => {
         metadata_json: { courseId: 'course-id' },
       },
     ]);
-    const embeddingsCreate = jest.fn().mockResolvedValue({ data: [{ embedding: [0.1, 0.2] }] });
+    const embed = jest.fn().mockResolvedValue([[0.1, 0.2]]);
     const service = new AiRetrievalService(
       { $queryRaw: queryRaw } as never,
       {
-        getClient: () => ({ embeddings: { create: embeddingsCreate } }),
-        getEmbeddingModel: () => 'text-embedding-3-small',
+        embed,
       } as never,
     );
 
@@ -37,17 +36,18 @@ describe('AiRetrievalService', () => {
         metadata: { courseId: 'course-id' },
       },
     ]);
-    expect(embeddingsCreate).toHaveBeenCalledWith({
-      model: 'text-embedding-3-small',
-      input: 'explain gradient descent',
-    });
+    expect(embed).toHaveBeenCalledWith('explain gradient descent');
     expect(queryRaw).toHaveBeenCalledTimes(1);
+    const query = queryRaw.mock.calls[0][0] as { strings: string[] };
+    const sql = query.strings.join(' ');
+    expect(sql).toContain('l.is_preview = TRUE');
+    expect(sql).toContain("en.status IN ('active', 'completed')");
   });
 
   it('returns no sources for blank queries without calling providers', async () => {
     const service = new AiRetrievalService(
       { $queryRaw: jest.fn() } as never,
-      { getClient: jest.fn(), getEmbeddingModel: jest.fn() } as never,
+      { embed: jest.fn() } as never,
     );
 
     await expect(service.retrieve(student, '   ')).resolves.toEqual([]);

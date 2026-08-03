@@ -22,10 +22,12 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateCommunityPostDto } from './dto/create-community-post.dto';
 import { CreateCommunityCommentDto } from './dto/create-community-comment.dto';
 import { UpdateCommunityPostDto } from './dto/update-community-post.dto';
+import { CommunityPostResponseDto } from './dto/community-post-response.dto';
 import { CommunityService } from './community.service';
 
 @ApiTags('Community posts')
@@ -34,17 +36,33 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Get('posts')
-  @ApiOkResponse({ description: 'Active public community posts returned successfully.' })
-  listPosts() {
-    return this.communityService.listPosts();
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({
+    description: 'Active public community posts returned successfully.',
+    type: CommunityPostResponseDto,
+    isArray: true,
+  })
+  @ApiUnauthorizedResponse({ description: 'Supplied access token is invalid.' })
+  listPosts(@CurrentUser() user: AuthenticatedUser | undefined) {
+    return this.communityService.listPosts(user);
   }
 
   @Get('posts/:id')
-  @ApiOkResponse({ description: 'Community post returned successfully.' })
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({
+    description: 'Community post returned successfully.',
+    type: CommunityPostResponseDto,
+  })
   @ApiBadRequestResponse({ description: 'Invalid post id.' })
+  @ApiUnauthorizedResponse({ description: 'Supplied access token is invalid.' })
   @ApiNotFoundResponse({ description: 'Community post not found.' })
-  getPost(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.communityService.getPost(id);
+  getPost(
+    @CurrentUser() user: AuthenticatedUser | undefined,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return this.communityService.getPost(user, id);
   }
 
   @Post('posts')

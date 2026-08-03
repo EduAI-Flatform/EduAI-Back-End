@@ -29,6 +29,7 @@ import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { GradeSubmissionDto } from './dto/grade-submission.dto';
 import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
+import { SubmissionResponseDto } from './dto/submission-response.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import {
   AssignmentResponse,
@@ -120,7 +121,10 @@ export class AssignmentsController {
 
   @Post('assignments/:id/submissions')
   @Roles(RoleName.student)
-  @ApiCreatedResponse({ description: 'Assignment submission stored.' })
+  @ApiCreatedResponse({
+    description: 'Assignment submission stored.',
+    type: SubmissionResponseDto,
+  })
   @ApiBadRequestResponse({ description: 'Text or HTTPS file URL is required.' })
   @ApiConflictResponse({ description: 'Assignment already submitted.' })
   @ApiNotFoundResponse({
@@ -136,7 +140,10 @@ export class AssignmentsController {
 
   @Get('assignments/:id/submissions/me')
   @Roles(RoleName.student)
-  @ApiOkResponse({ description: 'Current student assignment submission returned.' })
+  @ApiOkResponse({
+    description: 'Current student assignment submission returned.',
+    type: SubmissionResponseDto,
+  })
   @ApiNotFoundResponse({
     description: 'Published assignment, enrollment, or submission not found.',
   })
@@ -149,7 +156,11 @@ export class AssignmentsController {
 
   @Get('assignments/:id/submissions')
   @Roles(...MANAGER_ROLES)
-  @ApiOkResponse({ description: 'Owned assignment submissions returned.' })
+  @ApiOkResponse({
+    description: 'Owned assignment submissions returned.',
+    type: SubmissionResponseDto,
+    isArray: true,
+  })
   @ApiNotFoundResponse({ description: 'Owned assignment not found.' })
   listSubmissions(
     @CurrentUser() user: AuthenticatedUser,
@@ -160,7 +171,10 @@ export class AssignmentsController {
 
   @Post('submissions/:id/grade')
   @Roles(...MANAGER_ROLES)
-  @ApiOkResponse({ description: 'Owned submission graded successfully.' })
+  @ApiOkResponse({
+    description: 'Owned submission graded successfully.',
+    type: SubmissionResponseDto,
+  })
   @ApiBadRequestResponse({ description: 'Score is outside assignment bounds.' })
   @ApiNotFoundResponse({ description: 'Owned submission not found.' })
   gradeSubmission(
