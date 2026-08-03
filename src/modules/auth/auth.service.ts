@@ -84,6 +84,8 @@ interface FirebaseTokenClaims {
 }
 
 const FIREBASE_AUTH_ERROR_MESSAGES = {
+  accountAlreadyExists:
+    'Tài khoản này đã tồn tại. Vui lòng đăng nhập.',
   accountBlocked: 'Tài khoản đã bị khóa.',
   accountLinkConflict: 'Email này đã được liên kết với tài khoản khác.',
   emailNotVerified:
@@ -270,6 +272,10 @@ export class AuthService {
           select: FIREBASE_USER_SELECT,
         });
 
+        if (input.mode === 'register' && (existingByFirebaseUid || existingByEmail)) {
+          throw this.accountAlreadyExistsException();
+        }
+
         if (
           existingByFirebaseUid &&
           existingByEmail &&
@@ -360,6 +366,12 @@ export class AuthService {
         );
       });
     } catch (error) {
+      if (
+        input.mode === 'register' &&
+        (this.isEmailConflict(error) || this.isUniqueConflict(error, 'firebaseUid'))
+      ) {
+        throw this.accountAlreadyExistsException();
+      }
       if (this.isEmailConflict(error)) {
         throw new ConflictException('Email is already registered');
       }
@@ -543,6 +555,13 @@ export class AuthService {
     return new ConflictException({
       error: 'ACCOUNT_LINK_CONFLICT',
       message: FIREBASE_AUTH_ERROR_MESSAGES.accountLinkConflict,
+    });
+  }
+
+  private accountAlreadyExistsException(): ConflictException {
+    return new ConflictException({
+      error: 'ACCOUNT_ALREADY_EXISTS',
+      message: FIREBASE_AUTH_ERROR_MESSAGES.accountAlreadyExists,
     });
   }
 

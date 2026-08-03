@@ -7,11 +7,13 @@
 Request:
 
 ```json
-{ "idToken": "firebase-id-token", "role": "student" }
+{ "idToken": "firebase-id-token", "mode": "login", "role": "student" }
 ```
 
-`role` is optional and only applies when creating a new Firebase user. Existing
-PostgreSQL roles are preserved.
+`mode` is optional and defaults to `login`. `role` is optional and only applies
+when creating a new Firebase user. Existing PostgreSQL roles are preserved.
+When `mode` is `register`, an existing Firebase/email match returns
+`ACCOUNT_ALREADY_EXISTS` instead of logging the user in.
 
 The response uses the existing success envelope and login data:
 `accessToken`, `refreshToken`, `tokenType`, `expiresIn`, and `user`.

@@ -246,6 +246,28 @@ describe('AuthService.loginWithFirebase', () => {
     expect(tx.user.create).not.toHaveBeenCalled();
   });
 
+  it('rejects Google registration when the Firebase account already exists', async () => {
+    const existingUser = { ...baseUser };
+    const { service, tx } = createService({ users: [null, existingUser] });
+
+    await expect(
+      service.loginWithFirebase({
+        idToken: 'firebase-id-token',
+        mode: 'register',
+        role: RoleName.instructor,
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        error: 'ACCOUNT_ALREADY_EXISTS',
+        message: 'Tài khoản này đã tồn tại. Vui lòng đăng nhập.',
+      },
+      status: 409,
+    });
+
+    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(tx.user.create).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['unsupported provider', {
       ...firebaseClaims,

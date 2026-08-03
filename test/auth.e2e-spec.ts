@@ -161,6 +161,23 @@ describe('Auth flow endpoints', () => {
     });
   });
 
+  it('passes Firebase registration intent and role through the existing endpoint', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/firebase')
+      .send({
+        idToken: 'firebase-id-token',
+        mode: 'register',
+        role: RoleName.instructor,
+      })
+      .expect(200);
+
+    expect(authService.loginWithFirebase).toHaveBeenCalledWith({
+      idToken: 'firebase-id-token',
+      mode: 'register',
+      role: RoleName.instructor,
+    });
+  });
+
   it('rejects an invalid Firebase login payload', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/firebase')

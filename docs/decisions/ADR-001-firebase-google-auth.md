@@ -25,7 +25,9 @@ existing `authProvider=local` enum value, retain a nullable `passwordHash`, and
 are distinguished by their `firebaseUid`. Existing users can be linked without
 overwriting a custom name or avatar; existing roles are never replaced.
 
-The optional request role is used only for a new user. The legacy bcrypt
+The optional `mode=register` request is used by the registration UI and rejects
+existing Firebase/email matches with `ACCOUNT_ALREADY_EXISTS`. The optional
+request role is used only for a new user. The legacy bcrypt
 `/auth/register` and `/auth/login` endpoints remain available for compatibility
 with pre-existing local accounts, while the web frontend uses Firebase.
 
