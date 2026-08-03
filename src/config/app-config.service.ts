@@ -26,6 +26,10 @@ export class AppConfigService {
     return this.getConfigValue('jwt');
   }
 
+  get firebase(): BackendConfig['firebase'] {
+    return this.getConfigValue('firebase');
+  }
+
   get r2(): BackendConfig['r2'] {
     return this.getConfigValue('r2');
   }

@@ -1,13 +1,24 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   InternalServerErrorException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { RoleName, UserStatus } from '../../../generated/prisma/client';
+import {
+  AuthProvider,
+  RoleName,
+  UserStatus,
+} from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
+import {
+  FIREBASE_ADMIN_SERVICE,
+  type FirebaseAdminVerifier,
+} from '../firebase/firebase-admin.constants';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -60,6 +71,37 @@ interface AuthUserRecord {
   updatedAt: Date;
 }
 
+interface FirebaseTokenClaims {
+  email?: string;
+  email_verified?: boolean;
+  firebase?: {
+    sign_in_provider?: string;
+  };
+  name?: string;
+  picture?: string;
+  uid?: string;
+}
+
+const FIREBASE_USER_SELECT = {
+  avatarUrl: true,
+  createdAt: true,
+  email: true,
+  firebaseUid: true,
+  fullName: true,
+  id: true,
+  roles: {
+    select: {
+      role: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  },
+  status: true,
+  updatedAt: true,
+} as const;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -67,6 +109,9 @@ export class AuthService {
     private readonly passwordService: PasswordService,
     private readonly jwtService: JwtService,
     private readonly appConfig: AppConfigService,
+    @Optional()
+    @Inject(FIREBASE_ADMIN_SERVICE)
+    private readonly firebaseAdmin?: FirebaseAdminVerifier,
   ) {}
 
   async register(input: RegisterDto): Promise<RegisterResponse> {
@@ -158,7 +203,7 @@ export class AuthService {
       },
     });
 
-    if (!user || user.status !== UserStatus.active) {
+    if (!user || user.status !== UserStatus.active || !user.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -172,6 +217,129 @@ export class AuthService {
     }
 
     return this.issueTokenResponse(user, this.prisma);
+  }
+
+  async loginWithFirebase(input: FirebaseLoginDto): Promise<LoginResponse> {
+    const token = await this.verifyFirebaseToken(input.idToken);
+    const uid = token.uid?.trim();
+    const email = token.email?.trim().toLowerCase();
+
+    if (
+      !uid ||
+      !email ||
+      token.email_verified !== true ||
+      token.firebase?.sign_in_provider !== 'google.com'
+    ) {
+      throw new UnauthorizedException('Invalid Firebase authentication token');
+    }
+
+    const fullName = this.getFirebaseFullName(token.name, email);
+    const avatarUrl = this.getOptionalValue(token.picture);
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existingByFirebaseUid = await tx.user.findUnique({
+          where: { firebaseUid: uid },
+          select: FIREBASE_USER_SELECT,
+        });
+        const existingByEmail = await tx.user.findUnique({
+          where: { email },
+          select: FIREBASE_USER_SELECT,
+        });
+
+        if (
+          existingByFirebaseUid &&
+          existingByEmail &&
+          existingByFirebaseUid.id !== existingByEmail.id
+        ) {
+          throw new ConflictException(
+            'Firebase account is linked to a different email',
+          );
+        }
+
+        const existingUser = existingByFirebaseUid ?? existingByEmail;
+
+        if (existingUser) {
+          if (existingUser.status !== UserStatus.active) {
+            throw new UnauthorizedException(
+              'Invalid Firebase authentication token',
+            );
+          }
+
+          const updateData: {
+            authProvider: AuthProvider;
+            avatarUrl?: string;
+            emailVerified: boolean;
+            firebaseUid?: string;
+            fullName?: string;
+          } = {
+            authProvider: AuthProvider.google,
+            emailVerified: true,
+          };
+
+          if (!existingUser.firebaseUid) {
+            updateData.firebaseUid = uid;
+          }
+          if (!existingUser.fullName.trim() && fullName) {
+            updateData.fullName = fullName;
+          }
+          if (!existingUser.avatarUrl?.trim() && avatarUrl) {
+            updateData.avatarUrl = avatarUrl;
+          }
+
+          const user = await tx.user.update({
+            where: { id: existingUser.id },
+            data: updateData,
+            select: FIREBASE_USER_SELECT,
+          });
+
+          return this.issueTokenResponse(user, tx);
+        }
+
+        const role = await tx.role.findUnique({
+          where: { name: RoleName.student },
+          select: { id: true, name: true },
+        });
+
+        if (!role) {
+          throw new InternalServerErrorException('Registration role is missing');
+        }
+
+        const user = await tx.user.create({
+          data: {
+            authProvider: AuthProvider.google,
+            avatarUrl,
+            email,
+            emailVerified: true,
+            firebaseUid: uid,
+            fullName,
+            passwordHash: null,
+          },
+          select: FIREBASE_USER_SELECT,
+        });
+
+        await tx.userRole.create({
+          data: {
+            roleId: role.id,
+            userId: user.id,
+          },
+        });
+
+        return this.issueTokenResponse(
+          { ...user, roles: [{ role }] },
+          tx,
+        );
+      });
+    } catch (error) {
+      if (this.isEmailConflict(error)) {
+        throw new ConflictException('Email is already registered');
+      }
+      if (this.isUniqueConflict(error, 'firebaseUid')) {
+        throw new ConflictException('Firebase account is already linked');
+      }
+
+      throw error;
+    }
   }
 
   async refresh(input: RefreshTokenDto): Promise<RefreshResponse> {
@@ -310,6 +478,35 @@ export class AuthService {
     return secret;
   }
 
+  private async verifyFirebaseToken(
+    idToken: string,
+  ): Promise<FirebaseTokenClaims> {
+    if (!this.firebaseAdmin) {
+      throw new InternalServerErrorException(
+        'Firebase authentication is not configured',
+      );
+    }
+
+    try {
+      return await this.firebaseAdmin.verifyIdToken(idToken);
+    } catch (error) {
+      if (error instanceof InternalServerErrorException) {
+        throw error;
+      }
+
+      throw new UnauthorizedException('Invalid Firebase authentication token');
+    }
+  }
+
+  private getFirebaseFullName(name: string | undefined, email: string): string {
+    return this.getOptionalValue(name) ?? email.split('@')[0] ?? email;
+  }
+
+  private getOptionalValue(value: string | undefined): string | undefined {
+    const trimmed = value?.trim();
+    return trimmed || undefined;
+  }
+
   private async verifyRefreshToken(refreshToken: string): Promise<JwtPayload> {
     try {
       const payload = await this.jwtService.verifyAsync<JwtPayload>(
@@ -402,6 +599,10 @@ export class AuthService {
   }
 
   private isEmailConflict(error: unknown): boolean {
+    return this.isUniqueConflict(error, 'email');
+  }
+
+  private isUniqueConflict(error: unknown, field: string): boolean {
     return (
       typeof error === 'object' &&
       error !== null &&
@@ -412,7 +613,7 @@ export class AuthService {
       error.meta !== null &&
       'target' in error.meta &&
       Array.isArray(error.meta.target) &&
-      error.meta.target.includes('email')
+      error.meta.target.includes(field)
     );
   }
 }

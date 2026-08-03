@@ -10,6 +10,7 @@ import {
 import { RoleName } from '../../../generated/prisma/client';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -45,6 +46,22 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Invalid credentials.' })
   async login(@Body() input: LoginDto): Promise<LoginResponse> {
     return this.authService.login(input);
+  }
+
+  @Post('firebase')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Firebase user authenticated successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid Firebase login payload.' })
+  @ApiConflictResponse({
+    description: 'Firebase account conflicts with an existing user.',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid Firebase authentication token.',
+  })
+  async loginWithFirebase(
+    @Body() input: FirebaseLoginDto,
+  ): Promise<LoginResponse> {
+    return this.authService.loginWithFirebase(input);
   }
 
   @Post('refresh')

@@ -9,6 +9,9 @@ export interface ValidatedEnv {
   REDIS_URL?: string;
   JWT_ACCESS_SECRET?: string;
   JWT_REFRESH_SECRET?: string;
+  FIREBASE_PROJECT_ID?: string;
+  FIREBASE_CLIENT_EMAIL?: string;
+  FIREBASE_PRIVATE_KEY?: string;
   R2_ACCOUNT_ID?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
@@ -31,6 +34,24 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     throw new Error('NODE_ENV must be development, test, or production');
   }
 
+  const firebaseProjectId = optionalString(config.FIREBASE_PROJECT_ID);
+  const firebaseClientEmail = optionalString(config.FIREBASE_CLIENT_EMAIL);
+  const firebasePrivateKey = optionalString(config.FIREBASE_PRIVATE_KEY);
+  const firebaseConfigValues = [
+    firebaseProjectId,
+    firebaseClientEmail,
+    firebasePrivateKey,
+  ];
+
+  if (
+    firebaseConfigValues.some(Boolean) &&
+    firebaseConfigValues.some((value) => !value)
+  ) {
+    throw new Error(
+      'FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY must be provided together',
+    );
+  }
+
   const validated: ValidatedEnv = {
     NODE_ENV: nodeEnv,
     PORT: parsePort(config.PORT),
@@ -45,6 +66,9 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
       config.JWT_REFRESH_SECRET,
       'JWT_REFRESH_SECRET',
     ),
+    FIREBASE_PROJECT_ID: firebaseProjectId,
+    FIREBASE_CLIENT_EMAIL: firebaseClientEmail,
+    FIREBASE_PRIVATE_KEY: firebasePrivateKey,
     R2_ACCOUNT_ID: optionalString(config.R2_ACCOUNT_ID),
     R2_ACCESS_KEY_ID: optionalString(config.R2_ACCESS_KEY_ID),
     R2_SECRET_ACCESS_KEY: optionalString(config.R2_SECRET_ACCESS_KEY),

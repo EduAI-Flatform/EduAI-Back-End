@@ -25,6 +25,7 @@ const user = {
 describe('Auth flow endpoints', () => {
   let app: INestApplication;
   const authService = {
+    loginWithFirebase: jest.fn(),
     register: jest.fn(),
     login: jest.fn(),
     logout: jest.fn(),
@@ -71,6 +72,13 @@ describe('Auth flow endpoints', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    authService.loginWithFirebase.mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      tokenType: 'Bearer',
+      expiresIn: 900,
+      user,
+    });
     authService.register.mockResolvedValue({ user });
     authService.login.mockResolvedValue({
       accessToken: 'access-token',
@@ -127,6 +135,42 @@ describe('Auth flow endpoints', () => {
       });
 
     expect(authService.register).not.toHaveBeenCalled();
+  });
+
+  it('logs in with Firebase and preserves the standard response envelope', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/firebase')
+      .send({ idToken: 'firebase-id-token' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          success: true,
+          data: {
+            accessToken: 'access-token',
+            refreshToken: 'refresh-token',
+            tokenType: 'Bearer',
+            expiresIn: 900,
+          },
+          message: 'OK',
+        });
+      });
+
+    expect(authService.loginWithFirebase).toHaveBeenCalledWith({
+      idToken: 'firebase-id-token',
+    });
+  });
+
+  it('rejects an invalid Firebase login payload', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/firebase')
+      .send({ idToken: '' })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.success).toBe(false);
+        expect(body.error.code).toBe('BAD_REQUEST');
+      });
+
+    expect(authService.loginWithFirebase).not.toHaveBeenCalled();
   });
 
   it('logs in, logs out, and preserves the standard response envelope', async () => {

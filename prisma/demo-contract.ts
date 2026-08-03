@@ -200,8 +200,10 @@ export async function verifyDemoData(
   });
   const passwordHashRoundsValid =
     demoPasswordHashes.length === DEMO_EXPECTED_COUNTS.users &&
-    demoPasswordHashes.every(({ passwordHash }) =>
-      /^\$2[aby]\$12\$/.test(passwordHash),
+    demoPasswordHashes.every(
+      ({ passwordHash }) =>
+        typeof passwordHash === 'string' &&
+        /^\$2[aby]\$12\$/.test(passwordHash),
     );
 
   if (!passwordHashRoundsValid) {

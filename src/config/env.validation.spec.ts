@@ -20,6 +20,9 @@ describe('validateEnv', () => {
       REDIS_URL: 'redis://localhost:6379',
       JWT_ACCESS_SECRET: 'access-secret',
       JWT_REFRESH_SECRET: 'refresh-secret',
+      FIREBASE_PROJECT_ID: 'eduai-project',
+      FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk@example.iam.gserviceaccount.com',
+      FIREBASE_PRIVATE_KEY: 'private-key',
       R2_ACCOUNT_ID: 'account-id',
       R2_ACCESS_KEY_ID: 'access-key',
       R2_SECRET_ACCESS_KEY: 'secret-key',
@@ -37,6 +40,9 @@ describe('validateEnv', () => {
       REDIS_URL: 'redis://localhost:6379',
       JWT_ACCESS_SECRET: 'access-secret',
       JWT_REFRESH_SECRET: 'refresh-secret',
+      FIREBASE_PROJECT_ID: 'eduai-project',
+      FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk@example.iam.gserviceaccount.com',
+      FIREBASE_PRIVATE_KEY: 'private-key',
       R2_ACCOUNT_ID: 'account-id',
       R2_ACCESS_KEY_ID: 'access-key',
       R2_SECRET_ACCESS_KEY: 'secret-key',
@@ -47,6 +53,29 @@ describe('validateEnv', () => {
       AI_PROVIDER: 'mock',
       PUBLIC_APP_URL: 'http://localhost:5173',
     });
+  });
+
+  it('allows Firebase configuration to be omitted as a complete optional integration', () => {
+    expect(() =>
+      validateEnv({
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+        JWT_ACCESS_SECRET: 'access-secret',
+        JWT_REFRESH_SECRET: 'refresh-secret',
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects partial Firebase configuration', () => {
+    expect(() =>
+      validateEnv({
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+        JWT_ACCESS_SECRET: 'access-secret',
+        JWT_REFRESH_SECRET: 'refresh-secret',
+        FIREBASE_PROJECT_ID: 'eduai-project',
+      }),
+    ).toThrow(
+      'FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY must be provided together',
+    );
   });
 
   it('rejects the mock AI provider in production', () => {

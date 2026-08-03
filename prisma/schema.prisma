@@ -16,6 +16,11 @@ enum UserStatus {
   suspended
 }
 
+enum AuthProvider {
+  local
+  google
+}
+
 enum RoleName {
   student
   instructor
@@ -78,9 +83,12 @@ enum ClassroomSessionStatus {
 model User {
   id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email         String             @unique
-  passwordHash  String             @map("password_hash")
+  passwordHash  String?            @map("password_hash")
   fullName      String             @map("full_name")
   avatarUrl     String?            @map("avatar_url")
+  firebaseUid   String?            @unique @map("firebase_uid")
+  authProvider  AuthProvider       @default(local) @map("auth_provider")
+  emailVerified Boolean            @default(false) @map("email_verified")
   status        UserStatus         @default(active)
   createdAt     DateTime           @default(now()) @map("created_at")
   updatedAt     DateTime           @updatedAt @map("updated_at")

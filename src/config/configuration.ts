@@ -20,6 +20,11 @@ export interface BackendConfig {
     accessSecret?: string;
     refreshSecret?: string;
   };
+  firebase: {
+    projectId?: string;
+    clientEmail?: string;
+    privateKey?: string;
+  };
   r2: {
     accountId?: string;
     accessKeyId?: string;
@@ -55,6 +60,11 @@ export default function configuration(): BackendConfig {
     jwt: {
       accessSecret: env.JWT_ACCESS_SECRET,
       refreshSecret: env.JWT_REFRESH_SECRET,
+    },
+    firebase: {
+      projectId: env.FIREBASE_PROJECT_ID,
+      clientEmail: env.FIREBASE_CLIENT_EMAIL,
+      privateKey: env.FIREBASE_PRIVATE_KEY,
     },
     r2: {
       accountId: env.R2_ACCOUNT_ID,
