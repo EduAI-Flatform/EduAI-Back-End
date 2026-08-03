@@ -1,0 +1,132 @@
+name: Deploy Backend Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: eduai-backend-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Validate and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/eduai
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npm run prisma:validate
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Run tests
+        run: npm test -- --runInBand
+        continue-on-error: false
+
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: ci
+    environment: production
+
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/eduai_deploy
+          chmod 600 ~/.ssh/eduai_deploy
+
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy backend
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          ssh \
+            -i ~/.ssh/eduai_deploy \
+            -p "$VPS_PORT" \
+            "$VPS_USER@$VPS_HOST" << 'EOF'
+          set -Eeuo pipefail
+
+          exec 9>/tmp/eduai-backend-deploy.lock
+          flock -n 9 || {
+            echo "Another backend deployment is running."
+            exit 1
+          }
+
+          cd /var/www/eduai/backend
+
+          echo "Fetching source..."
+          git fetch origin main
+          git reset --hard origin/main
+
+          if [ ! -f .env ]; then
+            echo "ERROR: /var/www/eduai/backend/.env does not exist"
+            exit 1
+          fi
+
+          echo "Installing dependencies..."
+          npm ci
+
+          echo "Generating Prisma client..."
+          npm run prisma:generate
+
+          echo "Validating Prisma schema..."
+          npm run prisma:validate
+
+          echo "Applying database migrations..."
+          npm run prisma:migrate:deploy
+
+          echo "Building backend..."
+          npm run build
+
+          echo "Restarting PM2..."
+          pm2 restart eduai-backend --update-env
+          pm2 save
+
+          echo "Waiting for backend..."
+          sleep 5
+
+          echo "Checking backend..."
+          curl --fail --silent --show-error \
+            --max-time 15 \
+            http://127.0.0.1:3010/api/docs \
+            > /dev/null
+
+          echo "Backend deployment completed."
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/eduai_deploy
