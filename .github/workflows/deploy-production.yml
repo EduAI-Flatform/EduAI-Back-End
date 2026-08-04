@@ -41,6 +41,11 @@ jobs:
       R2_BUCKET_NAME: ""
       R2_PUBLIC_URL: ""
 
+      AI_PROVIDER: mock
+      OPENAI_API_KEY: ""
+      OPENAI_MODEL: gpt-4.1-mini
+      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v6
@@ -62,7 +67,6 @@ jobs:
 
       - name: Run tests
         run: npm test -- --runInBand
-        continue-on-error: false
 
   deploy:
     name: Deploy to VPS
@@ -71,12 +75,31 @@ jobs:
     needs: ci
     environment: production
 
+    outputs:
+      deploy_start: ${{ steps.deploy_start.outputs.timestamp }}
+
     steps:
+      - name: Record deploy start time
+        id: deploy_start
+        run: echo "timestamp=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Configure SSH
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
+          set -Eeuo pipefail
+
+          test -n "$VPS_SSH_KEY" || {
+            echo "ERROR: VPS_SSH_KEY is missing"
+            exit 1
+          }
+
+          test -n "$VPS_KNOWN_HOSTS" || {
+            echo "ERROR: VPS_KNOWN_HOSTS is missing"
+            exit 1
+          }
+
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
@@ -86,6 +109,21 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Test SSH connection
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          ssh \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -i ~/.ssh/eduai_deploy \
+            -p "$VPS_PORT" \
+            "$VPS_USER@$VPS_HOST" \
+            "echo 'SSH connection successful'"
+
       - name: Deploy backend
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -93,12 +131,16 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
           ssh \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
             -i ~/.ssh/eduai_deploy \
             -p "$VPS_PORT" \
             "$VPS_USER@$VPS_HOST" << 'EOF'
           set -Eeuo pipefail
 
           exec 9>/tmp/eduai-backend-deploy.lock
+
           flock -n 9 || {
             echo "Another backend deployment is running."
             exit 1
@@ -138,7 +180,10 @@ jobs:
           sleep 5
 
           echo "Checking backend..."
-          curl --fail --silent --show-error \
+          curl \
+            --fail \
+            --silent \
+            --show-error \
             --max-time 15 \
             http://127.0.0.1:3010/api/docs \
             > /dev/null
@@ -146,6 +191,161 @@ jobs:
           echo "Backend deployment completed."
           EOF
 
-      - name: Cleanup SSH key
-        if: always()
-        run: rm -f ~/.ssh/eduai_deploy
+      - name: Cleanup SSH files
+        if: ${{ always() }}
+        run: |
+          rm -f ~/.ssh/eduai_deploy
+          rm -f ~/.ssh/known_hosts
+
+  notify:
+    name: Telegram notification
+    runs-on: ubuntu-latest
+
+    needs:
+      - ci
+      - deploy
+
+    if: ${{ always() }}
+
+    steps:
+      - name: Telegram - backend deployment notification
+        continue-on-error: true
+
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          WORKFLOW: ${{ github.workflow }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+
+          CI_RESULT: ${{ needs.ci.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          DEPLOY_START: ${{ needs.deploy.outputs.deploy_start }}
+
+        run: |
+          set -Eeuo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets are missing. Skip notification."
+            exit 0
+          fi
+
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          RUN_URL="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
+          END_TIME="$(date +%s)"
+
+          if [[ "${DEPLOY_START:-}" =~ ^[0-9]+$ ]]; then
+            TOTAL_SECONDS=$((END_TIME - DEPLOY_START))
+          else
+            TOTAL_SECONDS=0
+          fi
+
+          if [ "$TOTAL_SECONDS" -lt 0 ]; then
+            TOTAL_SECONDS=0
+          fi
+
+          HOURS=$((TOTAL_SECONDS / 3600))
+          MINUTES=$(((TOTAL_SECONDS % 3600) / 60))
+          SECONDS=$((TOTAL_SECONDS % 60))
+
+          if [ "$HOURS" -gt 0 ]; then
+            DEPLOY_TIME="${HOURS}h ${MINUTES}m ${SECONDS}s"
+          elif [ "$MINUTES" -gt 0 ]; then
+            DEPLOY_TIME="${MINUTES}m ${SECONDS}s"
+          elif [ "$TOTAL_SECONDS" -gt 0 ]; then
+            DEPLOY_TIME="${SECONDS}s"
+          else
+            DEPLOY_TIME="Không thực hiện deploy"
+          fi
+
+          if [ -z "${COMMIT_MESSAGE:-}" ]; then
+            COMMIT_MESSAGE="Chạy workflow thủ công"
+          fi
+
+          COMMIT_MESSAGE="$(
+            printf '%s' "$COMMIT_MESSAGE" |
+            tr '\n\r' ' ' |
+            cut -c1-250
+          )"
+
+          if [ "$CI_RESULT" != "success" ]; then
+            TITLE="❌ EduAI Backend CI Thất Bại"
+
+            RESULT_MESSAGE="$(printf '%s\n' \
+              "🔴 CI: ${CI_RESULT^^}" \
+              "⚪ Deploy: Không thực hiện" \
+              "ℹ️ Backend production không bị thay đổi")"
+
+          elif [ "$DEPLOY_RESULT" = "success" ]; then
+            TITLE="⚙️ EduAI Backend Deploy Thành Công"
+
+            RESULT_MESSAGE="$(printf '%s\n' \
+              "🟢 CI: PASSED" \
+              "🟢 Prisma Migration: SUCCESS" \
+              "🟢 Deploy: SUCCESS" \
+              "🟢 Health Check: PASSED" \
+              "🔗 API Docs: https://api.eduai.giaoducso.org.vn/api/docs")"
+
+          elif [ "$DEPLOY_RESULT" = "cancelled" ]; then
+            TITLE="⚠️ EduAI Backend Deploy Đã Bị Hủy"
+
+            RESULT_MESSAGE="$(printf '%s\n' \
+              "🟢 CI: PASSED" \
+              "🟠 Deploy: CANCELLED" \
+              "ℹ️ Kiểm tra PM2 và trạng thái API")"
+
+          elif [ "$DEPLOY_RESULT" = "skipped" ]; then
+            TITLE="⚠️ EduAI Backend Deploy Bị Bỏ Qua"
+
+            RESULT_MESSAGE="$(printf '%s\n' \
+              "🟢 CI: PASSED" \
+              "🟠 Deploy: SKIPPED" \
+              "ℹ️ Kiểm tra điều kiện chạy job deploy")"
+
+          else
+            TITLE="❌ EduAI Backend Deploy Thất Bại"
+
+            RESULT_MESSAGE="$(printf '%s\n' \
+              "🟢 CI: PASSED" \
+              "🔴 Deploy: ${DEPLOY_RESULT^^}" \
+              "🟡 PM2/API: Kiểm tra log production" \
+              "🔗 API Docs: https://api.eduai.giaoducso.org.vn/api/docs")"
+          fi
+
+          MESSAGE="$(printf '%s\n' \
+            "$TITLE" \
+            "" \
+            "🌐 Môi trường: Production" \
+            "📦 Repository: ${REPOSITORY}" \
+            "🌿 Branch: ${BRANCH}" \
+            "" \
+            "🔖 Commit:" \
+            "${SHORT_SHA} - ${COMMIT_MESSAGE}" \
+            "" \
+            "👤 Người thực hiện: ${ACTOR}" \
+            "🚀 Workflow: ${WORKFLOW}" \
+            "🔢 Run: #${RUN_NUMBER}" \
+            "⏱️ Thời gian deploy: ${DEPLOY_TIME}" \
+            "" \
+            "${RESULT_MESSAGE}" \
+            "" \
+            "📋 Chi tiết:" \
+            "${RUN_URL}")"
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${MESSAGE}" \
+            > /dev/null
+
+          echo "Telegram notification sent."
