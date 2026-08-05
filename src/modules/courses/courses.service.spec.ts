@@ -914,7 +914,7 @@ describe('CoursesService', () => {
     });
   });
 
-  it('completes a lesson for an enrolled student and returns course progress', async () => {
+  it('returns earned lesson progress without allowing manual completion', async () => {
     const { prisma, service } = createService();
 
     await expect(service.completeLesson(student.id, 'lesson-1')).resolves.toEqual({
@@ -953,29 +953,7 @@ describe('CoursesService', () => {
         completedAt: true,
       },
     });
-    expect(prisma.learningProgress.upsert).toHaveBeenCalledWith({
-      where: {
-        userId_lessonId: {
-          userId: student.id,
-          lessonId: 'lesson-1',
-        },
-      },
-      create: {
-        userId: student.id,
-        courseId: course.id,
-        lessonId: 'lesson-1',
-        status: 'completed',
-        progressPercent: 100,
-        completedAt: expect.any(Date),
-        lastAccessedAt: expect.any(Date),
-      },
-      update: {
-        status: 'completed',
-        progressPercent: 100,
-        completedAt: expect.any(Date),
-        lastAccessedAt: expect.any(Date),
-      },
-    });
+    expect(prisma.learningProgress.upsert).not.toHaveBeenCalled();
   });
 
   it('rejects lesson completion when the student is not enrolled', async () => {
@@ -985,6 +963,16 @@ describe('CoursesService', () => {
       new NotFoundException('Enrollment not found'),
     );
     expect(prisma.learningProgress.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects the legacy completion route when progress was not earned', async () => {
+    const { service } = createService({
+      progress: [{ ...progressRows[0], lessonId: 'lesson-2' }],
+    });
+
+    await expect(service.completeLesson(student.id, 'lesson-1')).rejects.toEqual(
+      new BadRequestException('Lesson completion must be earned through lesson progress'),
+    );
   });
 
   it('marks the enrollment completed when all lessons are complete', async () => {

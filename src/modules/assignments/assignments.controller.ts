@@ -7,8 +7,11 @@ import {
   ParseUUIDPipe,
   Post,
   Put,
+  UploadedFile,
+  UseInterceptors,
   UseGuards,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -31,6 +34,8 @@ import { GradeSubmissionDto } from './dto/grade-submission.dto';
 import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
 import { SubmissionResponseDto } from './dto/submission-response.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
+import { UploadedAssignmentFile } from './types/assignment-upload.types';
+import { AssignmentStorageService, MAX_ASSIGNMENT_FILE_SIZE_BYTES } from './assignment-storage.service';
 import {
   AssignmentResponse,
   AssignmentsService,
@@ -121,6 +126,11 @@ export class AssignmentsController {
 
   @Post('assignments/:id/submissions')
   @Roles(RoleName.student)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_ASSIGNMENT_FILE_SIZE_BYTES },
+    }),
+  )
   @ApiCreatedResponse({
     description: 'Assignment submission stored.',
     type: SubmissionResponseDto,
@@ -134,8 +144,11 @@ export class AssignmentsController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) assignmentId: string,
     @Body() input: SubmitAssignmentDto,
+    @UploadedFile() file?: UploadedAssignmentFile,
   ): Promise<SubmissionResponse> {
-    return this.assignmentsService.submitAssignment(user.id, assignmentId, input);
+    return file
+      ? this.assignmentsService.submitAssignment(user.id, assignmentId, input, file)
+      : this.assignmentsService.submitAssignment(user.id, assignmentId, input);
   }
 
   @Get('assignments/:id/submissions/me')

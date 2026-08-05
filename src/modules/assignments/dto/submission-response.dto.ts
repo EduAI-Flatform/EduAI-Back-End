@@ -29,6 +29,15 @@ export class SubmissionResponseDto {
   fileUrl!: string | null;
 
   @ApiPropertyOptional({ nullable: true })
+  fileName!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  fileSize!: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  fileMimeType!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
   score!: number | null;
 
   @ApiPropertyOptional({ nullable: true })

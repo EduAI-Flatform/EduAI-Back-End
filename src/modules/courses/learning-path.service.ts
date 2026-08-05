@@ -96,6 +96,17 @@ export interface LearningPathResponse {
   completed: boolean;
 }
 
+export interface LessonProgressResponse {
+  lessonId: string;
+  status: string;
+  progressPercent: number;
+  watchedSeconds: number;
+  durationSeconds: number | null;
+  lastPositionSeconds: number;
+  documentProgressPercent: number;
+  completedAt: Date | null;
+}
+
 @Injectable()
 export class LearningPathService {
   constructor(private readonly prisma: PrismaService) {}
@@ -188,6 +199,47 @@ export class LearningPathService {
       }
       return path;
     });
+  }
+
+  async getLessonProgress(
+    user: AuthenticatedUser,
+    lessonId: string,
+  ): Promise<LessonProgressResponse> {
+    if (!user.roles.includes(RoleName.student)) {
+      throw new ForbiddenException('Student role required');
+    }
+
+    const lesson = await this.prisma.lesson.findFirst({
+      where: { id: lessonId, deletedAt: null, course: { deletedAt: null } },
+      select: { id: true, courseId: true },
+    });
+    if (!lesson) throw new NotFoundException('Lesson not found');
+
+    await this.assertEnrolled(this.prisma, user.id, lesson.courseId);
+    await this.assertLessonAccessible(user, lessonId);
+    const progress = await this.prisma.learningProgress.findUnique({
+      where: { userId_lessonId: { userId: user.id, lessonId } },
+      select: {
+        status: true,
+        progressPercent: true,
+        watchedSeconds: true,
+        durationSeconds: true,
+        lastPositionSeconds: true,
+        documentProgressPercent: true,
+        completedAt: true,
+      },
+    });
+
+    return {
+      lessonId,
+      status: progress?.status ?? PROGRESS_NOT_STARTED_STATUS,
+      progressPercent: progress?.progressPercent ?? 0,
+      watchedSeconds: progress?.watchedSeconds ?? 0,
+      durationSeconds: progress?.durationSeconds ?? null,
+      lastPositionSeconds: progress?.lastPositionSeconds ?? 0,
+      documentProgressPercent: progress?.documentProgressPercent ?? 0,
+      completedAt: progress?.completedAt ?? null,
+    };
   }
 
   async assertLessonAccessible(

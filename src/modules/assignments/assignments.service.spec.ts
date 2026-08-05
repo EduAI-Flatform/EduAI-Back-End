@@ -33,7 +33,7 @@ const assignment = {
   updatedAt: dueDate,
 };
 
-function createService() {
+function createService(storage?: { upload: jest.Mock }) {
   const submission = {
     id: 'submission-id',
     assignmentId: assignment.id,
@@ -80,7 +80,11 @@ function createService() {
       }),
     },
   };
-  return { prisma, service: new AssignmentsService(prisma as never), submission };
+  return {
+    prisma,
+    service: new AssignmentsService(prisma as never, undefined, storage as never),
+    submission,
+  };
 }
 
 describe('AssignmentsService', () => {
@@ -123,6 +127,39 @@ describe('AssignmentsService', () => {
         fileUrl: undefined,
         status: SubmissionStatus.submitted,
       },
+      select: expect.any(Object),
+    });
+  });
+
+  it('stores uploaded assignment metadata and the generated file URL', async () => {
+    const storage = {
+      upload: jest.fn().mockResolvedValue({
+        key: 'assignments/file-id.pdf',
+        url: 'https://cdn.example.com/assignments/file-id.pdf',
+      }),
+    };
+    const { prisma, service } = createService(storage);
+    prisma.submission.findFirst.mockResolvedValue(null);
+    const file = {
+      buffer: Buffer.from('%PDF-1.7'),
+      mimetype: 'application/pdf',
+      originalname: 'bai-lam.pdf',
+      size: 8,
+    };
+
+    await service.submitAssignment(student.id, assignment.id, {}, file);
+
+    expect(storage.upload).toHaveBeenCalledWith(file, {
+      allowedMimeTypes: undefined,
+      maxFileSizeBytes: undefined,
+    });
+    expect(prisma.submission.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fileUrl: 'https://cdn.example.com/assignments/file-id.pdf',
+        fileName: 'bai-lam.pdf',
+        fileSize: 8,
+        fileMimeType: 'application/pdf',
+      }),
       select: expect.any(Object),
     });
   });

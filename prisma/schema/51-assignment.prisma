@@ -4,6 +4,10 @@ model Assignment {
   lessonId    String?          @map("lesson_id") @db.Uuid
   title       String
   description String?
+  instructions String? @map("instructions")
+  rubric      String? @map("rubric")
+  allowedFileMimeTypes String[] @default(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip", "image/jpeg", "image/png"]) @map("allowed_file_mime_types")
+  maxFileSizeBytes Int @default(20971520) @map("max_file_size_bytes")
   dueDate     DateTime?        @map("due_date")
   maxScore    Float            @map("max_score")
   status      AssignmentStatus @default(draft)
@@ -28,6 +32,9 @@ model Submission {
   userId       String           @map("user_id") @db.Uuid
   content      String?
   fileUrl      String?          @map("file_url")
+  fileName     String?          @map("file_name")
+  fileSize     Int?             @map("file_size")
+  fileMimeType String?          @map("file_mime_type")
   score        Float?
   feedback     String?
   status       SubmissionStatus @default(submitted)

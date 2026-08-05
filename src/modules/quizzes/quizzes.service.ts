@@ -91,7 +91,14 @@ type StoredAttemptResponse = Prisma.QuizAttemptGetPayload<{
 
 export type QuizAttemptResponse = StoredAttemptResponse & {
   scorePercent: number;
+  answers?: QuizAttemptAnswerResponse[];
 };
+
+export interface QuizAttemptAnswerResponse {
+  questionId: string;
+  answer: unknown;
+  isCorrect: boolean;
+}
 
 export interface DeletedQuizResponse {
   deleted: true;
@@ -331,6 +338,14 @@ export class QuizzesService {
     }, 0);
     const scorePercent = maxScore === 0 ? 0 : (score / maxScore) * 100;
     const passed = scorePercent >= quiz.passingScore;
+    const answerResults: QuizAttemptAnswerResponse[] = quiz.questions.map((question) => {
+      const answer = answersByQuestionId.get(question.id);
+      return {
+        questionId: question.id,
+        answer,
+        isCorrect: this.answersMatch(answer, question.correctAnswerJson),
+      };
+    });
     const now = new Date();
     const storedAnswers = input.answers.map(({ questionId, answer }) => ({
       questionId,
@@ -350,7 +365,11 @@ export class QuizzesService {
       select: attemptResponseSelect,
     });
 
-    return { ...attempt, scorePercent: this.roundScore(scorePercent) };
+    return {
+      ...attempt,
+      scorePercent: this.roundScore(scorePercent),
+      answers: answerResults,
+    };
   }
 
   async getStudentQuiz(

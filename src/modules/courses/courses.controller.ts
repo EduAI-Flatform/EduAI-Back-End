@@ -261,8 +261,8 @@ export class CoursesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.student)
   @ApiBearerAuth()
-  @ApiOkResponse({ description: 'Lesson marked complete successfully.' })
-  @ApiBadRequestResponse({ description: 'Invalid lesson id.' })
+  @ApiOkResponse({ description: 'Earned lesson progress returned successfully.' })
+  @ApiBadRequestResponse({ description: 'Lesson has not met its completion requirement.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })
   @ApiNotFoundResponse({

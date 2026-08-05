@@ -662,32 +662,6 @@ export class CoursesService {
         throw new NotFoundException('Enrollment not found');
       }
 
-      const now = new Date();
-
-      await tx.learningProgress.upsert({
-        where: {
-          userId_lessonId: {
-            userId,
-            lessonId,
-          },
-        },
-        create: {
-          userId,
-          courseId: lesson.courseId,
-          lessonId,
-          status: PROGRESS_COMPLETED_STATUS,
-          progressPercent: 100,
-          completedAt: now,
-          lastAccessedAt: now,
-        },
-        update: {
-          status: PROGRESS_COMPLETED_STATUS,
-          progressPercent: 100,
-          completedAt: now,
-          lastAccessedAt: now,
-        },
-      });
-
       const progress = await this.calculateCourseProgress(
         tx,
         userId,
@@ -695,7 +669,14 @@ export class CoursesService {
         lesson.course.lessons.map((courseLesson) => courseLesson.id),
       );
 
+      if (!progress.completedLessonIds.includes(lessonId)) {
+        throw new BadRequestException(
+          'Lesson completion must be earned through lesson progress',
+        );
+      }
+
       if (progress.completed && !enrollment.completedAt) {
+        const now = new Date();
         await tx.enrollment.update({
           where: {
             id: enrollment.id,

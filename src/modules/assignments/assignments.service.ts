@@ -19,6 +19,8 @@ import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { GradeSubmissionDto } from './dto/grade-submission.dto';
 import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
+import { AssignmentStorageService } from './assignment-storage.service';
+import { UploadedAssignmentFile } from './types/assignment-upload.types';
 
 const assignmentResponseSelect = {
   id: true,
@@ -26,6 +28,10 @@ const assignmentResponseSelect = {
   lessonId: true,
   title: true,
   description: true,
+  instructions: true,
+  rubric: true,
+  allowedFileMimeTypes: true,
+  maxFileSizeBytes: true,
   dueDate: true,
   maxScore: true,
   status: true,
@@ -39,6 +45,9 @@ const submissionResponseSelect = {
   userId: true,
   content: true,
   fileUrl: true,
+  fileName: true,
+  fileSize: true,
+  fileMimeType: true,
   score: true,
   feedback: true,
   status: true,
@@ -82,6 +91,7 @@ export class AssignmentsService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly learningPathService?: LearningPathService,
+    @Optional() private readonly assignmentStorageService?: AssignmentStorageService,
   ) {}
 
   async createAssignment(
@@ -97,6 +107,10 @@ export class AssignmentsService {
         lessonId: input.lessonId,
         title: input.title,
         description: input.description,
+        instructions: input.instructions,
+        rubric: input.rubric,
+        allowedFileMimeTypes: input.allowedFileMimeTypes,
+        maxFileSizeBytes: input.maxFileSizeBytes,
         dueDate: this.toOptionalDate(input.dueDate),
         maxScore: input.maxScore,
         status: AssignmentStatus.draft,
@@ -182,6 +196,10 @@ export class AssignmentsService {
         lessonId: input.lessonId,
         title: input.title,
         description: input.description,
+        instructions: input.instructions,
+        rubric: input.rubric,
+        allowedFileMimeTypes: input.allowedFileMimeTypes,
+        maxFileSizeBytes: input.maxFileSizeBytes,
         dueDate: this.toOptionalDate(input.dueDate),
         maxScore: input.maxScore,
       }),
@@ -217,9 +235,10 @@ export class AssignmentsService {
     userId: string,
     assignmentId: string,
     input: SubmitAssignmentDto,
+    file?: UploadedAssignmentFile,
   ): Promise<SubmissionResponse> {
-    if (!input.content && !input.fileUrl) {
-      throw new BadRequestException('Submission requires text or file URL');
+    if (!input.content && !input.fileUrl && !file) {
+      throw new BadRequestException('Submission requires text or file');
     }
     const assignment = await this.prisma.assignment.findFirst({
       where: {
@@ -232,7 +251,12 @@ export class AssignmentsService {
           enrollments: { some: { userId } },
         },
       },
-      select: { id: true, dueDate: true },
+      select: {
+        id: true,
+        dueDate: true,
+        allowedFileMimeTypes: true,
+        maxFileSizeBytes: true,
+      },
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
     await this.learningPathService?.assertStudentStepAccessible(
@@ -241,6 +265,26 @@ export class AssignmentsService {
       'ASSIGNMENT',
     );
 
+    if (file) {
+      if (!this.assignmentStorageService) {
+        throw new BadRequestException('Assignment file storage is unavailable');
+      }
+      const existingSubmission = await this.prisma.submission.findFirst({
+        where: { assignmentId, userId },
+        select: { id: true },
+      });
+      if (existingSubmission) {
+        throw new ConflictException('Assignment already submitted');
+      }
+    }
+
+    const storedFile = file
+      ? await this.assignmentStorageService!.upload(file, {
+          allowedMimeTypes: assignment.allowedFileMimeTypes,
+          maxFileSizeBytes: assignment.maxFileSizeBytes,
+        })
+      : undefined;
+
     try {
       const submission = await this.prisma.submission.create({
         data: {
@@ -248,6 +292,14 @@ export class AssignmentsService {
           userId,
           content: input.content,
           fileUrl: input.fileUrl,
+          ...(storedFile
+            ? {
+                fileUrl: storedFile.url,
+                fileName: file!.originalname,
+                fileSize: file!.size,
+                fileMimeType: file!.mimetype,
+              }
+            : {}),
           status: SubmissionStatus.submitted,
         },
         select: submissionResponseSelect,

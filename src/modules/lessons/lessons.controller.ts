@@ -96,6 +96,24 @@ export class LessonsController {
     return this.learningPathService.updateLessonProgress(user, lessonId, input);
   }
 
+  @Get('lessons/:id/progress')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Lesson progress returned successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({ description: 'Lesson, enrollment, or learning step not found.' })
+  getLessonProgress(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,
+  ): Promise<unknown> {
+    if (!this.learningPathService) {
+      throw new Error('Learning path service is not configured');
+    }
+    return this.learningPathService.getLessonProgress(user, lessonId);
+  }
+
   @Get('instructor/courses/:courseId/lessons')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)

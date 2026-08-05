@@ -4,6 +4,8 @@ import {
   IsISO8601,
   IsNumber,
   IsOptional,
+  IsArray,
+  IsIn,
   IsString,
   IsUUID,
   Max,
@@ -30,6 +32,48 @@ export class CreateAssignmentDto {
   @IsString()
   @MaxLength(10000)
   description?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, maxLength: 10000 })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  instructions?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, maxLength: 10000 })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  rubric?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    default: [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/zip',
+      'image/jpeg',
+      'image/png',
+    ],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsIn([
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/zip',
+    'image/jpeg',
+    'image/png',
+  ], { each: true })
+  allowedFileMimeTypes?: string[];
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 20971520, default: 20971520 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(20971520)
+  maxFileSizeBytes?: number;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
