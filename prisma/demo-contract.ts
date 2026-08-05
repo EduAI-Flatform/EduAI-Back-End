@@ -1,8 +1,21 @@
 import type { PrismaClient } from '../generated/prisma/client';
 import {
+  DEMO_ACCOUNTS,
+  DEMO_ASSETS,
   DEMO_EXPECTED_COUNTS,
+  DEMO_IDS,
+  demoClassroomSessions,
+  demoCourses,
+  demoEnrollments,
   demoFixtureIds,
+  demoLessons,
+  demoAssignments,
+  demoLibraryResources,
+  demoQuizAttempts,
 } from './demo-fixtures';
+
+const AI_COURSE_KEYWORDS =
+  /ai|machine learning|deep learning|computer vision|natural language processing|openai|prompt|data science/i;
 
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -72,6 +85,74 @@ export function assertDemoFixtureContract(): void {
 
   if (new Set(allIds).size !== allIds.length) {
     throw new Error('Demo fixture IDs must be globally unique');
+  }
+
+  if (
+    demoCourses.length !== 10 ||
+    demoCourses.some(
+      (course) =>
+        course.status !== 'published' ||
+        course.visibility !== 'public' ||
+        !course.title.trim() ||
+        !course.description.trim() ||
+        !AI_COURSE_KEYWORDS.test(`${course.title} ${course.description}`),
+    )
+  ) {
+    throw new Error('Demo courses must contain ten published public AI courses');
+  }
+
+  if (
+    new Set(Object.values(DEMO_ACCOUNTS)).size !== 3 ||
+    new Set(DEMO_ASSETS.courseThumbnails).size !== 10
+  ) {
+    throw new Error('Demo accounts and course thumbnails must be unique');
+  }
+
+  if (new Set(demoCourses.map((course) => course.slug)).size !== demoCourses.length) {
+    throw new Error('Demo course slugs must be unique');
+  }
+
+  for (const course of demoCourses) {
+    const lessons = demoLessons.filter((lesson) => lesson.courseId === course.id);
+    const orderIndexes = lessons.map((lesson) => lesson.orderIndex);
+    if (
+      lessons.length < 4 ||
+      lessons.length > 6 ||
+      new Set(orderIndexes).size !== lessons.length ||
+      !lessons.some((lesson) => lesson.type === 'video' && lesson.videoUrl) ||
+      !lessons.some((lesson) => lesson.type === 'article' && lesson.content) ||
+      !lessons.some((lesson) => lesson.type === 'pdf' && lesson.documentUrl) ||
+      !lessons.some((lesson) => lesson.isPreview)
+    ) {
+      throw new Error(`Demo course lesson coverage is incomplete: ${course.id}`);
+    }
+  }
+
+  const primaryStudentCourses = new Set(
+    demoEnrollments
+      .filter((enrollment) => enrollment.userId === DEMO_IDS.primaryStudent)
+      .map((enrollment) => enrollment.courseId),
+  );
+  if (
+    primaryStudentCourses.size === 0 ||
+    !demoCourses.some((course) => !primaryStudentCourses.has(course.id))
+  ) {
+    throw new Error('Primary demo student must have both enrolled and unregistered courses');
+  }
+
+  if (
+    !demoClassroomSessions.some((session) => session.status === 'live') ||
+    !demoClassroomSessions.some((session) => !primaryStudentCourses.has(session.courseId))
+  ) {
+    throw new Error('Demo classrooms must cover live enrolled and restricted sessions');
+  }
+
+  if (
+    !demoQuizAttempts.some((attempt) => !attempt.passed) ||
+    !demoAssignments.some((assignment) => assignment.dueOffsetDays < 0) ||
+    !demoLibraryResources.some((resource) => resource.externalUrl)
+  ) {
+    throw new Error('Demo assessments and library must cover required states');
   }
 }
 
@@ -192,6 +273,116 @@ export async function verifyDemoData(
         `Demo verification failed for ${entity}: expected ${expected}, received ${String(actual)}`,
       );
     }
+  }
+
+  const [courseShape, demoAccounts, primaryStudentEnrollment, unregisteredCourse,
+    liveEnrolledSession, restrictedSession, failedAttempt, overdueAssignment,
+    externalLibraryResource] = await Promise.all([
+    prisma.course.findMany({
+      where: { id: { in: [...demoFixtureIds.courses] } },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        slug: true,
+        status: true,
+        visibility: true,
+        lessons: {
+          where: { deletedAt: null },
+          select: {
+            type: true,
+            content: true,
+            videoUrl: true,
+            documentUrl: true,
+            isPreview: true,
+            orderIndex: true,
+          },
+        },
+      },
+    }),
+    prisma.user.count({
+      where: {
+        email: { in: Object.values(DEMO_ACCOUNTS) },
+        id: { in: [...demoFixtureIds.users] },
+      },
+    }),
+    prisma.enrollment.count({
+      where: {
+        userId: DEMO_IDS.primaryStudent,
+        id: { in: [...demoFixtureIds.enrollments] },
+      },
+    }),
+    prisma.course.count({
+      where: {
+        id: { in: [...demoFixtureIds.courses] },
+        status: 'published',
+        visibility: 'public',
+        enrollments: { none: { userId: DEMO_IDS.primaryStudent } },
+      },
+    }),
+    prisma.classroomSession.count({
+      where: {
+        id: { in: [...demoFixtureIds.classroomSessions] },
+        status: 'live',
+        course: { enrollments: { some: { userId: DEMO_IDS.primaryStudent } } },
+      },
+    }),
+    prisma.classroomSession.count({
+      where: {
+        id: { in: [...demoFixtureIds.classroomSessions] },
+        course: { enrollments: { none: { userId: DEMO_IDS.primaryStudent } } },
+      },
+    }),
+    prisma.quizAttempt.count({
+      where: {
+        id: { in: [...demoFixtureIds.quizAttempts] },
+        passed: false,
+      },
+    }),
+    prisma.assignment.count({
+      where: {
+        id: { in: [...demoFixtureIds.assignments] },
+        dueDate: { lt: new Date() },
+      },
+    }),
+    prisma.libraryResource.count({
+      where: {
+        id: { in: [...demoFixtureIds.libraryResources] },
+        externalUrl: { not: null },
+      },
+    }),
+  ]);
+
+  const catalogIsValid =
+    courseShape.length === DEMO_EXPECTED_COUNTS.courses &&
+    courseShape.every(
+      (course) =>
+        course.title.trim().length > 0 &&
+        course.slug.trim().length > 0 &&
+        course.status === 'published' &&
+        course.visibility === 'public' &&
+        AI_COURSE_KEYWORDS.test(`${course.title} ${course.description ?? ''}`) &&
+        course.lessons.length >= 4 &&
+        course.lessons.length <= 6 &&
+        course.lessons.some((lesson) => lesson.type === 'video' && lesson.videoUrl) &&
+        course.lessons.some((lesson) => lesson.type === 'article' && lesson.content) &&
+        course.lessons.some((lesson) => lesson.type === 'pdf' && lesson.documentUrl) &&
+        course.lessons.some((lesson) => lesson.isPreview),
+    ) &&
+    new Set(courseShape.map((course) => course.slug)).size === courseShape.length;
+
+  if (
+    !catalogIsValid ||
+    demoAccounts !== Object.values(DEMO_ACCOUNTS).length ||
+    primaryStudentEnrollment === 0 ||
+    unregisteredCourse === 0 ||
+    liveEnrolledSession === 0 ||
+    restrictedSession === 0 ||
+    failedAttempt === 0 ||
+    overdueAssignment === 0 ||
+    externalLibraryResource === 0
+  ) {
+    throw new Error('Demo relational integrity verification failed');
   }
 
   const demoPasswordHashes = await prisma.user.findMany({

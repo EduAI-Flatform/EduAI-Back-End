@@ -2,7 +2,21 @@ export const DEMO_ASSETS = {
   avatar: '/demo-assets/avatar-placeholder.svg',
   certificate: '/demo-assets/certificate-preview.svg',
   course: '/demo-assets/course-placeholder.svg',
+  courseThumbnails: [
+    '/demo-assets/course-ai-01.svg',
+    '/demo-assets/course-ai-02.svg',
+    '/demo-assets/course-ai-03.svg',
+    '/demo-assets/course-ai-04.svg',
+    '/demo-assets/course-ai-05.svg',
+    '/demo-assets/course-ai-06.svg',
+    '/demo-assets/course-ai-07.svg',
+    '/demo-assets/course-ai-08.svg',
+    '/demo-assets/course-ai-09.svg',
+    '/demo-assets/course-ai-10.svg',
+  ],
+  document: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
   lesson: '/demo-assets/dashboard-preview.svg',
+  video: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
 } as const;
 
 export const DEMO_ACCOUNTS = {
@@ -18,8 +32,8 @@ export const DEMO_EXPECTED_COUNTS = {
   userRoles: 13,
   skills: 8,
   portfolios: 2,
-  courses: 9,
-  lessons: 31,
+  courses: 10,
+  lessons: 40,
   enrollments: 53,
   primaryStudentProgress: 16,
   reviews: 51,
@@ -28,7 +42,7 @@ export const DEMO_EXPECTED_COUNTS = {
   quizAttempts: 2,
   assignments: 3,
   submissions: 2,
-  classroomSessions: 3,
+  classroomSessions: 4,
   classroomAttendance: 2,
   classroomRecordings: 1,
   libraryCategories: 3,
@@ -239,7 +253,7 @@ export const demoCourses = [
   {
     id: fixtureUuid(0x20, 2),
     instructorId: demoUsers[1].id,
-    title: 'Data Science Toàn Diện 2024',
+    title: 'Data Science và phân tích dữ liệu với AI',
     slug: 'data-science-2024',
     description:
       'Học cách xử lý dữ liệu lớn, phân tích thống kê và trực quan hóa dữ liệu với các công cụ hàng đầu.',
@@ -269,7 +283,7 @@ export const demoCourses = [
   {
     id: fixtureUuid(0x20, 4),
     instructorId: demoUsers[3].id,
-    title: 'Cơ bản về AI cho Người quản lý',
+    title: 'Nhập môn Trí tuệ nhân tạo',
     slug: 'ai-for-managers',
     description:
       'Hiểu rõ các khái niệm AI để đưa ra quyết định kinh doanh chiến lược và dẫn dắt đội ngũ.',
@@ -299,7 +313,7 @@ export const demoCourses = [
   {
     id: fixtureUuid(0x20, 6),
     instructorId: demoUsers[2].id,
-    title: 'Phân tích dữ liệu với SQL & Python',
+    title: 'Xây dựng ứng dụng với OpenAI API',
     slug: 'sql-python-data-analysis',
     description:
       'Bộ kỹ năng thiết yếu để trở thành Data Analyst thực thụ trong môi trường doanh nghiệp hiện đại.',
@@ -314,7 +328,7 @@ export const demoCourses = [
   {
     id: fixtureUuid(0x20, 7),
     instructorId: demoUsers[1].id,
-    title: 'Prompt Engineering cho Sáng tạo Nội dung',
+    title: 'Generative AI và Prompt Engineering',
     slug: 'prompt-engineering-content',
     description:
       'Làm chủ nghệ thuật đặt câu lệnh để khai thác tối đa sức mạnh của các công cụ Generative AI.',
@@ -329,30 +343,44 @@ export const demoCourses = [
   {
     id: fixtureUuid(0x20, 8),
     instructorId: demoUsers[2].id,
-    title: 'AI Agent cho Quy trình Doanh nghiệp',
-    slug: 'ai-agent-business-workflows-draft',
-    description: 'Khóa học đang biên soạn về thiết kế AI Agent an toàn và có thể kiểm soát.',
+    title: 'Computer Vision thực chiến',
+    slug: 'computer-vision-thuc-chien',
+    description: 'Xây dựng pipeline Computer Vision từ xử lý ảnh đến triển khai mô hình nhận diện.',
     level: 'advanced',
-    status: 'draft',
-    visibility: 'private',
+    status: 'published',
+    visibility: 'public',
     badge: null,
-    featuredRank: null,
-    priceAmountMinor: 1590000,
+    featuredRank: 8,
+    priceAmountMinor: 1390000,
     priceCurrency: 'VND',
   },
   {
     id: fixtureUuid(0x20, 9),
     instructorId: demoUsers[3].id,
-    title: 'Nhập môn Chuyển đổi số',
-    slug: 'digital-transformation-archive',
-    description: 'Khóa học lưu trữ phục vụ kiểm tra trạng thái dữ liệu.',
+    title: 'Natural Language Processing thực chiến',
+    slug: 'natural-language-processing-thuc-chien',
+    description: 'Khám phá biểu diễn văn bản, phân loại, tìm kiếm ngữ nghĩa và trợ lý ngôn ngữ.',
     level: 'beginner',
-    status: 'archived',
-    visibility: 'private',
+    status: 'published',
+    visibility: 'public',
     badge: null,
-    featuredRank: null,
-    priceAmountMinor: null,
-    priceCurrency: null,
+    featuredRank: 9,
+    priceAmountMinor: 1190000,
+    priceCurrency: 'VND',
+  },
+  {
+    id: fixtureUuid(0x20, 10),
+    instructorId: demoUsers[0].id,
+    title: 'AI Automation cho doanh nghiệp',
+    slug: 'ai-automation-doanh-nghiep',
+    description: 'Thiết kế quy trình tự động hóa có kiểm soát bằng AI, workflow và tích hợp dữ liệu doanh nghiệp.',
+    level: 'intermediate',
+    status: 'published',
+    visibility: 'public',
+    badge: 'Mới',
+    featuredRank: 10,
+    priceAmountMinor: 1290000,
+    priceCurrency: 'VND',
   },
 ] as const;
 
@@ -364,7 +392,7 @@ const publicLessonTopics = [
 ] as const;
 
 export const demoLessons = [
-  ...demoCourses.slice(0, 7).flatMap((course, courseIndex) =>
+  ...demoCourses.flatMap((course, courseIndex) =>
     publicLessonTopics.map((topic, lessonIndex) => ({
       id: fixtureUuid(0x21, courseIndex * 4 + lessonIndex + 1),
       courseId: course.id,
@@ -372,52 +400,13 @@ export const demoLessons = [
       slug: `bai-${lessonIndex + 1}-${course.slug}`,
       type: (['video', 'article', 'video', 'pdf'] as const)[lessonIndex],
       content: `Nội dung demo đầy đủ cho “${course.title}” — ${topic}.`,
-      videoUrl: null,
-      documentUrl: lessonIndex === 3 ? DEMO_ASSETS.lesson : null,
+      videoUrl: lessonIndex === 0 || lessonIndex === 2 ? DEMO_ASSETS.video : null,
+      documentUrl: lessonIndex === 3 ? DEMO_ASSETS.document : null,
       orderIndex: lessonIndex + 1,
       durationMinutes: [45, 35, 50, 30][lessonIndex],
       isPreview: lessonIndex === 0,
     })),
   ),
-  {
-    id: fixtureUuid(0x21, 29),
-    courseId: demoCourses[7].id,
-    title: '1. Kiến trúc AI Agent',
-    slug: 'kien-truc-ai-agent',
-    type: 'article',
-    content: 'Bản nháp nội dung kiến trúc AI Agent.',
-    videoUrl: null,
-    documentUrl: null,
-    orderIndex: 1,
-    durationMinutes: 35,
-    isPreview: false,
-  },
-  {
-    id: fixtureUuid(0x21, 30),
-    courseId: demoCourses[7].id,
-    title: '2. Guardrail và quan sát hệ thống',
-    slug: 'guardrail-va-quan-sat',
-    type: 'video',
-    content: 'Bản nháp nội dung guardrail và quan sát hệ thống.',
-    videoUrl: null,
-    documentUrl: null,
-    orderIndex: 2,
-    durationMinutes: 40,
-    isPreview: false,
-  },
-  {
-    id: fixtureUuid(0x21, 31),
-    courseId: demoCourses[8].id,
-    title: '1. Tổng quan chuyển đổi số',
-    slug: 'tong-quan-chuyen-doi-so',
-    type: 'article',
-    content: 'Nội dung khóa học đã lưu trữ.',
-    videoUrl: null,
-    documentUrl: null,
-    orderIndex: 1,
-    durationMinutes: 25,
-    isPreview: false,
-  },
 ] as const;
 
 const enrollmentPairs = [
@@ -555,9 +544,9 @@ export const demoQuizAttempts = demoQuizzes.slice(0, 2).map((quiz, index) => ({
   id: fixtureUuid(0x42, index + 1),
   quizId: quiz.id,
   userId: DEMO_IDS.primaryStudent,
-  score: index === 0 ? 4 : 3,
+  score: index === 0 ? 4 : 1,
   maxScore: 4,
-  passed: true,
+  passed: index === 0,
   answersJson: demoQuestions
     .filter((question) => question.quizId === quiz.id)
     .map((question) => ({
@@ -577,7 +566,7 @@ export const demoAssignments = demoCourses.slice(0, 3).map((course, index) => ({
     'Thiết kế chiến dịch AI Marketing',
   ][index],
   description: 'Nộp báo cáo ngắn kèm mã nguồn hoặc liên kết sản phẩm.',
-  dueOffsetDays: index + 3,
+  dueOffsetDays: index === 2 ? -2 : index + 1,
   maxScore: 100,
   status: 'published',
 }));
@@ -621,14 +610,14 @@ export const demoClassroomSessions = [
   },
   {
     id: fixtureUuid(0x60, 2),
-    courseId: demoCourses[2].id,
-    instructorId: demoCourses[2].instructorId,
-    title: 'Workshop AI Marketing',
-    description: 'Thực hành xây dựng một chiến dịch nội dung.',
-    roomName: 'eduai-demo-ai-marketing',
-    startOffsetHours: 72,
-    durationMinutes: 60,
-    status: 'scheduled',
+    courseId: demoCourses[3].id,
+    instructorId: demoCourses[3].instructorId,
+    title: 'Workshop Nhập môn AI',
+    description: 'Thực hành nhận diện cơ hội ứng dụng AI trong công việc.',
+    roomName: 'eduai-demo-ai-foundations',
+    startOffsetHours: -1,
+    durationMinutes: 120,
+    status: 'live',
   },
   {
     id: fixtureUuid(0x60, 3),
@@ -640,6 +629,17 @@ export const demoClassroomSessions = [
     startOffsetHours: -48,
     durationMinutes: 75,
     status: 'ended',
+  },
+  {
+    id: fixtureUuid(0x60, 4),
+    courseId: demoCourses[7].id,
+    instructorId: demoCourses[7].instructorId,
+    title: 'Phòng thực hành Computer Vision',
+    description: 'Buổi học thuộc khóa chưa đăng ký để kiểm thử quyền truy cập.',
+    roomName: 'eduai-demo-computer-vision-restricted',
+    startOffsetHours: 48,
+    durationMinutes: 90,
+    status: 'scheduled',
   },
 ] as const;
 
@@ -705,8 +705,8 @@ export const demoLibraryResources = [
   title: String(title),
   description: `Tài nguyên demo có thể chọn làm nguồn AI: ${title}.`,
   type: String(type),
-  fileUrl: DEMO_ASSETS.lesson,
-  externalUrl: null,
+  fileUrl: type === 'pdf' ? DEMO_ASSETS.document : type === 'video' ? null : DEMO_ASSETS.lesson,
+  externalUrl: type === 'video' ? DEMO_ASSETS.video : null,
   visibility: 'public',
 }));
 

@@ -170,13 +170,13 @@ export async function seedDemoData(
     });
   }
 
-  for (const course of demoCourses) {
+  for (const [courseIndex, course] of demoCourses.entries()) {
     const data = {
       instructorId: course.instructorId,
       title: course.title,
       slug: course.slug,
       description: course.description,
-      thumbnailUrl: DEMO_ASSETS.course,
+      thumbnailUrl: DEMO_ASSETS.courseThumbnails[courseIndex],
       level: course.level,
       status: course.status,
       visibility: course.visibility,
@@ -374,17 +374,18 @@ export async function seedDemoData(
       session.durationMinutes,
     );
     const isEnded = session.status === 'ended';
+    const isLive = session.status === 'live';
     const data = {
       courseId: session.courseId,
       instructorId: session.instructorId,
       title: session.title,
       description: session.description,
       provider: 'jitsi',
-      meetingUrl: `https://meet.jit.si/${session.roomName}`,
+      meetingUrl: null,
       roomName: session.roomName,
       scheduledStart,
       scheduledEnd,
-      actualStart: isEnded ? scheduledStart : null,
+      actualStart: isEnded || isLive ? scheduledStart : null,
       actualEnd: isEnded ? scheduledEnd : null,
       status: session.status as ClassroomSessionStatus,
       deletedAt: null,

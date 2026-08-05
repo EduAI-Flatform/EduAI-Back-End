@@ -5,8 +5,14 @@ import {
   requireDemoSeedPassword,
 } from './demo-contract';
 import {
+  DEMO_ASSETS,
   DEMO_EXPECTED_COUNTS,
+  DEMO_IDS,
+  demoClassroomSessions,
+  demoCourses,
   demoFixtureIds,
+  demoLessons,
+  demoEnrollments,
 } from './demo-fixtures';
 import { DEMO_BCRYPT_ROUNDS } from './demo-seed';
 
@@ -21,8 +27,8 @@ describe('demo data contract', () => {
       userRoles: 13,
       skills: 8,
       portfolios: 2,
-      courses: 9,
-      lessons: 31,
+      courses: 10,
+      lessons: 40,
       enrollments: 53,
       primaryStudentProgress: 16,
       reviews: 51,
@@ -31,7 +37,7 @@ describe('demo data contract', () => {
       quizAttempts: 2,
       assignments: 3,
       submissions: 2,
-      classroomSessions: 3,
+      classroomSessions: 4,
       classroomAttendance: 2,
       classroomRecordings: 1,
       libraryCategories: 3,
@@ -52,6 +58,51 @@ describe('demo data contract', () => {
       DEMO_EXPECTED_COUNTS.enrollments,
     );
     expect(demoFixtureIds.reviews).toHaveLength(DEMO_EXPECTED_COUNTS.reviews);
+  });
+
+  it('defines ten public published AI courses with deep lesson coverage', () => {
+    expect(demoCourses).toHaveLength(10);
+    expect(new Set(DEMO_ASSETS.courseThumbnails).size).toBe(10);
+    expect(new Set(demoCourses.map((course) => course.slug)).size).toBe(10);
+    expect(demoCourses).toEqual(
+      expect.arrayContaining(
+        demoCourses.map((course) =>
+          expect.objectContaining({
+            status: 'published',
+            visibility: 'public',
+          }),
+        ),
+      ),
+    );
+
+    for (const course of demoCourses) {
+      const lessons = demoLessons.filter((lesson) => lesson.courseId === course.id);
+      expect(lessons.length).toBeGreaterThanOrEqual(4);
+      expect(lessons.length).toBeLessThanOrEqual(6);
+      expect(new Set(lessons.map((lesson) => lesson.orderIndex)).size).toBe(lessons.length);
+      expect(lessons.map((lesson) => lesson.orderIndex)).toEqual(
+        [...lessons].sort((left, right) => left.orderIndex - right.orderIndex).map((lesson) => lesson.orderIndex),
+      );
+      expect(lessons.some((lesson) => lesson.type === 'video' && lesson.videoUrl)).toBe(true);
+      expect(lessons.some((lesson) => lesson.type === 'article' && lesson.content)).toBe(true);
+      expect(lessons.some((lesson) => lesson.type === 'pdf' && lesson.documentUrl)).toBe(true);
+      expect(lessons.some((lesson) => lesson.isPreview)).toBe(true);
+    }
+  });
+
+  it('keeps student demo states and classroom authorization fixtures distinct', () => {
+    const primaryStudentCourses = new Set(
+      demoEnrollments
+        .filter((enrollment) => enrollment.userId === DEMO_IDS.primaryStudent)
+        .map((enrollment) => enrollment.courseId),
+    );
+
+    expect(primaryStudentCourses.size).toBeGreaterThan(0);
+    expect(demoCourses.some((course) => !primaryStudentCourses.has(course.id))).toBe(true);
+    expect(demoClassroomSessions.some((session) => String(session.status) === 'live')).toBe(true);
+    expect(
+      demoClassroomSessions.some((session) => !primaryStudentCourses.has(session.courseId)),
+    ).toBe(true);
   });
 
   it('rejects demo seed in production before accepting a password', () => {

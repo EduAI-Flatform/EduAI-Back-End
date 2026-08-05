@@ -228,6 +228,19 @@ describe('ClassroomsService', () => {
         meetingUrl: `https://meet.jit.si/${classroomSession.roomName}`,
       },
     );
+    expect(prisma.classroomSession.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: classroomSession.id,
+        deletedAt: null,
+        status: ClassroomSessionStatus.live,
+        course: {
+          deletedAt: null,
+          status: CourseStatus.published,
+          enrollments: { some: { userId: student.id } },
+        },
+      },
+      select: { id: true, roomName: true },
+    });
   });
 
   it('rejects non-enrolled students and non-live sessions when joining', async () => {
