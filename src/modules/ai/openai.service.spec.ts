@@ -20,20 +20,20 @@ describe('OpenAiService', () => {
     expect(service.getModel()).toBe('test-model');
   });
 
-  it('uses a cost-conscious default model when no model is configured', () => {
+  it('fails clearly when no text model is configured', () => {
     const service = new OpenAiService(createConfig('test-key'));
 
-    expect(service.getModel()).toBe('gpt-5.4-mini');
+    expect(() => service.getModel()).toThrow(ServiceUnavailableException);
   });
 
-  it('uses the configured embedding model with a small-model default', () => {
-    expect(new OpenAiService(createConfig('test-key')).getEmbeddingModel()).toBe(
-      'text-embedding-3-small',
-    );
+  it('uses the configured embedding model', () => {
     expect(
       new OpenAiService(createConfig('test-key', undefined, 'custom-embedding'))
         .getEmbeddingModel(),
     ).toBe('custom-embedding');
+    expect(() => new OpenAiService(createConfig('test-key')).getEmbeddingModel()).toThrow(
+      ServiceUnavailableException,
+    );
   });
 
   it('does not expose the API key when the provider is unavailable', () => {

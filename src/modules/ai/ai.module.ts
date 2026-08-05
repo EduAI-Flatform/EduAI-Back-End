@@ -12,17 +12,23 @@ import { AiSummaryService } from './ai-summary.service';
 import { AiGenerationService } from './ai-generation.service';
 import { AiSourcesService } from './ai-sources.service';
 import { OpenAiService } from './openai.service';
+import { GeminiService } from './gemini.service';
 import { AI_PROVIDER, AiProvider } from './ai-provider';
 import { MockAiProviderService } from './mock-ai-provider.service';
 
 const aiProvider = {
   provide: AI_PROVIDER,
-  inject: [AppConfigService, OpenAiService, MockAiProviderService],
+  inject: [AppConfigService, GeminiService, OpenAiService, MockAiProviderService],
   useFactory: (
     config: AppConfigService,
+    gemini: GeminiService,
     openai: OpenAiService,
     mock: MockAiProviderService,
-  ): AiProvider => (config.ai.provider === 'mock' ? mock : openai),
+  ): AiProvider => {
+    if (config.ai.provider === 'mock') return mock;
+    if (config.ai.provider === 'openai') return openai;
+    return gemini;
+  },
 };
 
 @Module({
@@ -37,6 +43,7 @@ const aiProvider = {
     AiGenerationService,
     AiSourcesService,
     OpenAiService,
+    GeminiService,
     MockAiProviderService,
     aiProvider,
   ],

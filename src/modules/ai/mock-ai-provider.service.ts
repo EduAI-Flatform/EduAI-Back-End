@@ -5,18 +5,16 @@ import {
   AiProvider,
 } from './ai-provider';
 
-const MOCK_MODEL = 'eduai-mock-v1';
-const MOCK_EMBEDDING_MODEL = 'eduai-mock-embedding-v1';
 const EMBEDDING_DIMENSIONS = 1536;
 
 @Injectable()
 export class MockAiProviderService implements AiProvider {
   getModel(): string {
-    return MOCK_MODEL;
+    return 'mock';
   }
 
   getEmbeddingModel(): string {
-    return MOCK_EMBEDDING_MODEL;
+    return 'mock';
   }
 
   async complete(

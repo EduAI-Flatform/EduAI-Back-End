@@ -7,9 +7,6 @@ import {
   AiProvider,
 } from './ai-provider';
 
-const DEFAULT_OPENAI_MODEL = 'gpt-5.4-mini';
-const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small';
-
 @Injectable()
 export class OpenAiService implements AiProvider {
   private client?: OpenAI;
@@ -21,11 +18,21 @@ export class OpenAiService implements AiProvider {
   }
 
   getModel(): string {
-    return this.appConfig.openai.model ?? DEFAULT_OPENAI_MODEL;
+    const model = this.appConfig.openai.model;
+    if (!model) {
+      throw new ServiceUnavailableException('OpenAI service is not configured');
+    }
+
+    return model;
   }
 
   getEmbeddingModel(): string {
-    return this.appConfig.openai.embeddingModel ?? DEFAULT_OPENAI_EMBEDDING_MODEL;
+    const model = this.appConfig.openai.embeddingModel;
+    if (!model) {
+      throw new ServiceUnavailableException('OpenAI embedding service is not configured');
+    }
+
+    return model;
   }
 
   getClient(): OpenAI {

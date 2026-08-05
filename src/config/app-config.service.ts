@@ -38,6 +38,10 @@ export class AppConfigService {
     return this.getConfigValue('openai');
   }
 
+  get gemini(): BackendConfig['gemini'] {
+    return this.getConfigValue('gemini');
+  }
+
   get ai(): BackendConfig['ai'] {
     return this.getConfigValue('ai');
   }

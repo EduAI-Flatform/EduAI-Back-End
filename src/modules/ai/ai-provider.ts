@@ -10,6 +10,7 @@ export interface AiProviderMessage {
 export interface AiCompletionRequest {
   messages: AiProviderMessage[];
   json?: boolean;
+  responseSchema?: Record<string, unknown>;
 }
 
 export interface AiCompletionResult {

@@ -1,5 +1,5 @@
 export type NodeEnvironment = 'development' | 'test' | 'production';
-export type AiProviderName = 'openai' | 'mock';
+export type AiProviderName = 'gemini' | 'openai' | 'mock';
 
 export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
@@ -20,6 +20,14 @@ export interface ValidatedEnv {
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   OPENAI_EMBEDDING_MODEL?: string;
+  AI_API_KEY?: string;
+  AI_MODEL?: string;
+  AI_EMBEDDING_MODEL?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
+  GEMINI_EMBEDDING_MODEL?: string;
+  AI_TIMEOUT_MS: number;
+  AI_MAX_RETRIES: number;
   AI_PROVIDER: AiProviderName;
 }
 
@@ -52,6 +60,14 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     );
   }
 
+  const aiProvider = parseAiProvider(config.AI_PROVIDER);
+  const aiApiKey = optionalString(config.AI_API_KEY);
+  const aiModel = optionalString(config.AI_MODEL);
+  const aiEmbeddingModel = optionalString(config.AI_EMBEDDING_MODEL);
+  const geminiApiKey = optionalString(config.GEMINI_API_KEY);
+  const geminiModel = optionalString(config.GEMINI_MODEL);
+  const geminiEmbeddingModel = optionalString(config.GEMINI_EMBEDDING_MODEL);
+
   const validated: ValidatedEnv = {
     NODE_ENV: nodeEnv,
     PORT: parsePort(config.PORT),
@@ -77,7 +93,26 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     OPENAI_API_KEY: optionalString(config.OPENAI_API_KEY),
     OPENAI_MODEL: optionalString(config.OPENAI_MODEL),
     OPENAI_EMBEDDING_MODEL: optionalString(config.OPENAI_EMBEDDING_MODEL),
-    AI_PROVIDER: parseAiProvider(config.AI_PROVIDER),
+    AI_API_KEY: aiApiKey,
+    AI_MODEL: aiModel,
+    AI_EMBEDDING_MODEL: aiEmbeddingModel,
+    GEMINI_API_KEY:
+      geminiApiKey ?? (aiProvider === 'gemini' ? aiApiKey : undefined),
+    GEMINI_MODEL: geminiModel ?? (aiProvider === 'gemini' ? aiModel : undefined),
+    GEMINI_EMBEDDING_MODEL:
+      geminiEmbeddingModel ??
+      (aiProvider === 'gemini' ? aiEmbeddingModel : undefined),
+    AI_TIMEOUT_MS: parsePositiveInteger(
+      config.AI_TIMEOUT_MS,
+      'AI_TIMEOUT_MS',
+      60000,
+    ),
+    AI_MAX_RETRIES: parseNonNegativeInteger(
+      config.AI_MAX_RETRIES,
+      'AI_MAX_RETRIES',
+      2,
+    ),
+    AI_PROVIDER: aiProvider,
   };
 
   if (validated.NODE_ENV === 'production' && validated.AI_PROVIDER === 'mock') {
@@ -118,13 +153,39 @@ function parsePort(value: unknown): number {
 }
 
 function parseAiProvider(value: unknown): AiProviderName {
-  const provider = optionalString(value) ?? 'openai';
+  const provider = optionalString(value) ?? 'gemini';
 
-  if (provider !== 'openai' && provider !== 'mock') {
-    throw new Error('AI_PROVIDER must be openai or mock');
+  if (provider !== 'gemini' && provider !== 'openai' && provider !== 'mock') {
+    throw new Error('AI_PROVIDER must be gemini, openai, or mock');
   }
 
   return provider;
+}
+
+function parsePositiveInteger(value: unknown, name: string, fallback: number): number {
+  const raw = optionalString(value);
+  const parsed = raw === undefined ? fallback : Number(raw);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+
+  return parsed;
+}
+
+function parseNonNegativeInteger(
+  value: unknown,
+  name: string,
+  fallback: number,
+): number {
+  const raw = optionalString(value);
+  const parsed = raw === undefined ? fallback : Number(raw);
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer`);
+  }
+
+  return parsed;
 }
 
 function optionalUrl(value: unknown, name: string): string | undefined {

@@ -17,10 +17,12 @@ describe('AiGenerationService', () => {
       ]),
     };
     const openai = {
-      getModel: jest.fn().mockReturnValue('gpt-5.4-mini'),
+      getModel: jest.fn().mockReturnValue('test-model'),
       complete: jest
         .fn()
-        .mockResolvedValue({ content: JSON.stringify(payload) }),
+        .mockResolvedValue({
+          content: typeof payload === 'string' ? payload : JSON.stringify(payload),
+        }),
     };
     const rateLimit = { assertQuizAllowed: jest.fn(), assertFlashcardsAllowed: jest.fn() };
     const summary = { resolveSource: jest.fn().mockResolvedValue({ title: 'Recursion', content: 'A function calls itself.' }) };
@@ -64,5 +66,17 @@ describe('AiGenerationService', () => {
       new BadGatewayException('AI provider returned invalid quiz content'),
     );
     expect(prisma.aiGeneratedQuiz.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a JSON code fence and passes a bounded response schema', async () => {
+    const { service, prisma } = createService(
+      '```json\n{"items":[{"question":"Q1","options":["A","B","C","D"],"correctAnswer":"A","explanation":"E"},{"question":"Q2","options":["A","B","C","D"],"correctAnswer":"B","explanation":"E"}]}\n```',
+    );
+
+    await expect(service.generateQuiz(user, input)).resolves.toMatchObject({
+      quizId: 'quiz-id',
+      questions: expect.any(Array),
+    });
+    expect(prisma.aiGeneratedQuiz.create).toHaveBeenCalled();
   });
 });

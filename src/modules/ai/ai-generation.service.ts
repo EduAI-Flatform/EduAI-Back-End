@@ -55,8 +55,9 @@ export class AiGenerationService {
       source.title,
       source.content,
       input.count,
+      this.questionSchema(input.count),
     );
-    this.validateQuestions(questions);
+    this.validateQuestions(questions, input.count);
 
     const quiz = await this.prisma.aiGeneratedQuiz.create({
       data: { userId: user.id, sourceType: input.sourceType, sourceId: input.sourceId, outputJson: questions as unknown as Prisma.InputJsonValue },
@@ -75,8 +76,9 @@ export class AiGenerationService {
       source.title,
       source.content,
       input.count,
+      this.flashcardSchema(input.count),
     );
-    this.validateFlashcards(flashcards);
+    this.validateFlashcards(flashcards, input.count);
 
     const created = await this.prisma.$transaction(
       flashcards.map((card) => this.prisma.aiFlashcard.create({
@@ -88,9 +90,16 @@ export class AiGenerationService {
     return { sourceType: input.sourceType, sourceId: input.sourceId, flashcards: created };
   }
 
-  private async generateJson<T>(instruction: string, title: string, content: string, count: number): Promise<T> {
+  private async generateJson<T>(
+    instruction: string,
+    title: string,
+    content: string,
+    count: number,
+    responseSchema: Record<string, unknown>,
+  ): Promise<T> {
     const completion = await this.aiProvider.complete({
       json: true,
+      responseSchema,
       messages: [
         { role: 'system', content: 'You generate structured educational content. Return valid JSON only.' },
         { role: 'user', content: `${instruction}\nGenerate exactly ${count} items.\nTitle: ${title}\nContent:\n${content}` },
@@ -100,7 +109,11 @@ export class AiGenerationService {
     if (!raw) throw new BadGatewayException('AI provider returned empty generated content');
 
     try {
-      const parsed = JSON.parse(raw) as unknown;
+      const normalized = raw
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '');
+      const parsed = JSON.parse(normalized) as unknown;
       const items = Array.isArray(parsed) ? parsed : (parsed as { items?: unknown }).items;
       if (!Array.isArray(items)) throw new Error('Generated payload is not an array');
       return items as T;
@@ -109,15 +122,81 @@ export class AiGenerationService {
     }
   }
 
-  private validateQuestions(questions: GeneratedQuestion[]): void {
-    if (!questions.length || questions.some((item) => !item.question || !Array.isArray(item.options) || item.options.length !== 4 || !item.options.includes(item.correctAnswer))) {
+  private validateQuestions(questions: GeneratedQuestion[], expectedCount: number): void {
+    if (
+      questions.length !== expectedCount ||
+      questions.some(
+        (item) =>
+          !item ||
+          typeof item.question !== 'string' ||
+          !item.question.trim() ||
+          !Array.isArray(item.options) ||
+          item.options.length !== 4 ||
+          item.options.some((option) => typeof option !== 'string' || !option.trim()) ||
+          typeof item.correctAnswer !== 'string' ||
+          !item.options.includes(item.correctAnswer),
+      )
+    ) {
       throw new BadGatewayException('AI provider returned invalid quiz content');
     }
   }
 
-  private validateFlashcards(flashcards: GeneratedFlashcard[]): void {
-    if (!flashcards.length || flashcards.some((item) => !item.front?.trim() || !item.back?.trim())) {
+  private validateFlashcards(flashcards: GeneratedFlashcard[], expectedCount: number): void {
+    if (
+      flashcards.length !== expectedCount ||
+      flashcards.some(
+        (item) =>
+          !item ||
+          typeof item.front !== 'string' ||
+          typeof item.back !== 'string' ||
+          !item.front.trim() ||
+          !item.back.trim(),
+      )
+    ) {
       throw new BadGatewayException('AI provider returned invalid flashcard content');
     }
+  }
+
+  private questionSchema(count: number): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          minItems: count,
+          maxItems: count,
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string' },
+              options: { type: 'array', items: { type: 'string' }, minItems: 4, maxItems: 4 },
+              correctAnswer: { type: 'string' },
+              explanation: { type: 'string' },
+            },
+            required: ['question', 'options', 'correctAnswer', 'explanation'],
+          },
+        },
+      },
+      required: ['items'],
+    };
+  }
+
+  private flashcardSchema(count: number): Record<string, unknown> {
+    return {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          minItems: count,
+          maxItems: count,
+          items: {
+            type: 'object',
+            properties: { front: { type: 'string' }, back: { type: 'string' } },
+            required: ['front', 'back'],
+          },
+        },
+      },
+      required: ['items'],
+    };
   }
 }

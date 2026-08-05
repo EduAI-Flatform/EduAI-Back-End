@@ -37,8 +37,15 @@ export interface BackendConfig {
     model?: string;
     embeddingModel?: string;
   };
+  gemini: {
+    apiKey?: string;
+    model?: string;
+    embeddingModel?: string;
+  };
   ai: {
     provider: ValidatedEnv['AI_PROVIDER'];
+    timeoutMs: number;
+    maxRetries: number;
   };
 }
 
@@ -78,8 +85,21 @@ export default function configuration(): BackendConfig {
       model: env.OPENAI_MODEL,
       embeddingModel: env.OPENAI_EMBEDDING_MODEL,
     },
+    gemini: {
+      apiKey:
+        env.GEMINI_API_KEY ??
+        (env.AI_PROVIDER === 'gemini' ? env.AI_API_KEY : undefined),
+      model:
+        env.GEMINI_MODEL ??
+        (env.AI_PROVIDER === 'gemini' ? env.AI_MODEL : undefined),
+      embeddingModel:
+        env.GEMINI_EMBEDDING_MODEL ??
+        (env.AI_PROVIDER === 'gemini' ? env.AI_EMBEDDING_MODEL : undefined),
+    },
     ai: {
       provider: env.AI_PROVIDER,
+      timeoutMs: env.AI_TIMEOUT_MS,
+      maxRetries: env.AI_MAX_RETRIES,
     },
   };
 }

@@ -51,7 +51,50 @@ describe('validateEnv', () => {
       OPENAI_API_KEY: 'openai-key',
       OPENAI_MODEL: 'model-name',
       AI_PROVIDER: 'mock',
+      AI_TIMEOUT_MS: 60000,
+      AI_MAX_RETRIES: 2,
       PUBLIC_APP_URL: 'http://localhost:5173',
+    });
+  });
+
+  it('defaults to Gemini and resolves its key/model from Gemini-specific variables', () => {
+    const env = validateEnv({
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+      JWT_ACCESS_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+      GEMINI_API_KEY: 'gemini-key',
+      GEMINI_MODEL: 'configured-gemini-model',
+      GEMINI_EMBEDDING_MODEL: 'configured-embedding-model',
+    });
+
+    expect(env).toMatchObject({
+      AI_PROVIDER: 'gemini',
+      GEMINI_API_KEY: 'gemini-key',
+      GEMINI_MODEL: 'configured-gemini-model',
+      GEMINI_EMBEDDING_MODEL: 'configured-embedding-model',
+      AI_TIMEOUT_MS: 60000,
+      AI_MAX_RETRIES: 2,
+    });
+  });
+
+  it('supports generic AI key/model fallback for Gemini only', () => {
+    const env = validateEnv({
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+      JWT_ACCESS_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+      AI_API_KEY: 'generic-key',
+      AI_MODEL: 'generic-model',
+      AI_EMBEDDING_MODEL: 'generic-embedding-model',
+    });
+
+    expect(env).toMatchObject({
+      AI_PROVIDER: 'gemini',
+      AI_API_KEY: 'generic-key',
+      AI_MODEL: 'generic-model',
+      AI_EMBEDDING_MODEL: 'generic-embedding-model',
+      GEMINI_API_KEY: 'generic-key',
+      GEMINI_MODEL: 'generic-model',
+      GEMINI_EMBEDDING_MODEL: 'generic-embedding-model',
     });
   });
 
@@ -98,6 +141,21 @@ describe('validateEnv', () => {
         JWT_REFRESH_SECRET: 'refresh-secret',
         AI_PROVIDER: 'local-llm',
       }),
-    ).toThrow('AI_PROVIDER must be openai or mock');
+    ).toThrow('AI_PROVIDER must be gemini, openai, or mock');
+  });
+
+  it('rejects invalid AI timeout and retry settings', () => {
+    const base = {
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+      JWT_ACCESS_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+    };
+
+    expect(() => validateEnv({ ...base, AI_TIMEOUT_MS: '0' })).toThrow(
+      'AI_TIMEOUT_MS must be a positive integer',
+    );
+    expect(() => validateEnv({ ...base, AI_MAX_RETRIES: '-1' })).toThrow(
+      'AI_MAX_RETRIES must be a non-negative integer',
+    );
   });
 });
