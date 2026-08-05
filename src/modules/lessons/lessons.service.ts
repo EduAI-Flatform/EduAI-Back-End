@@ -12,6 +12,7 @@ import {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { LearningPathService } from '../courses/learning-path.service';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
 
@@ -62,7 +63,10 @@ type LessonDetailRecord = LessonResponse & {
 
 @Injectable()
 export class LessonsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly learningPathService?: LearningPathService,
+  ) {}
 
   async getLesson(
     user: AuthenticatedUser | undefined,
@@ -103,6 +107,18 @@ export class LessonsService {
 
     if (!lesson || !this.canViewLesson(user, lesson)) {
       throw new NotFoundException('Lesson not found');
+    }
+
+    if (
+      user &&
+      lesson.course.enrollments &&
+      lesson.course.enrollments.length > 0 &&
+      !lesson.isPreview &&
+      !this.canManageCourse(user, lesson.course)
+    ) {
+      if (this.learningPathService) {
+        await this.learningPathService.assertLessonAccessible(user, lessonId);
+      }
     }
 
     const { course: _course, ...response } = lesson;

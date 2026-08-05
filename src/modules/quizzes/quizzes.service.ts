@@ -11,8 +11,10 @@ import {
   QuizStatus,
   RoleName,
 } from '../../../generated/prisma/client';
+import { Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { LearningPathService } from '../courses/learning-path.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { CreateQuizDto } from './dto/create-quiz.dto';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
@@ -109,7 +111,10 @@ type ManageableQuestion = QuestionResponse & {
 
 @Injectable()
 export class QuizzesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly learningPathService?: LearningPathService,
+  ) {}
 
   async createQuiz(
     user: AuthenticatedUser,
@@ -304,6 +309,12 @@ export class QuizzesService {
       throw new NotFoundException('Quiz not found');
     }
 
+    await this.learningPathService?.assertStudentStepAccessible(
+      userId,
+      quizId,
+      'QUIZ',
+    );
+
     this.validateAnswerSet(quiz.questions, input.answers);
     const answersByQuestionId = new Map(
       input.answers.map((answer) => [answer.questionId, answer.answer]),
@@ -361,6 +372,12 @@ export class QuizzesService {
       throw new NotFoundException('Quiz not found');
     }
 
+    await this.learningPathService?.assertStudentStepAccessible(
+      userId,
+      quizId,
+      'QUIZ',
+    );
+
     const { questions, ...quizResponse } = quiz;
     return {
       ...quizResponse,
@@ -400,6 +417,11 @@ export class QuizzesService {
     userId: string,
     quizId: string,
   ): Promise<QuizAttemptResponse[]> {
+    await this.learningPathService?.assertStudentStepAccessible(
+      userId,
+      quizId,
+      'QUIZ',
+    );
     const attempts = await this.prisma.quizAttempt.findMany({
       where: { quizId, userId },
       orderBy: { createdAt: 'desc' },

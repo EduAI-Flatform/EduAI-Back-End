@@ -6,6 +6,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Patch,
   Put,
   UseGuards,
 } from '@nestjs/common';
@@ -27,6 +28,9 @@ import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { Optional } from '@nestjs/common';
+import { LearningPathService } from '../courses/learning-path.service';
+import { UpdateLessonProgressDto } from '../courses/dto/update-lesson-progress.dto';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { LessonDetailDto } from './dto/lesson-response.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
@@ -40,7 +44,10 @@ import {
 @ApiTags('Lessons')
 @Controller()
 export class LessonsController {
-  constructor(private readonly lessonsService: LessonsService) {}
+  constructor(
+    private readonly lessonsService: LessonsService,
+    @Optional() private readonly learningPathService?: LearningPathService,
+  ) {}
 
   @Get('courses/:courseId/lessons')
   @ApiOkResponse({ description: 'Published course lessons returned successfully.' })
@@ -67,6 +74,26 @@ export class LessonsController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,
   ): Promise<LessonResponse> {
     return this.lessonsService.getLesson(user, lessonId);
+  }
+
+  @Patch('lessons/:id/progress')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Lesson progress updated successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid progress payload.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({ description: 'Lesson or enrollment not found.' })
+  updateLessonProgress(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,
+    @Body() input: UpdateLessonProgressDto,
+  ): Promise<unknown> {
+    if (!this.learningPathService) {
+      throw new Error('Learning path service is not configured');
+    }
+    return this.learningPathService.updateLessonProgress(user, lessonId, input);
   }
 
   @Get('instructor/courses/:courseId/lessons')

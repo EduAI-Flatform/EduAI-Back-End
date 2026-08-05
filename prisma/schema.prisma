@@ -313,6 +313,11 @@ model LearningProgress {
   lessonId        String    @map("lesson_id") @db.Uuid
   status          String    @default("not_started")
   progressPercent Int       @default(0) @map("progress_percent")
+  watchedSeconds  Int       @default(0) @map("watched_seconds")
+  durationSeconds Int?      @map("duration_seconds")
+  lastPositionSeconds Int   @default(0) @map("last_position_seconds")
+  maxWatchedSeconds Int      @default(0) @map("max_watched_seconds")
+  documentProgressPercent Int @default(0) @map("document_progress_percent")
   completedAt     DateTime? @map("completed_at")
   lastAccessedAt  DateTime? @map("last_accessed_at")
   createdAt       DateTime  @default(now()) @map("created_at")

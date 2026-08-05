@@ -11,8 +11,10 @@ import {
   RoleName,
   SubmissionStatus,
 } from '../../../generated/prisma/client';
+import { Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { LearningPathService } from '../courses/learning-path.service';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { GradeSubmissionDto } from './dto/grade-submission.dto';
 import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
@@ -77,7 +79,10 @@ type ManageableAssignment = AssignmentResponse & {
 
 @Injectable()
 export class AssignmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly learningPathService?: LearningPathService,
+  ) {}
 
   async createAssignment(
     user: AuthenticatedUser,
@@ -153,6 +158,13 @@ export class AssignmentsService {
     if (!assignment || (!canManage && !canStudy)) {
       throw new NotFoundException('Assignment not found');
     }
+    if (canStudy && this.learningPathService) {
+      await this.learningPathService.assertStudentStepAccessible(
+        user.id,
+        assignmentId,
+        'ASSIGNMENT',
+      );
+    }
     const { course: _course, ...response } = assignment;
     return response;
   }
@@ -223,6 +235,11 @@ export class AssignmentsService {
       select: { id: true, dueDate: true },
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
+    await this.learningPathService?.assertStudentStepAccessible(
+      userId,
+      assignmentId,
+      'ASSIGNMENT',
+    );
 
     try {
       const submission = await this.prisma.submission.create({
@@ -248,6 +265,11 @@ export class AssignmentsService {
     userId: string,
     assignmentId: string,
   ): Promise<SubmissionResponse> {
+    await this.learningPathService?.assertStudentStepAccessible(
+      userId,
+      assignmentId,
+      'ASSIGNMENT',
+    );
     const submission = await this.prisma.submission.findFirst({
       where: {
         assignmentId,

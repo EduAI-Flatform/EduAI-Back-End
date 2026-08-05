@@ -3,11 +3,12 @@ import { AuthModule } from '../auth/auth.module';
 import { CourseThumbnailStorageService } from './course-thumbnail-storage.service';
 import { CoursesController } from './courses.controller';
 import { CoursesService } from './courses.service';
+import { LearningPathService } from './learning-path.service';
 
 @Module({
   imports: [AuthModule],
   controllers: [CoursesController],
-  providers: [CoursesService, CourseThumbnailStorageService],
-  exports: [CoursesService],
+  providers: [CoursesService, CourseThumbnailStorageService, LearningPathService],
+  exports: [CoursesService, LearningPathService],
 })
 export class CoursesModule {}

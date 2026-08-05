@@ -45,9 +45,11 @@ import {
   PaginatedCourseResponse,
   SuccessResponse,
 } from './courses.service';
+import { LearningPathResponse, LearningPathService } from './learning-path.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { Optional } from '@nestjs/common';
 import {
   CourseCatalogResponseDto,
   CourseDetailResponseDto,
@@ -83,7 +85,10 @@ const courseMutationMultipartProperties = {
 @ApiTags('Courses')
 @Controller()
 export class CoursesController {
-  constructor(private readonly coursesService: CoursesService) {}
+  constructor(
+    private readonly coursesService: CoursesService,
+    @Optional() private readonly learningPathService?: LearningPathService,
+  ) {}
 
   @Get('courses')
   @ApiOkResponse({
@@ -286,5 +291,24 @@ export class CoursesController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
   ): Promise<CourseProgressResponse> {
     return this.coursesService.getCourseProgress(user.id, courseId);
+  }
+
+  @Get('courses/:id/learning-path')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Learning path returned successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid course id.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Student role required.' })
+  @ApiNotFoundResponse({ description: 'Course or enrollment not found.' })
+  getLearningPath(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
+  ): Promise<LearningPathResponse> {
+    if (!this.learningPathService) {
+      throw new Error('Learning path service is not configured');
+    }
+    return this.learningPathService.getLearningPath(user, courseId);
   }
 }
