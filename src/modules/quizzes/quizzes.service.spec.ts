@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { QuestionType, QuizStatus, RoleName } from '../../../generated/prisma/client';
+import { AuditAction } from '../../common/audit/audit.constants';
 import { QuizzesService } from './quizzes.service';
 
 const instructor = { id: 'instructor-id', roles: [RoleName.instructor] };
@@ -71,7 +72,11 @@ function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQui
     submittedAt,
     createdAt: submittedAt,
   };
-  const prisma = {
+  let prisma: Record<string, any>;
+  prisma = {
+    $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
+      callback(prisma),
+    ),
     course: { findFirst: jest.fn().mockResolvedValue(course) },
     lesson: { findFirst: jest.fn() },
     quiz: {
@@ -109,8 +114,14 @@ function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQui
       findMany: jest.fn().mockResolvedValue([attempt]),
     },
   };
+  const auditService = { record: jest.fn().mockResolvedValue(undefined) };
 
-  return { attempt, prisma, service: new QuizzesService(prisma as never) };
+  return {
+    attempt,
+    auditService,
+    prisma,
+    service: new QuizzesService(prisma as never, auditService as never),
+  };
 }
 
 describe('QuizzesService', () => {
@@ -155,7 +166,7 @@ describe('QuizzesService', () => {
   });
 
   it('publishes an owned draft quiz', async () => {
-    const { prisma, service } = createService();
+    const { auditService, prisma, service } = createService();
     prisma.quiz.update.mockResolvedValue({ ...quiz, status: QuizStatus.published });
 
     await expect(service.publishQuiz(instructor, quiz.id)).resolves.toMatchObject({
@@ -166,6 +177,15 @@ describe('QuizzesService', () => {
       data: { status: QuizStatus.published },
       select: expect.any(Object),
     });
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: instructor.id,
+        action: AuditAction.QuizPublished,
+        target: { type: 'quiz', id: quiz.id },
+        metadata: { status: QuizStatus.published },
+      },
+      prisma,
+    );
   });
 
   it('creates question JSON fields under an owned quiz', async () => {

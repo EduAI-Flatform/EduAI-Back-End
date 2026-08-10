@@ -5,9 +5,14 @@ import {
   RoleName,
   UserStatus,
 } from '../../../generated/prisma/client';
+import { AuditAction } from '../../common/audit/audit.constants';
 import { AppConfigService } from '../../config/app-config.service';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+
+function createAuditService() {
+  return { record: jest.fn().mockResolvedValue(undefined) };
+}
 
 const firebaseClaims = {
   email: 'student@example.com',
@@ -95,15 +100,17 @@ function createService(options?: {
       .fn()
       .mockResolvedValue(options?.firebaseClaims ?? firebaseClaims),
   };
+  const auditService = createAuditService();
   const service = new AuthService(
     prisma as never,
     passwordService,
     jwtService,
     appConfig,
+    auditService as never,
     firebaseAdmin,
   );
 
-  return { service, prisma, tx, firebaseAdmin };
+  return { auditService, service, prisma, tx, firebaseAdmin };
 }
 
 describe('AuthService.loginWithFirebase', () => {
@@ -124,7 +131,7 @@ describe('AuthService.loginWithFirebase', () => {
   });
 
   it('creates a Firebase user with the selected role', async () => {
-    const { service, tx, firebaseAdmin } = createService();
+    const { auditService, service, tx, firebaseAdmin } = createService();
 
     await expect(
       service.loginWithFirebase({
@@ -170,6 +177,15 @@ describe('AuthService.loginWithFirebase', () => {
         userId: 'user-id',
       }),
     });
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: baseUser.id,
+        action: AuditAction.AuthLogin,
+        target: { type: 'user', id: baseUser.id },
+        metadata: { provider: AuthProvider.google },
+      },
+      tx,
+    );
     expect(JSON.stringify(tx.user.create.mock.calls)).not.toContain(
       'firebase-id-token',
     );
@@ -375,6 +391,7 @@ describe('AuthService.loginWithFirebase', () => {
       passwordService,
       jwtService,
       appConfig,
+      createAuditService() as never,
     );
 
     await expect(

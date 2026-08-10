@@ -13,6 +13,7 @@ import {
   Prisma,
   RoleName,
 } from '../../../generated/prisma/client';
+import { AuditAction } from '../../common/audit/audit.constants';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CoursesService } from './courses.service';
 
@@ -320,11 +321,19 @@ function createService(options?: {
       url: 'https://cdn.example.com/course-thumbnails/generated.png',
     }),
   };
+  const auditService = {
+    record: jest.fn().mockResolvedValue(undefined),
+  };
 
   return {
+    auditService,
     prisma,
     storage,
-    service: new CoursesService(prisma as never, storage as never),
+    service: new CoursesService(
+      prisma as never,
+      storage as never,
+      auditService as never,
+    ),
   };
 }
 
@@ -722,7 +731,7 @@ describe('CoursesService', () => {
   });
 
   it('publishes owned courses with at least one lesson', async () => {
-    const { prisma, service } = createService();
+    const { auditService, prisma, service } = createService();
 
     await service.publishCourse(instructor, course.id);
 
@@ -736,6 +745,15 @@ describe('CoursesService', () => {
         status: true,
       },
     });
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: instructor.id,
+        action: AuditAction.CoursePublished,
+        target: { type: 'course', id: course.id },
+        metadata: { status: CourseStatus.published },
+      },
+      prisma,
+    );
   });
 
   it('lets admins archive any course', async () => {

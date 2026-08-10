@@ -13,6 +13,8 @@ import {
 } from '../../../generated/prisma/client';
 import { Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditAction } from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/audit/audit.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
@@ -90,6 +92,7 @@ type ManageableAssignment = AssignmentResponse & {
 export class AssignmentsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
     @Optional() private readonly learningPathService?: LearningPathService,
     @Optional() private readonly assignmentStorageService?: AssignmentStorageService,
   ) {}
@@ -212,10 +215,22 @@ export class AssignmentsService {
     assignmentId: string,
   ): Promise<AssignmentResponse> {
     await this.findManageableAssignmentOrThrow(user, assignmentId);
-    return this.prisma.assignment.update({
-      where: { id: assignmentId },
-      data: { status: AssignmentStatus.published },
-      select: assignmentResponseSelect,
+    return this.prisma.$transaction(async (tx) => {
+      const publishedAssignment = await tx.assignment.update({
+        where: { id: assignmentId },
+        data: { status: AssignmentStatus.published },
+        select: assignmentResponseSelect,
+      });
+      await this.auditService.record(
+        {
+          actorId: user.id,
+          action: AuditAction.AssignmentPublished,
+          target: { type: 'assignment', id: assignmentId },
+          metadata: { status: AssignmentStatus.published },
+        },
+        tx,
+      );
+      return publishedAssignment;
     });
   }
 
@@ -397,16 +412,32 @@ export class AssignmentsService {
       throw new BadRequestException('Score cannot exceed assignment max score');
     }
 
-    const gradedSubmission = await this.prisma.submission.update({
-      where: { id: submissionId },
-      data: {
-        score: input.score,
-        feedback: input.feedback,
-        status: SubmissionStatus.graded,
-        gradedAt: new Date(),
-        gradedById: user.id,
-      },
-      select: submissionResponseSelect,
+    const gradedSubmission = await this.prisma.$transaction(async (tx) => {
+      const graded = await tx.submission.update({
+        where: { id: submissionId },
+        data: {
+          score: input.score,
+          feedback: input.feedback,
+          status: SubmissionStatus.graded,
+          gradedAt: new Date(),
+          gradedById: user.id,
+        },
+        select: submissionResponseSelect,
+      });
+      await this.auditService.record(
+        {
+          actorId: user.id,
+          action: AuditAction.SubmissionGraded,
+          target: { type: 'submission', id: submissionId },
+          metadata: {
+            assignmentId: submission.assignmentId,
+            score: input.score,
+            status: SubmissionStatus.graded,
+          },
+        },
+        tx,
+      );
+      return graded;
     });
     return this.toSubmissionResponse(
       gradedSubmission,

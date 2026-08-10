@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { RoleName } from '../../../generated/prisma/client';
+import { AuditAction } from '../../common/audit/audit.constants';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CommunityService } from './community.service';
 
@@ -8,7 +9,11 @@ const admin: AuthenticatedUser = { id: 'admin-id', roles: [RoleName.platform_adm
 
 describe('CommunityService', () => {
   function createService() {
-    const prisma = {
+    let prisma: Record<string, any>;
+    prisma = {
+      $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
+        callback(prisma),
+      ),
       communityPost: {
         create: jest.fn(),
         findMany: jest.fn(),
@@ -27,8 +32,13 @@ describe('CommunityService', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
+    const auditService = { record: jest.fn().mockResolvedValue(undefined) };
 
-    return { service: new CommunityService(prisma as never), prisma };
+    return {
+      auditService,
+      service: new CommunityService(prisma as never, auditService as never),
+      prisma,
+    };
   }
 
   it('creates a post for the authenticated user with an explicit projection', async () => {
@@ -183,7 +193,7 @@ describe('CommunityService', () => {
   });
 
   it('allows an admin to update another user post and hide it', async () => {
-    const { service, prisma } = createService();
+    const { auditService, service, prisma } = createService();
     prisma.communityPost.findFirst.mockResolvedValue({ authorId: student.id });
     prisma.communityPost.update.mockResolvedValue({ id: 'post-id', status: 'hidden' });
 
@@ -191,6 +201,15 @@ describe('CommunityService', () => {
 
     expect(prisma.communityPost.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'hidden' } }),
+    );
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: admin.id,
+        action: AuditAction.CommunityPostModerated,
+        target: { type: 'community_post', id: 'post-id' },
+        metadata: { status: 'hidden' },
+      },
+      prisma,
     );
   });
 
@@ -217,6 +236,24 @@ describe('CommunityService', () => {
       where: { id: 'post-id' },
       data: { status: 'removed', deletedAt: expect.any(Date) },
     });
+  });
+
+  it('audits an administrator removing a community post', async () => {
+    const { auditService, service, prisma } = createService();
+    prisma.communityPost.findFirst.mockResolvedValue({ authorId: student.id });
+    prisma.communityPost.update.mockResolvedValue(undefined);
+
+    await service.deletePost(admin, 'post-id');
+
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: admin.id,
+        action: AuditAction.CommunityPostRemoved,
+        target: { type: 'community_post', id: 'post-id' },
+        metadata: { status: 'removed' },
+      },
+      prisma,
+    );
   });
 
   it('creates a nested comment only when its parent belongs to the same post', async () => {
@@ -287,6 +324,24 @@ describe('CommunityService', () => {
       where: { id: 'comment-id' },
       data: { status: 'removed', deletedAt: expect.any(Date) },
     });
+  });
+
+  it('audits an administrator removing a community comment', async () => {
+    const { auditService, service, prisma } = createService();
+    prisma.communityComment.findFirst.mockResolvedValue({ authorId: student.id });
+    prisma.communityComment.update.mockResolvedValue(undefined);
+
+    await service.deleteComment(admin, 'comment-id');
+
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: admin.id,
+        action: AuditAction.CommunityCommentRemoved,
+        target: { type: 'community_comment', id: 'comment-id' },
+        metadata: { status: 'removed' },
+      },
+      prisma,
+    );
   });
 
   it('creates one like for an authenticated user and returns a compact command response', async () => {

@@ -12,6 +12,8 @@ import {
   RoleName,
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditAction } from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/audit/audit.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CourseThumbnailStorageService } from './course-thumbnail-storage.service';
 import { CreateCourseDto } from './dto/create-course.dto';
@@ -319,6 +321,7 @@ export class CoursesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly thumbnailStorage: CourseThumbnailStorageService,
+    private readonly auditService: AuditService,
   ) {}
 
   async listCourses(): Promise<CourseCatalogResponse[]> {
@@ -491,12 +494,24 @@ export class CoursesService {
       );
     }
 
-    return this.prisma.course.update({
-      where: { id: courseId },
-      data: {
-        status: CourseStatus.published,
-      },
-      select: courseCommandResponseSelect,
+    return this.prisma.$transaction(async (tx) => {
+      const publishedCourse = await tx.course.update({
+        where: { id: courseId },
+        data: {
+          status: CourseStatus.published,
+        },
+        select: courseCommandResponseSelect,
+      });
+      await this.auditService.record(
+        {
+          actorId: user.id,
+          action: AuditAction.CoursePublished,
+          target: { type: 'course', id: courseId },
+          metadata: { status: CourseStatus.published },
+        },
+        tx,
+      );
+      return publishedCourse;
     });
   }
 

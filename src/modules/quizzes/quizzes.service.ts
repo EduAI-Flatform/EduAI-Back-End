@@ -13,6 +13,8 @@ import {
 } from '../../../generated/prisma/client';
 import { Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditAction } from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/audit/audit.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
@@ -120,6 +122,7 @@ type ManageableQuestion = QuestionResponse & {
 export class QuizzesService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
     @Optional() private readonly learningPathService?: LearningPathService,
   ) {}
 
@@ -189,10 +192,22 @@ export class QuizzesService {
   ): Promise<QuizResponse> {
     await this.findManageableQuizOrThrow(user, quizId);
 
-    return this.prisma.quiz.update({
-      where: { id: quizId },
-      data: { status: QuizStatus.published },
-      select: quizResponseSelect,
+    return this.prisma.$transaction(async (tx) => {
+      const publishedQuiz = await tx.quiz.update({
+        where: { id: quizId },
+        data: { status: QuizStatus.published },
+        select: quizResponseSelect,
+      });
+      await this.auditService.record(
+        {
+          actorId: user.id,
+          action: AuditAction.QuizPublished,
+          target: { type: 'quiz', id: quizId },
+          metadata: { status: QuizStatus.published },
+        },
+        tx,
+      );
+      return publishedQuiz;
     });
   }
 

@@ -6,6 +6,8 @@ import {
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditAction } from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/audit/audit.service';
 import { generateCertificateQrCode } from './certificate-qr.util';
 import { IssueCertificateDto } from './dto/issue-certificate.dto';
 
@@ -85,7 +87,10 @@ type CompletedEnrollment = {
 
 @Injectable()
 export class CertificatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async listMyCertificates(userId: string): Promise<CertificateListItem[]> {
     const certificates = await this.prisma.certificate.findMany({
@@ -161,17 +166,32 @@ export class CertificatesService {
     const qrCodeUrl = await generateCertificateQrCode(verificationUrl);
 
     try {
-      return await this.prisma.certificate.create({
-        data: {
-          userId,
-          courseId: enrollment.course.id,
-          certificateTemplateId: template.id,
-          certificateCode,
-          title: enrollment.course.title,
-          verificationUrl,
-          qrCodeUrl,
-        },
-        select: certificateResponseSelect,
+      return await this.prisma.$transaction(async (tx) => {
+        const issuedCertificate = await tx.certificate.create({
+          data: {
+            userId,
+            courseId: enrollment.course.id,
+            certificateTemplateId: template.id,
+            certificateCode,
+            title: enrollment.course.title,
+            verificationUrl,
+            qrCodeUrl,
+          },
+          select: certificateResponseSelect,
+        });
+        await this.auditService.record(
+          {
+            actorId: userId,
+            action: AuditAction.CertificateIssued,
+            target: { type: 'certificate', id: issuedCertificate.id },
+            metadata: {
+              courseId: input.courseId,
+              certificateTemplateId: input.certificateTemplateId,
+            },
+          },
+          tx,
+        );
+        return issuedCertificate;
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

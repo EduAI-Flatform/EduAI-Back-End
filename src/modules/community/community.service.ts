@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditAction } from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/audit/audit.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateCommunityPostDto } from './dto/create-community-post.dto';
 import { CreateCommunityCommentDto } from './dto/create-community-comment.dto';
@@ -81,7 +83,10 @@ export interface CommunitySuccessResponse {
 
 @Injectable()
 export class CommunityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async listPosts(
     user: AuthenticatedUser | undefined,
@@ -163,11 +168,29 @@ export class CommunityService {
       }).filter(([, value]) => value !== undefined),
     );
 
-    const updatedPost = await this.prisma.communityPost.update({
-      where: { id },
-      data,
-      select: communityPostRecordSelect,
-    });
+    const updatedPost = input.status
+      ? await this.prisma.$transaction(async (tx) => {
+          const updated = await tx.communityPost.update({
+            where: { id },
+            data,
+            select: communityPostRecordSelect,
+          });
+          await this.auditService.record(
+            {
+              actorId: user.id,
+              action: AuditAction.CommunityPostModerated,
+              target: { type: 'community_post', id },
+              metadata: { status: input.status },
+            },
+            tx,
+          );
+          return updated;
+        })
+      : await this.prisma.communityPost.update({
+          where: { id },
+          data,
+          select: communityPostRecordSelect,
+        });
     const [response] = await this.toCommunityPostResponses(
       [updatedPost],
       user.id,
@@ -185,13 +208,31 @@ export class CommunityService {
       throw new NotFoundException('Community post not found');
     }
 
-    await this.prisma.communityPost.update({
-      where: { id },
-      data: {
-        status: 'removed',
-        deletedAt: new Date(),
-      },
-    });
+    const remove = (client: Pick<Prisma.TransactionClient, 'communityPost'>) =>
+      client.communityPost.update({
+        where: { id },
+        data: {
+          status: 'removed',
+          deletedAt: new Date(),
+        },
+      });
+
+    if (this.isAdmin(user)) {
+      await this.prisma.$transaction(async (tx) => {
+        await remove(tx);
+        await this.auditService.record(
+          {
+            actorId: user.id,
+            action: AuditAction.CommunityPostRemoved,
+            target: { type: 'community_post', id },
+            metadata: { status: 'removed' },
+          },
+          tx,
+        );
+      });
+    } else {
+      await remove(this.prisma);
+    }
 
     return {
       success: true,
@@ -261,13 +302,33 @@ export class CommunityService {
       throw new NotFoundException('Community comment not found');
     }
 
-    await this.prisma.communityComment.update({
-      where: { id },
-      data: {
-        status: 'removed',
-        deletedAt: new Date(),
-      },
-    });
+    const remove = (
+      client: Pick<Prisma.TransactionClient, 'communityComment'>,
+    ) =>
+      client.communityComment.update({
+        where: { id },
+        data: {
+          status: 'removed',
+          deletedAt: new Date(),
+        },
+      });
+
+    if (this.isAdmin(user)) {
+      await this.prisma.$transaction(async (tx) => {
+        await remove(tx);
+        await this.auditService.record(
+          {
+            actorId: user.id,
+            action: AuditAction.CommunityCommentRemoved,
+            target: { type: 'community_comment', id },
+            metadata: { status: 'removed' },
+          },
+          tx,
+        );
+      });
+    } else {
+      await remove(this.prisma);
+    }
 
     return {
       success: true,

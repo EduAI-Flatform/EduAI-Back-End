@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { AuditAction } from '../../common/audit/audit.constants';
 import { CertificatesService } from './certificates.service';
 
 const userId = 'student-id';
@@ -20,7 +21,11 @@ const certificate = {
 };
 
 function createService(overrides: Record<string, unknown> = {}) {
-  const prisma = {
+  let prisma: Record<string, any>;
+  prisma = {
+    $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
+      callback(prisma),
+    ),
     enrollment: {
       findUnique: jest.fn().mockResolvedValue({
         status: 'completed',
@@ -37,8 +42,13 @@ function createService(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   };
+  const auditService = { record: jest.fn().mockResolvedValue(undefined) };
 
-  return { prisma, service: new CertificatesService(prisma as never) };
+  return {
+    auditService,
+    prisma,
+    service: new CertificatesService(prisma as never, auditService as never),
+  };
 }
 
 describe('CertificatesService.issueCertificate', () => {
@@ -85,7 +95,7 @@ describe('CertificatesService.issueCertificate', () => {
   });
 
   it('creates an immutable certificate after completion', async () => {
-    const { prisma, service } = createService();
+    const { auditService, prisma, service } = createService();
 
     await expect(
       service.issueCertificate(userId, { courseId, certificateTemplateId: templateId }),
@@ -105,6 +115,15 @@ describe('CertificatesService.issueCertificate', () => {
         }),
         select: expect.any(Object),
       }),
+    );
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: userId,
+        action: AuditAction.CertificateIssued,
+        target: { type: 'certificate', id: certificate.id },
+        metadata: { courseId, certificateTemplateId: templateId },
+      },
+      prisma,
     );
   });
 });
@@ -171,7 +190,9 @@ describe('CertificatesService.listMyCertificates', () => {
         ]),
       },
     };
-    const service = new CertificatesService(prisma as never);
+    const service = new CertificatesService(prisma as never, {
+      record: jest.fn(),
+    } as never);
 
     await expect(service.listMyCertificates(userId)).resolves.toEqual([
       {

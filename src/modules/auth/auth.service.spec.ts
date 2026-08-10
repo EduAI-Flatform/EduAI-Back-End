@@ -1,9 +1,14 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { RoleName } from '../../../generated/prisma/client';
+import { AuditAction } from '../../common/audit/audit.constants';
 import { AppConfigService } from '../../config/app-config.service';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+
+function createAuditService() {
+  return { record: jest.fn().mockResolvedValue(undefined) };
+}
 
 describe('AuthService.register', () => {
   const registerInput = {
@@ -74,6 +79,7 @@ describe('AuthService.register', () => {
       passwordService,
       jwtService,
       appConfig,
+      createAuditService() as never,
     );
 
     return { service, prisma, tx, passwordService, jwtService };
@@ -185,7 +191,11 @@ describe('AuthService.login', () => {
   }) {
     const selectedUser =
       options && 'user' in options ? options.user : user;
-    const prisma = {
+    let prisma: Record<string, any>;
+    prisma = {
+      $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
+        callback(prisma),
+      ),
       user: {
         findUnique: jest.fn().mockResolvedValue(selectedUser),
       },
@@ -213,14 +223,16 @@ describe('AuthService.login', () => {
         refreshSecret: 'refresh-secret',
       },
     } as AppConfigService;
+    const auditService = createAuditService();
     const service = new AuthService(
       prisma as never,
       passwordService,
       jwtService,
       appConfig,
+      auditService as never,
     );
 
-    return { service, prisma, passwordService, jwtService };
+    return { auditService, service, prisma, passwordService, jwtService };
   }
 
   it('rejects missing users as invalid credentials', async () => {
@@ -240,7 +252,8 @@ describe('AuthService.login', () => {
   });
 
   it('issues tokens and stores only a hashed refresh token', async () => {
-    const { service, prisma, passwordService, jwtService } = createService();
+    const { auditService, service, prisma, passwordService, jwtService } =
+      createService();
 
     const result = await service.login(loginInput);
 
@@ -269,6 +282,15 @@ describe('AuthService.login', () => {
         userId: user.id,
       },
     });
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: user.id,
+        action: AuditAction.AuthLogin,
+        target: { type: 'user', id: user.id },
+        metadata: { provider: 'local' },
+      },
+      prisma,
+    );
     expect(JSON.stringify(result)).not.toContain('passwordHash');
   });
 });
@@ -354,6 +376,7 @@ describe('AuthService.refresh', () => {
       passwordService,
       jwtService,
       appConfig,
+      createAuditService() as never,
     );
 
     return { service, tx, passwordService, jwtService };
@@ -468,6 +491,7 @@ describe('AuthService.logout', () => {
       passwordService,
       jwtService,
       appConfig,
+      createAuditService() as never,
     );
 
     return { service, prisma };
@@ -537,6 +561,7 @@ describe('AuthService.getCurrentUser', () => {
       passwordService,
       jwtService,
       appConfig,
+      createAuditService() as never,
     );
 
     return { service, prisma };

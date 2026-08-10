@@ -14,6 +14,8 @@ import {
   UserStatus,
 } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
+import { AuditAction } from '../../common/audit/audit.constants';
+import { AuditService } from '../../common/audit/audit.service';
 import {
   FIREBASE_ADMIN_SERVICE,
   type FirebaseAdminVerifier,
@@ -122,6 +124,7 @@ export class AuthService {
     private readonly passwordService: PasswordService,
     private readonly jwtService: JwtService,
     private readonly appConfig: AppConfigService,
+    private readonly auditService: AuditService,
     @Optional()
     @Inject(FIREBASE_ADMIN_SERVICE)
     private readonly firebaseAdmin?: FirebaseAdminVerifier,
@@ -229,7 +232,19 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    return this.issueTokenResponse(user, this.prisma);
+    return this.prisma.$transaction(async (tx) => {
+      const response = await this.issueTokenResponse(user, tx);
+      await this.auditService.record(
+        {
+          actorId: user.id,
+          action: AuditAction.AuthLogin,
+          target: { type: 'user', id: user.id },
+          metadata: { provider: AuthProvider.local },
+        },
+        tx,
+      );
+      return response;
+    });
   }
 
   async loginWithFirebase(input: FirebaseLoginDto): Promise<LoginResponse> {
@@ -333,7 +348,17 @@ export class AuthService {
             select: FIREBASE_USER_SELECT,
           });
 
-          return this.issueTokenResponse(user, tx);
+          const response = await this.issueTokenResponse(user, tx);
+          await this.auditService.record(
+            {
+              actorId: user.id,
+              action: AuditAction.AuthLogin,
+              target: { type: 'user', id: user.id },
+              metadata: { provider: authProvider },
+            },
+            tx,
+          );
+          return response;
         }
 
         const role = await tx.role.findUnique({
@@ -365,10 +390,20 @@ export class AuthService {
           },
         });
 
-        return this.issueTokenResponse(
+        const response = await this.issueTokenResponse(
           { ...user, roles: [{ role }] },
           tx,
         );
+        await this.auditService.record(
+          {
+            actorId: user.id,
+            action: AuditAction.AuthLogin,
+            target: { type: 'user', id: user.id },
+            metadata: { provider: authProvider },
+          },
+          tx,
+        );
+        return response;
       });
     } catch (error) {
       if (

@@ -4,6 +4,7 @@ export const AuditAction = {
   UserStatusChanged: 'USER_STATUS_CHANGED',
   CoursePublished: 'COURSE_PUBLISHED',
   AssignmentPublished: 'ASSIGNMENT_PUBLISHED',
+  QuizPublished: 'QUIZ_PUBLISHED',
   SubmissionGraded: 'SUBMISSION_GRADED',
   CertificateIssued: 'CERTIFICATE_ISSUED',
   CertificateRevoked: 'CERTIFICATE_REVOKED',

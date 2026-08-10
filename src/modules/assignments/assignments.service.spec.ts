@@ -8,6 +8,7 @@ import {
   RoleName,
   SubmissionStatus,
 } from '../../../generated/prisma/client';
+import { AuditAction } from '../../common/audit/audit.constants';
 import { AssignmentsService } from './assignments.service';
 
 const instructor = { id: 'instructor-id', roles: [RoleName.instructor] };
@@ -50,7 +51,11 @@ function createService(storage?: { upload: jest.Mock }) {
     updatedAt: submittedAt,
     user: studentProfile,
   };
-  const prisma = {
+  let prisma: Record<string, any>;
+  prisma = {
+    $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
+      callback(prisma),
+    ),
     course: { findFirst: jest.fn().mockResolvedValue(course) },
     lesson: { findFirst: jest.fn() },
     assignment: {
@@ -80,14 +85,39 @@ function createService(storage?: { upload: jest.Mock }) {
       }),
     },
   };
+  const auditService = {
+    record: jest.fn().mockResolvedValue(undefined),
+  };
   return {
+    auditService,
     prisma,
-    service: new AssignmentsService(prisma as never, undefined, storage as never),
+    service: new AssignmentsService(
+      prisma as never,
+      auditService as never,
+      undefined,
+      storage as never,
+    ),
     submission,
   };
 }
 
 describe('AssignmentsService', () => {
+  it('audits assignment publication', async () => {
+    const { auditService, prisma, service } = createService();
+
+    await service.publishAssignment(instructor, assignment.id);
+
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: instructor.id,
+        action: AuditAction.AssignmentPublished,
+        target: { type: 'assignment', id: assignment.id },
+        metadata: { status: AssignmentStatus.published },
+      },
+      prisma,
+    );
+  });
+
   it('creates draft assignments for an owned course', async () => {
     const { prisma, service } = createService();
 
@@ -246,7 +276,7 @@ describe('AssignmentsService', () => {
   });
 
   it('grades submissions for the owning instructor', async () => {
-    const { prisma, service } = createService();
+    const { auditService, prisma, service } = createService();
 
     await expect(
       service.gradeSubmission(instructor, 'submission-id', {
@@ -270,6 +300,19 @@ describe('AssignmentsService', () => {
       }),
       select: expect.any(Object),
     });
+    expect(auditService.record).toHaveBeenCalledWith(
+      {
+        actorId: instructor.id,
+        action: AuditAction.SubmissionGraded,
+        target: { type: 'submission', id: 'submission-id' },
+        metadata: {
+          assignmentId: assignment.id,
+          score: 8,
+          status: SubmissionStatus.graded,
+        },
+      },
+      prisma,
+    );
   });
 
   it('hides assignment submissions from non-owning instructors', async () => {
