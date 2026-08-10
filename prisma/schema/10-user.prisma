@@ -34,6 +34,7 @@ model User {
   aiFlashcards AiFlashcard[]
   certificates  Certificate[]
   courseReviews CourseReview[]
+  auditLogs     AuditLog[]
 
   @@index([status])
   @@index([deletedAt])

@@ -6,6 +6,7 @@ import * as request from 'supertest';
 import { RoleName } from '../generated/prisma/client';
 import { configureApp } from '../src/app.setup';
 import { AppLoggerService } from '../src/common/logging/app-logger.service';
+import { AuditService } from '../src/common/audit/audit.service';
 import { AppConfigService } from '../src/config/app-config.service';
 import { AdminController } from '../src/modules/admin/admin.controller';
 import { AdminService } from '../src/modules/admin/admin.service';
@@ -16,11 +17,21 @@ const overview = {
   users: { total: 3, active: 3, inactive: 0, suspended: 0 },
   roles: { student: 1, instructor: 1, platformAdmin: 1 },
 };
+const auditLogs = {
+  items: [],
+  page: 1,
+  pageSize: 25,
+  total: 0,
+  totalPages: 0,
+};
 
 describe('Admin overview endpoint', () => {
   let app: INestApplication;
   const adminService = {
     getOverview: jest.fn(),
+  };
+  const auditService = {
+    list: jest.fn(),
   };
   const jwtService = {
     verifyAsync: jest.fn(),
@@ -36,6 +47,10 @@ describe('Admin overview endpoint', () => {
         {
           provide: AdminService,
           useValue: adminService,
+        },
+        {
+          provide: AuditService,
+          useValue: auditService,
         },
         {
           provide: JwtService,
@@ -62,6 +77,7 @@ describe('Admin overview endpoint', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     adminService.getOverview.mockResolvedValue(overview);
+    auditService.list.mockResolvedValue(auditLogs);
     jwtService.verifyAsync.mockImplementation(async (token: string) => {
       const roleByToken: Record<string, RoleName> = {
         'student-token': RoleName.student,
@@ -114,5 +130,33 @@ describe('Admin overview endpoint', () => {
       });
 
     expect(adminService.getOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['student-token', 'instructor-token'])(
+    'rejects the %s role from audit records',
+    async (token) => {
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/audit-logs')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(403);
+
+      expect(auditService.list).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns filtered audit records to a platform administrator', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/admin/audit-logs?page=1&pageSize=25&search=course')
+      .set('Authorization', 'Bearer admin-token')
+      .expect(200)
+      .expect({
+        success: true,
+        data: auditLogs,
+        message: 'OK',
+      });
+
+    expect(auditService.list).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, pageSize: 25, search: 'course' }),
+    );
   });
 });

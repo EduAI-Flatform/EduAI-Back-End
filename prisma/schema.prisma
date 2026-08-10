@@ -116,6 +116,7 @@ model User {
   aiFlashcards AiFlashcard[]
   certificates  Certificate[]
   courseReviews CourseReview[]
+  auditLogs     AuditLog[]
 
   @@index([status])
   @@index([deletedAt])
@@ -750,4 +751,21 @@ model AiFlashcard {
   @@index([userId])
   @@index([sourceType, sourceId])
   @@map("ai_flashcards")
+}
+
+model AuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId      String   @map("actor_id") @db.Uuid
+  action       String
+  targetType   String   @map("target_type")
+  targetId     String   @map("target_id")
+  metadataJson Json     @default("{}") @map("metadata_json")
+  occurredAt   DateTime @default(now()) @map("occurred_at")
+  actor        User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([occurredAt])
+  @@index([action, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([targetType, targetId, occurredAt])
+  @@map("audit_logs")
 }
