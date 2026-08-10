@@ -118,6 +118,7 @@ model User {
   courseReviews CourseReview[]
 
   @@index([status])
+  @@index([deletedAt])
   @@map("users")
 }
 

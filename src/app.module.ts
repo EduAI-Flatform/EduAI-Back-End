@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppConfigModule } from './config/app-config.module';
 import { RedisModule } from './config/redis.module';
 import { LoggingModule } from './common/logging/logging.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AssignmentsModule } from './modules/assignments/assignments.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -25,6 +26,7 @@ import { PrismaModule } from './prisma/prisma.module';
     RedisModule,
     HealthModule,
     AuthModule,
+    AdminModule,
     ProfileModule,
     CoursesModule,
     CertificatesModule,
