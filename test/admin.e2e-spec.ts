@@ -3,7 +3,11 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
-import { RoleName, UserStatus } from '../generated/prisma/client';
+import {
+  ModerationStatus,
+  RoleName,
+  UserStatus,
+} from '../generated/prisma/client';
 import { configureApp } from '../src/app.setup';
 import { AppLoggerService } from '../src/common/logging/app-logger.service';
 import { AuditService } from '../src/common/audit/audit.service';
@@ -13,6 +17,15 @@ import { AdminUserService } from '../src/modules/admin/admin-user.service';
 import { AdminService } from '../src/modules/admin/admin.service';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../src/modules/auth/guards/roles.guard';
+import {
+  AdminModerationController,
+  ModerationController,
+} from '../src/modules/moderation/moderation.controller';
+import {
+  ModerationAction,
+  ModerationService,
+  ModerationTargetType,
+} from '../src/modules/moderation/moderation.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const overview = {
@@ -45,6 +58,21 @@ const adminUsers = {
   total: 1,
   totalPages: 1,
 };
+const moderationItem = {
+  id: '44444444-4444-4444-8444-444444444444',
+  targetType: ModerationTargetType.Course,
+  title: 'Review target',
+  content: 'Non-sensitive review content',
+  owner: {
+    id: '55555555-5555-4555-8555-555555555555',
+    fullName: 'Content owner',
+  },
+  moderationStatus: ModerationStatus.clear,
+  moderationReason: null,
+  moderatedAt: null,
+  createdAt: new Date('2026-08-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-08-02T00:00:00.000Z'),
+};
 
 describe('Admin overview endpoint', () => {
   let app: INestApplication;
@@ -60,6 +88,12 @@ describe('Admin overview endpoint', () => {
     setStatus: jest.fn(),
     setRoles: jest.fn(),
   };
+  const moderationService = {
+    list: jest.fn(),
+    getDetail: jest.fn(),
+    moderate: jest.fn(),
+    getOwnerStatus: jest.fn(),
+  };
   const jwtService = {
     verifyAsync: jest.fn(),
   };
@@ -69,7 +103,11 @@ describe('Admin overview endpoint', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      controllers: [AdminController],
+      controllers: [
+        AdminController,
+        AdminModerationController,
+        ModerationController,
+      ],
       providers: [
         Reflector,
         JwtAuthGuard,
@@ -85,6 +123,10 @@ describe('Admin overview endpoint', () => {
         {
           provide: AdminUserService,
           useValue: adminUserService,
+        },
+        {
+          provide: ModerationService,
+          useValue: moderationService,
         },
         {
           provide: JwtService,
@@ -125,6 +167,29 @@ describe('Admin overview endpoint', () => {
     adminUserService.setRoles.mockResolvedValue({
       ...adminUsers.items[0],
       roles: [RoleName.instructor, RoleName.student],
+    });
+    moderationService.list.mockResolvedValue({
+      items: [moderationItem],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    });
+    moderationService.getDetail.mockResolvedValue({
+      item: moderationItem,
+      history: [],
+    });
+    moderationService.moderate.mockResolvedValue({
+      ...moderationItem,
+      moderationStatus: ModerationStatus.rejected,
+      moderationReason: 'Confirmed policy violation',
+    });
+    moderationService.getOwnerStatus.mockResolvedValue({
+      id: moderationItem.id,
+      targetType: moderationItem.targetType,
+      moderationStatus: moderationItem.moderationStatus,
+      moderationReason: null,
+      moderatedAt: null,
     });
     jwtService.verifyAsync.mockImplementation(async (token: string) => {
       const roleByToken: Record<string, RoleName> = {
@@ -318,5 +383,96 @@ describe('Admin overview endpoint', () => {
       .expect(({ body }) => {
         expect(body.error.code).toBe('CONFLICT');
       });
+  });
+
+  it.each(['student-token', 'instructor-token'])(
+    'rejects the %s role from moderation administration',
+    async (token) => {
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/moderation?targetType=course')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(403);
+      await request(app.getHttpServer())
+        .patch(`/api/v1/admin/moderation/course/${moderationItem.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          action: ModerationAction.Reject,
+          reason: 'Confirmed policy violation',
+        })
+        .expect(403);
+
+      expect(moderationService.list).not.toHaveBeenCalled();
+      expect(moderationService.moderate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns a validated moderation queue and detail to an administrator', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/admin/moderation?targetType=course&status=clear&page=1&pageSize=25')
+      .set('Authorization', 'Bearer admin-token')
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/admin/moderation/course/${moderationItem.id}`)
+      .set('Authorization', 'Bearer admin-token')
+      .expect(200);
+
+    expect(moderationService.list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: ModerationTargetType.Course,
+        status: ModerationStatus.clear,
+        page: 1,
+        pageSize: 25,
+      }),
+    );
+    expect(moderationService.getDetail).toHaveBeenCalledWith(
+      ModerationTargetType.Course,
+      moderationItem.id,
+    );
+  });
+
+  it('requires a reason and delegates an administrator moderation transition', async () => {
+    const route = `/api/v1/admin/moderation/course/${moderationItem.id}`;
+    await request(app.getHttpServer())
+      .patch(route)
+      .set('Authorization', 'Bearer admin-token')
+      .send({ action: ModerationAction.Reject, reason: '  ' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch(route)
+      .set('Authorization', 'Bearer admin-token')
+      .send({
+        action: ModerationAction.Reject,
+        reason: 'Confirmed policy violation',
+      })
+      .expect(200);
+
+    expect(moderationService.moderate).toHaveBeenCalledWith(
+      `${RoleName.platform_admin}-id`,
+      ModerationTargetType.Course,
+      moderationItem.id,
+      {
+        action: ModerationAction.Reject,
+        reason: 'Confirmed policy violation',
+      },
+    );
+  });
+
+  it('returns moderation status through an authenticated owner route', async () => {
+    await request(app.getHttpServer())
+      .get(`/api/v1/moderation/course/${moderationItem.id}/status`)
+      .expect(401);
+    await request(app.getHttpServer())
+      .get(`/api/v1/moderation/course/${moderationItem.id}/status`)
+      .set('Authorization', 'Bearer instructor-token')
+      .expect(200);
+
+    expect(moderationService.getOwnerStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: `${RoleName.instructor}-id`,
+        roles: [RoleName.instructor],
+      }),
+      ModerationTargetType.Course,
+      moderationItem.id,
+    );
   });
 });
