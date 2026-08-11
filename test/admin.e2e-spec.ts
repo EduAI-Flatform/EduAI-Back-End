@@ -9,6 +9,7 @@ import { AppLoggerService } from '../src/common/logging/app-logger.service';
 import { AuditService } from '../src/common/audit/audit.service';
 import { AppConfigService } from '../src/config/app-config.service';
 import { AdminController } from '../src/modules/admin/admin.controller';
+import { AdminUserService } from '../src/modules/admin/admin-user.service';
 import { AdminService } from '../src/modules/admin/admin.service';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../src/modules/auth/guards/roles.guard';
@@ -25,6 +26,25 @@ const auditLogs = {
   total: 0,
   totalPages: 0,
 };
+const adminUsers = {
+  items: [
+    {
+      id: '11111111-1111-4111-8111-111111111111',
+      email: 'learner@example.com',
+      fullName: 'Learner Example',
+      status: UserStatus.active,
+      authProvider: 'local',
+      emailVerified: true,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-02T00:00:00.000Z',
+      roles: [RoleName.student],
+    },
+  ],
+  page: 1,
+  pageSize: 25,
+  total: 1,
+  totalPages: 1,
+};
 
 describe('Admin overview endpoint', () => {
   let app: INestApplication;
@@ -33,6 +53,10 @@ describe('Admin overview endpoint', () => {
   };
   const auditService = {
     list: jest.fn(),
+  };
+  const adminUserService = {
+    listUsers: jest.fn(),
+    getUser: jest.fn(),
   };
   const jwtService = {
     verifyAsync: jest.fn(),
@@ -55,6 +79,10 @@ describe('Admin overview endpoint', () => {
         {
           provide: AuditService,
           useValue: auditService,
+        },
+        {
+          provide: AdminUserService,
+          useValue: adminUserService,
         },
         {
           provide: JwtService,
@@ -86,6 +114,8 @@ describe('Admin overview endpoint', () => {
     jest.clearAllMocks();
     adminService.getOverview.mockResolvedValue(overview);
     auditService.list.mockResolvedValue(auditLogs);
+    adminUserService.listUsers.mockResolvedValue(adminUsers);
+    adminUserService.getUser.mockResolvedValue(adminUsers.items[0]);
     jwtService.verifyAsync.mockImplementation(async (token: string) => {
       const roleByToken: Record<string, RoleName> = {
         'student-token': RoleName.student,
@@ -179,4 +209,52 @@ describe('Admin overview endpoint', () => {
       expect.objectContaining({ page: 1, pageSize: 25, search: 'course' }),
     );
   });
+
+  it('returns a filtered sanitized user page to a platform administrator', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/admin/users?page=1&pageSize=25&search=learner&role=student&status=active')
+      .set('Authorization', 'Bearer admin-token')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toEqual(adminUsers);
+        expect(JSON.stringify(body.data)).not.toMatch(
+          /passwordHash|refreshToken|firebaseUid|deletedAt/,
+        );
+      });
+
+    expect(adminUserService.listUsers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: 1,
+        pageSize: 25,
+        search: 'learner',
+        role: RoleName.student,
+        status: UserStatus.active,
+      }),
+    );
+  });
+
+  it('returns sanitized user detail and validates list boundaries', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/admin/users/11111111-1111-4111-8111-111111111111')
+      .set('Authorization', 'Bearer admin-token')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data).toEqual(adminUsers.items[0]);
+      });
+
+    await request(app.getHttpServer())
+      .get('/api/v1/admin/users?pageSize=101')
+      .set('Authorization', 'Bearer admin-token')
+      .expect(400);
+  });
+
+  it.each(['student-token', 'instructor-token'])(
+    'rejects the %s role from user administration',
+    async (token) => {
+      await request(app.getHttpServer())
+        .get('/api/v1/admin/users')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(403);
+    },
+  );
 });
