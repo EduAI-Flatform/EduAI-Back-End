@@ -2,6 +2,7 @@ import { ExecutionContext, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AppConfigService } from '../../../config/app-config.service';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 /**
@@ -10,8 +11,12 @@ import { JwtAuthGuard } from './jwt-auth.guard';
  */
 @Injectable()
 export class OptionalJwtAuthGuard extends JwtAuthGuard {
-  constructor(jwtService: JwtService, appConfig: AppConfigService) {
-    super(jwtService, appConfig);
+  constructor(
+    jwtService: JwtService,
+    appConfig: AppConfigService,
+    prisma: PrismaService,
+  ) {
+    super(jwtService, appConfig, prisma);
   }
 
   canActivate(context: ExecutionContext): Promise<boolean> {

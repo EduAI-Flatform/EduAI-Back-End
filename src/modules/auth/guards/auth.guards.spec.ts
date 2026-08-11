@@ -1,8 +1,9 @@
 import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Reflector } from '@nestjs/core';
-import { RoleName } from '../../../../generated/prisma/client';
+import { RoleName, UserStatus } from '../../../../generated/prisma/client';
 import { AppConfigService } from '../../../config/app-config.service';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { ROLES_KEY } from '../roles.decorator';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
@@ -21,7 +22,11 @@ function createHttpContext(headers: Record<string, string | undefined> = {}): Ex
 }
 
 describe('JwtAuthGuard', () => {
-  function createGuard(options?: { payload?: unknown; verifyFails?: boolean }) {
+  function createGuard(options?: {
+    payload?: unknown;
+    verifyFails?: boolean;
+    currentUser?: unknown;
+  }) {
     const jwtService = {
       verifyAsync: jest.fn(
         options?.verifyFails
@@ -41,10 +46,24 @@ describe('JwtAuthGuard', () => {
         accessSecret: 'access-secret',
       },
     } as AppConfigService;
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue(
+          options?.currentUser ?? {
+            id: 'user-id',
+            email: 'admin@example.com',
+            status: UserStatus.active,
+            deletedAt: null,
+            roles: [{ role: { name: RoleName.platform_admin } }],
+          },
+        ),
+      },
+    } as unknown as PrismaService;
 
     return {
-      guard: new JwtAuthGuard(jwtService, appConfig),
+      guard: new JwtAuthGuard(jwtService, appConfig, prisma),
       jwtService,
+      prisma,
     };
   }
 
@@ -78,6 +97,42 @@ describe('JwtAuthGuard', () => {
       roles: [RoleName.platform_admin],
     });
   });
+
+  it('rejects a suspended user even when the access token is still valid', async () => {
+    const { guard } = createGuard({
+      currentUser: {
+        id: 'user-id',
+        email: 'admin@example.com',
+        status: UserStatus.suspended,
+        deletedAt: null,
+        roles: [{ role: { name: RoleName.platform_admin } }],
+      },
+    });
+
+    await expect(
+      guard.canActivate(
+        createHttpContext({ authorization: 'Bearer access-token' }),
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('uses current database roles instead of stale token roles', async () => {
+    const { guard } = createGuard({
+      currentUser: {
+        id: 'user-id',
+        email: 'admin@example.com',
+        status: UserStatus.active,
+        deletedAt: null,
+        roles: [{ role: { name: RoleName.student } }],
+      },
+    });
+    const context = createHttpContext({ authorization: 'Bearer access-token' });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(context.switchToHttp().getRequest().user.roles).toEqual([
+      RoleName.student,
+    ]);
+  });
 });
 
 describe('OptionalJwtAuthGuard', () => {
@@ -99,9 +154,20 @@ describe('OptionalJwtAuthGuard', () => {
         accessSecret: 'access-secret',
       },
     } as AppConfigService;
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user-id',
+          email: 'student@example.com',
+          status: UserStatus.active,
+          deletedAt: null,
+          roles: [{ role: { name: RoleName.student } }],
+        }),
+      },
+    } as unknown as PrismaService;
 
     return {
-      guard: new OptionalJwtAuthGuard(jwtService, appConfig),
+      guard: new OptionalJwtAuthGuard(jwtService, appConfig, prisma),
       jwtService,
     };
   }
@@ -122,7 +188,7 @@ describe('OptionalJwtAuthGuard', () => {
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(context.switchToHttp().getRequest().user).toEqual({
       id: 'user-id',
-      email: undefined,
+      email: 'student@example.com',
       roles: [RoleName.student],
     });
   });
