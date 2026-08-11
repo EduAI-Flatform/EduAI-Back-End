@@ -10,6 +10,7 @@ import {
   CourseStatus,
   CourseVisibility,
   LessonType,
+  ModerationStatus,
   Prisma,
   RoleName,
 } from '../../../generated/prisma/client';
@@ -51,6 +52,7 @@ interface TestCourse {
   level: CourseLevel;
   status: CourseStatus;
   visibility: CourseVisibility;
+  moderationStatus: ModerationStatus;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -87,6 +89,7 @@ const course: TestCourse = {
   level: CourseLevel.beginner,
   status: CourseStatus.draft,
   visibility: CourseVisibility.public,
+  moderationStatus: ModerationStatus.clear,
   createdAt: new Date('2026-06-18T00:00:00.000Z'),
   updatedAt: new Date('2026-06-18T00:00:00.000Z'),
   deletedAt: null,
@@ -370,6 +373,7 @@ describe('CoursesService', () => {
         deletedAt: null,
         status: CourseStatus.published,
         visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.clear,
       },
       orderBy: [{ featuredRank: 'asc' }, { createdAt: 'desc' }],
       select: expect.objectContaining({
@@ -779,6 +783,7 @@ describe('CoursesService', () => {
         ...course,
         status: CourseStatus.published,
         visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.clear,
       },
     });
 
@@ -817,6 +822,24 @@ describe('CoursesService', () => {
     });
   });
 
+  it('hides a moderated public course from public detail while preserving owner access', async () => {
+    const { service } = createService({
+      storedCourse: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.hidden,
+      },
+    });
+
+    await expect(service.getCourse(course.id)).rejects.toEqual(
+      new NotFoundException('Course not found'),
+    );
+    await expect(service.getCourse(course.id, instructor)).resolves.toEqual(
+      expect.objectContaining({ id: course.id }),
+    );
+  });
+
   it('enrolls users in published courses and initializes lesson progress', async () => {
     const { prisma, service } = createService();
 
@@ -831,6 +854,7 @@ describe('CoursesService', () => {
         id: course.id,
         deletedAt: null,
         status: CourseStatus.published,
+        moderationStatus: ModerationStatus.clear,
       },
       select: {
         id: true,

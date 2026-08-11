@@ -7,6 +7,7 @@ import {
   Course,
   CourseStatus,
   CourseVisibility,
+  ModerationStatus,
   Prisma,
   RoleName,
 } from '../../../generated/prisma/client';
@@ -57,6 +58,7 @@ type LessonDetailRecord = LessonResponse & {
     instructorId: string;
     status: CourseStatus;
     visibility: CourseVisibility;
+    moderationStatus: ModerationStatus;
     enrollments?: Array<{ id: string }>;
   };
 };
@@ -76,6 +78,7 @@ export class LessonsService {
       instructorId: true,
       status: true,
       visibility: true,
+      moderationStatus: true,
       ...(user
         ? {
             enrollments: {
@@ -132,6 +135,7 @@ export class LessonsService {
         deletedAt: null,
         status: CourseStatus.published,
         visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.clear,
       },
       select: { id: true },
     });
@@ -327,7 +331,8 @@ export class LessonsService {
     const publicPreview =
       lesson.isPreview &&
       lesson.course.status === CourseStatus.published &&
-      lesson.course.visibility === CourseVisibility.public;
+      lesson.course.visibility === CourseVisibility.public &&
+      lesson.course.moderationStatus === ModerationStatus.clear;
     const canManage = Boolean(
       user && this.canManageCourse(user, lesson.course),
     );

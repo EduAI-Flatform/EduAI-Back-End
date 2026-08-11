@@ -42,6 +42,8 @@ describe('AiRetrievalService', () => {
     const sql = query.strings.join(' ');
     expect(sql).toContain('l.is_preview = TRUE');
     expect(sql).toContain("en.status IN ('active', 'completed')");
+    expect(sql).toContain("c.moderation_status = 'clear'");
+    expect(sql).toContain("r.moderation_status = 'clear'");
   });
 
   it('returns no sources for blank queries without calling providers', async () => {

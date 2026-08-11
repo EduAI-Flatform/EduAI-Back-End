@@ -8,6 +8,7 @@ import {
 import {
   CourseStatus,
   CourseVisibility,
+  ModerationStatus,
   Prisma,
   RoleName,
 } from '../../../generated/prisma/client';
@@ -310,6 +311,7 @@ type ManageableCourse = Prisma.CourseGetPayload<{
 const courseDetailSelect = {
   ...courseCatalogSelect,
   instructorId: true,
+  moderationStatus: true,
 } satisfies Prisma.CourseSelect;
 
 type CourseDetailRecord = Prisma.CourseGetPayload<{
@@ -330,6 +332,7 @@ export class CoursesService {
         deletedAt: null,
         status: CourseStatus.published,
         visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.clear,
       },
       orderBy: [{ featuredRank: 'asc' }, { createdAt: 'desc' }],
       select: courseCatalogSelect,
@@ -538,7 +541,8 @@ export class CoursesService {
     const course = await this.findCourseDetailOrThrow(courseId);
     const isPublic =
       course.status === CourseStatus.published &&
-      course.visibility === CourseVisibility.public;
+      course.visibility === CourseVisibility.public &&
+      course.moderationStatus === ModerationStatus.clear;
     const canManage = user ? this.canManageCourse(user, course) : false;
 
     if (!isPublic && !canManage) {
@@ -563,6 +567,7 @@ export class CoursesService {
             id: courseId,
             deletedAt: null,
             status: CourseStatus.published,
+            moderationStatus: ModerationStatus.clear,
           },
           select: publishedCourseWithLessonsSelect,
         });

@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { RoleName } from '../../../generated/prisma/client';
+import { ModerationStatus, RoleName } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CommunityService } from './community.service';
@@ -80,7 +80,12 @@ describe('CommunityService', () => {
 
     expect(prisma.communityPost.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { deletedAt: null, status: 'active', visibility: 'public' },
+        where: {
+          deletedAt: null,
+          status: 'active',
+          visibility: 'public',
+          moderationStatus: ModerationStatus.clear,
+        },
         select: expect.any(Object),
       }),
     );
@@ -192,25 +197,17 @@ describe('CommunityService', () => {
     );
   });
 
-  it('allows an admin to update another user post and hide it', async () => {
+  it('keeps general post edits separate from moderation transitions', async () => {
     const { auditService, service, prisma } = createService();
     prisma.communityPost.findFirst.mockResolvedValue({ authorId: student.id });
-    prisma.communityPost.update.mockResolvedValue({ id: 'post-id', status: 'hidden' });
+    prisma.communityPost.update.mockResolvedValue({ id: 'post-id', title: 'Reviewed title' });
 
-    await service.updatePost(admin, 'post-id', { status: 'hidden' });
+    await service.updatePost(admin, 'post-id', { title: 'Reviewed title' });
 
     expect(prisma.communityPost.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'hidden' } }),
+      expect.objectContaining({ data: { title: 'Reviewed title' } }),
     );
-    expect(auditService.record).toHaveBeenCalledWith(
-      {
-        actorId: admin.id,
-        action: AuditAction.CommunityPostModerated,
-        target: { type: 'community_post', id: 'post-id' },
-        metadata: { status: 'hidden' },
-      },
-      prisma,
-    );
+    expect(auditService.record).not.toHaveBeenCalled();
   });
 
   it('does not allow another user to update a post', async () => {
@@ -290,6 +287,7 @@ describe('CommunityService', () => {
           postId: 'post-id',
           deletedAt: null,
           status: 'active',
+          moderationStatus: ModerationStatus.clear,
         },
       }),
     );
@@ -304,7 +302,12 @@ describe('CommunityService', () => {
 
     expect(prisma.communityComment.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { postId: 'post-id', deletedAt: null, status: 'active' },
+        where: {
+          postId: 'post-id',
+          deletedAt: null,
+          status: 'active',
+          moderationStatus: ModerationStatus.clear,
+        },
         orderBy: { createdAt: 'asc' },
         select: expect.any(Object),
       }),

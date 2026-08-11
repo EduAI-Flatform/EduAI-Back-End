@@ -4,6 +4,7 @@ import {
   CourseStatus,
   CourseVisibility,
   LessonType,
+  ModerationStatus,
   RoleName,
 } from '../../../generated/prisma/client';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
@@ -39,6 +40,7 @@ interface TestCourse {
   level: CourseLevel;
   status: CourseStatus;
   visibility: CourseVisibility;
+  moderationStatus: ModerationStatus;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -54,6 +56,7 @@ const course: TestCourse = {
   level: CourseLevel.beginner,
   status: CourseStatus.draft,
   visibility: CourseVisibility.public,
+  moderationStatus: ModerationStatus.clear,
   createdAt: new Date('2026-06-18T00:00:00.000Z'),
   updatedAt: new Date('2026-06-18T00:00:00.000Z'),
   deletedAt: null,
@@ -133,6 +136,24 @@ describe('LessonsService', () => {
           course: expect.any(Object),
         }),
       }),
+    );
+  });
+
+  it('does not expose a moderated course preview publicly', async () => {
+    const { prisma, service } = createService();
+    prisma.lesson.findFirst.mockResolvedValue({
+      ...lesson,
+      course: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.hidden,
+        enrollments: [],
+      },
+    });
+
+    await expect(service.getLesson(undefined, lesson.id)).rejects.toEqual(
+      new NotFoundException('Lesson not found'),
     );
   });
 
@@ -229,6 +250,7 @@ describe('LessonsService', () => {
         deletedAt: null,
         status: CourseStatus.published,
         visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.clear,
       },
       select: { id: true },
     });

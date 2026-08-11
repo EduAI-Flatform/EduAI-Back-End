@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { RoleName } from '../../../generated/prisma/client';
+import { ModerationStatus, RoleName } from '../../../generated/prisma/client';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { AiSummaryService } from './ai-summary.service';
 
@@ -39,6 +39,7 @@ describe('AiSummaryService', () => {
               course: {
                 status: 'published',
                 visibility: 'public',
+                moderationStatus: ModerationStatus.clear,
               },
             },
             {
@@ -68,5 +69,18 @@ describe('AiSummaryService', () => {
       new NotFoundException('AI summary source not found'),
     );
     expect(completion).not.toHaveBeenCalled();
+    expect(prisma.libraryResource.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { ownerId: student.id },
+            {
+              visibility: 'public',
+              moderationStatus: ModerationStatus.clear,
+            },
+          ],
+        }),
+      }),
+    );
   });
 });

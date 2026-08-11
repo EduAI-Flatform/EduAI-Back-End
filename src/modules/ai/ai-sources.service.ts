@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   CourseStatus,
   CourseVisibility,
+  ModerationStatus,
   RoleName,
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -66,6 +67,7 @@ export class AiSourcesService {
                         course: {
                           status: CourseStatus.published,
                           visibility: CourseVisibility.public,
+                          moderationStatus: ModerationStatus.clear,
                         },
                       },
                       {
@@ -114,7 +116,10 @@ export class AiSourcesService {
                 : {
                     OR: [
                       { ownerId: user.id },
-                      { visibility: CourseVisibility.public },
+                      {
+                        visibility: CourseVisibility.public,
+                        moderationStatus: ModerationStatus.clear,
+                      },
                     ],
                   }),
             },

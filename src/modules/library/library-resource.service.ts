@@ -4,7 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CourseVisibility, Prisma, RoleName } from '../../../generated/prisma/client';
+import {
+  CourseVisibility,
+  ModerationStatus,
+  Prisma,
+  RoleName,
+} from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLibraryResourceDto } from './dto/create-library-resource.dto';
 import { ListLibraryResourcesQueryDto } from './dto/list-library-resources-query.dto';
@@ -200,16 +205,27 @@ export class LibraryResourceService {
   ): Prisma.LibraryResourceWhereInput {
     const isAdmin = roles.includes(RoleName.platform_admin);
     const isInstructor = roles.includes(RoleName.instructor);
-    const allowedVisibility = isAdmin
+    const allowedAccess: Prisma.LibraryResourceWhereInput | null = isAdmin
       ? null
       : isInstructor
-        ? { OR: [{ visibility: CourseVisibility.public }, { ownerId: userId }] }
-        : { visibility: CourseVisibility.public };
+        ? {
+            OR: [
+              { ownerId: userId },
+              {
+                visibility: CourseVisibility.public,
+                moderationStatus: ModerationStatus.clear,
+              },
+            ],
+          }
+        : {
+            visibility: CourseVisibility.public,
+            moderationStatus: ModerationStatus.clear,
+          };
     const search = query.search?.trim();
     const conditions: Prisma.LibraryResourceWhereInput[] = [];
 
     if (query.visibility) conditions.push({ visibility: query.visibility });
-    if (allowedVisibility) conditions.push(allowedVisibility);
+    if (allowedAccess) conditions.push(allowedAccess);
 
     if (search) {
       conditions.push({

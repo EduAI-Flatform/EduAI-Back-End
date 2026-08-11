@@ -1,10 +1,13 @@
 import {
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, RoleName } from '../../../generated/prisma/client';
+import {
+  ModerationStatus,
+  Prisma,
+  RoleName,
+} from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
@@ -39,6 +42,7 @@ const communityPostRecordSelect = {
         where: {
           deletedAt: null,
           status: 'active',
+          moderationStatus: ModerationStatus.clear,
         },
       },
     },
@@ -96,6 +100,7 @@ export class CommunityService {
         deletedAt: null,
         status: 'active',
         visibility: 'public',
+        moderationStatus: ModerationStatus.clear,
       },
       orderBy: { createdAt: 'desc' },
       select: communityPostRecordSelect,
@@ -114,6 +119,7 @@ export class CommunityService {
         deletedAt: null,
         status: 'active',
         visibility: 'public',
+        moderationStatus: ModerationStatus.clear,
       },
       select: communityPostRecordSelect,
     });
@@ -149,14 +155,8 @@ export class CommunityService {
     input: UpdateCommunityPostDto,
   ): Promise<CommunityPostResponse> {
     const post = await this.findManageablePost(id);
-    const isAdmin = this.isAdmin(user);
-
-    if (post.authorId !== user.id && !isAdmin) {
+    if (post.authorId !== user.id && !this.isAdmin(user)) {
       throw new NotFoundException('Community post not found');
-    }
-
-    if (input.status !== undefined && !isAdmin) {
-      throw new ForbiddenException('Only admins can moderate community posts');
     }
 
     const data = Object.fromEntries(
@@ -164,33 +164,14 @@ export class CommunityService {
         title: input.title,
         content: input.content,
         visibility: input.visibility,
-        status: input.status,
       }).filter(([, value]) => value !== undefined),
     );
 
-    const updatedPost = input.status
-      ? await this.prisma.$transaction(async (tx) => {
-          const updated = await tx.communityPost.update({
-            where: { id },
-            data,
-            select: communityPostRecordSelect,
-          });
-          await this.auditService.record(
-            {
-              actorId: user.id,
-              action: AuditAction.CommunityPostModerated,
-              target: { type: 'community_post', id },
-              metadata: { status: input.status },
-            },
-            tx,
-          );
-          return updated;
-        })
-      : await this.prisma.communityPost.update({
-          where: { id },
-          data,
-          select: communityPostRecordSelect,
-        });
+    const updatedPost = await this.prisma.communityPost.update({
+      where: { id },
+      data,
+      select: communityPostRecordSelect,
+    });
     const [response] = await this.toCommunityPostResponses(
       [updatedPost],
       user.id,
@@ -248,6 +229,7 @@ export class CommunityService {
         postId,
         deletedAt: null,
         status: 'active',
+        moderationStatus: ModerationStatus.clear,
       },
       orderBy: { createdAt: 'asc' },
       select: communityCommentResponseSelect,
@@ -268,6 +250,7 @@ export class CommunityService {
           postId,
           deletedAt: null,
           status: 'active',
+          moderationStatus: ModerationStatus.clear,
         },
         select: { id: true },
       });
@@ -403,6 +386,7 @@ export class CommunityService {
         deletedAt: null,
         status: 'active',
         visibility: 'public',
+        moderationStatus: ModerationStatus.clear,
       },
       select: { id: true },
     });

@@ -1,4 +1,4 @@
-import { RoleName } from '../../../generated/prisma/client';
+import { ModerationStatus, RoleName } from '../../../generated/prisma/client';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { AiSourcesService } from './ai-sources.service';
 
@@ -74,6 +74,7 @@ describe('AiSourcesService', () => {
               course: {
                 status: 'published',
                 visibility: 'public',
+                moderationStatus: ModerationStatus.clear,
               },
             },
             {
@@ -92,5 +93,25 @@ describe('AiSourcesService', () => {
       }),
     );
     expect(prisma.libraryResource.findMany).not.toHaveBeenCalled();
+  });
+
+  it('allows owned library sources but requires clear moderation for public sources', async () => {
+    const { service, prisma } = createService();
+
+    await service.listSources(student, { sourceType: 'library_resource' });
+
+    expect(prisma.libraryResource.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { ownerId: student.id },
+            {
+              visibility: 'public',
+              moderationStatus: ModerationStatus.clear,
+            },
+          ],
+        }),
+      }),
+    );
   });
 });

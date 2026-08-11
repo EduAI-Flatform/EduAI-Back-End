@@ -80,6 +80,7 @@ export class AiRetrievalService {
               l.is_preview = TRUE
               AND c.status = 'published'
               AND c.visibility = 'public'
+              AND c.moderation_status = 'clear'
             )
             OR c.instructor_id = ${user.id}::uuid
             OR EXISTS (
@@ -103,7 +104,11 @@ export class AiRetrievalService {
         WHERE e.source_type = 'library_resource'
           AND e.embedding IS NOT NULL
           AND r.deleted_at IS NULL
-          AND (${isAdmin} OR r.visibility = 'public' OR r.owner_id = ${user.id}::uuid)
+          AND (
+            ${isAdmin}
+            OR r.owner_id = ${user.id}::uuid
+            OR (r.visibility = 'public' AND r.moderation_status = 'clear')
+          )
       ) AS permitted_sources
       ORDER BY distance ASC
       LIMIT ${topK}

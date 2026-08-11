@@ -1,6 +1,11 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { LibraryResourceService } from './library-resource.service';
-import { CourseVisibility, Prisma, RoleName } from '../../../generated/prisma/client';
+import {
+  CourseVisibility,
+  ModerationStatus,
+  Prisma,
+  RoleName,
+} from '../../../generated/prisma/client';
 
 const resource = {
   id: 'resource-id',
@@ -125,7 +130,10 @@ describe('LibraryResourceService', () => {
       type: 'pdf',
     }));
     expect(where.AND).toEqual(expect.arrayContaining([
-      { visibility: CourseVisibility.public },
+      {
+        visibility: CourseVisibility.public,
+        moderationStatus: ModerationStatus.clear,
+      },
     ]));
     expect(where.tags).toEqual({ some: { tagId: 'tag-id' } });
     expect(where.AND).toEqual(expect.arrayContaining([expect.objectContaining({ OR: expect.any(Array) })]));
@@ -146,8 +154,11 @@ describe('LibraryResourceService', () => {
 
     expect(prisma.libraryResource.count.mock.calls[0][0].where.AND).toEqual(expect.arrayContaining([{
       OR: [
-        { visibility: CourseVisibility.public },
         { ownerId: 'instructor-id' },
+        {
+          visibility: CourseVisibility.public,
+          moderationStatus: ModerationStatus.clear,
+        },
       ],
     }]));
   });
@@ -163,7 +174,15 @@ describe('LibraryResourceService', () => {
 
     expect(prisma.libraryResource.count.mock.calls[0][0].where.AND).toEqual([
       { visibility: CourseVisibility.private },
-      { OR: [{ visibility: CourseVisibility.public }, { ownerId: 'instructor-id' }] },
+      {
+        OR: [
+          { ownerId: 'instructor-id' },
+          {
+            visibility: CourseVisibility.public,
+            moderationStatus: ModerationStatus.clear,
+          },
+        ],
+      },
     ]);
   });
 

@@ -4,7 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { RoleName } from '../../../generated/prisma/client';
+import {
+  ModerationStatus,
+  RoleName,
+} from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateAiSummaryDto } from './dto/create-ai-summary.dto';
@@ -76,6 +79,7 @@ export class AiSummaryService {
                   course: {
                     status: 'published',
                     visibility: 'public',
+                    moderationStatus: ModerationStatus.clear,
                   },
                 },
                 {
@@ -103,7 +107,17 @@ export class AiSummaryService {
       where: {
         id: resourceId,
         deletedAt: null,
-        ...(isAdmin ? {} : { OR: [{ ownerId: user.id }, { visibility: 'public' }] }),
+        ...(isAdmin
+          ? {}
+          : {
+              OR: [
+                { ownerId: user.id },
+                {
+                  visibility: 'public',
+                  moderationStatus: ModerationStatus.clear,
+                },
+              ],
+            }),
       },
       select: { id: true, title: true, description: true },
     }).then((resource) => resource && { title: resource.title, content: resource.description ?? '' });
