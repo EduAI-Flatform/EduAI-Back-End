@@ -1,4 +1,4 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { RoleName } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
@@ -9,159 +9,6 @@ import { PasswordService } from './password.service';
 function createAuditService() {
   return { record: jest.fn().mockResolvedValue(undefined) };
 }
-
-describe('AuthService.register', () => {
-  const registerInput = {
-    email: 'STUDENT@Example.com',
-    password: 'Str0ngPassword!123',
-    fullName: 'Student User',
-  };
-
-  const role = {
-    id: 'role-id',
-    name: RoleName.student,
-  };
-
-  const createdUser = {
-    id: 'user-id',
-    email: 'student@example.com',
-    fullName: 'Student User',
-    status: 'active',
-    createdAt: new Date('2026-06-13T00:00:00.000Z'),
-    updatedAt: new Date('2026-06-13T00:00:00.000Z'),
-  };
-
-  type RoleRecord = {
-    id: string;
-    name: RoleName;
-  };
-
-  function createService(options?: {
-    existingUser?: unknown;
-    role?: RoleRecord;
-  }) {
-    const selectedRole = options?.role ?? role;
-    const tx = {
-      user: {
-        findUnique: jest.fn().mockResolvedValue(options?.existingUser ?? null),
-        create: jest.fn().mockResolvedValue(createdUser),
-      },
-      role: {
-        findUnique: jest.fn().mockResolvedValue(selectedRole),
-      },
-      userRole: {
-        create: jest.fn().mockResolvedValue({ id: 'user-role-id' }),
-      },
-    };
-    const prisma = {
-      $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) =>
-        callback(tx),
-      ),
-    };
-    const passwordService = {
-      hashPassword: jest.fn().mockResolvedValue('hashed-password'),
-      comparePassword: jest.fn().mockResolvedValue(true),
-    } as unknown as PasswordService;
-    const jwtService = {
-      signAsync: jest
-        .fn()
-        .mockResolvedValueOnce('access-token')
-        .mockResolvedValueOnce('refresh-token'),
-    } as unknown as JwtService;
-    const appConfig = {
-      jwt: {
-        accessSecret: 'access-secret',
-        refreshSecret: 'refresh-secret',
-      },
-    } as AppConfigService;
-    const service = new AuthService(
-      prisma as never,
-      passwordService,
-      jwtService,
-      appConfig,
-      createAuditService() as never,
-    );
-
-    return { service, prisma, tx, passwordService, jwtService };
-  }
-
-  it('rejects duplicate email addresses', async () => {
-    const { service } = createService({ existingUser: { id: 'existing-id' } });
-
-    await expect(service.register(registerInput)).rejects.toBeInstanceOf(
-      ConflictException,
-    );
-  });
-
-  it('hashes the password before creating the user', async () => {
-    const { service, tx, passwordService } = createService();
-
-    await service.register(registerInput);
-
-    expect(passwordService.hashPassword).toHaveBeenCalledWith(
-      registerInput.password,
-    );
-    expect(tx.user.create).toHaveBeenCalledWith({
-      data: {
-        email: 'student@example.com',
-        fullName: 'Student User',
-        passwordHash: 'hashed-password',
-      },
-      select: {
-        createdAt: true,
-        email: true,
-        fullName: true,
-        id: true,
-        status: true,
-        updatedAt: true,
-      },
-    });
-  });
-
-  it('assigns the default student role and returns a sanitized user', async () => {
-    const { service, tx } = createService();
-
-    await expect(service.register(registerInput)).resolves.toEqual({
-      user: {
-        ...createdUser,
-        roles: ['student'],
-      },
-    });
-    expect(tx.userRole.create).toHaveBeenCalledWith({
-      data: {
-        roleId: role.id,
-        userId: createdUser.id,
-      },
-    });
-  });
-
-  it('assigns the requested instructor role during registration', async () => {
-    const instructorRole = {
-      id: 'instructor-role-id',
-      name: RoleName.instructor,
-    };
-    const { service, tx } = createService({ role: instructorRole });
-
-    await expect(
-      service.register({ ...registerInput, role: RoleName.instructor }),
-    ).resolves.toEqual({
-      user: {
-        ...createdUser,
-        roles: [RoleName.instructor],
-      },
-    });
-    expect(tx.role.findUnique).toHaveBeenCalledWith({
-      where: { name: RoleName.instructor },
-      select: { id: true, name: true },
-    });
-    expect(tx.userRole.create).toHaveBeenCalledWith({
-      data: {
-        roleId: instructorRole.id,
-        userId: createdUser.id,
-      },
-    });
-  });
-});
 
 describe('AuthService.login', () => {
   const loginInput = {
@@ -188,6 +35,7 @@ describe('AuthService.login', () => {
   function createService(options?: {
     user?: typeof user | null;
     passwordMatches?: boolean;
+    passwordService?: PasswordService;
   }) {
     const selectedUser =
       options && 'user' in options ? options.user : user;
@@ -203,14 +51,16 @@ describe('AuthService.login', () => {
         create: jest.fn().mockResolvedValue({ id: 'refresh-token-id' }),
       },
     };
-    const passwordService = {
-      comparePassword: jest
-        .fn()
-        .mockResolvedValue(options?.passwordMatches ?? true),
-      hashPassword: jest
-        .fn()
-        .mockResolvedValueOnce('hashed-refresh-token'),
-    } as unknown as PasswordService;
+    const passwordService =
+      options?.passwordService ??
+      ({
+        comparePassword: jest
+          .fn()
+          .mockResolvedValue(options?.passwordMatches ?? true),
+        hashPassword: jest
+          .fn()
+          .mockResolvedValueOnce('hashed-refresh-token'),
+      } as unknown as PasswordService);
     const jwtService = {
       signAsync: jest
         .fn()
@@ -235,20 +85,109 @@ describe('AuthService.login', () => {
     return { auditService, service, prisma, passwordService, jwtService };
   }
 
-  it('rejects missing users as invalid credentials', async () => {
+  it('returns ACCOUNT_NOT_FOUND when the normalized email does not exist', async () => {
     const { service } = createService({ user: null });
 
-    await expect(service.login(loginInput)).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(service.login(loginInput)).rejects.toMatchObject({
+      response: {
+        error: 'ACCOUNT_NOT_FOUND',
+        message: 'Tài khoản chưa tồn tại. Vui lòng đăng ký.',
+      },
+      status: 401,
+    });
   });
 
-  it('rejects password mismatches as invalid credentials', async () => {
+  it('returns INVALID_CREDENTIALS when the password does not match', async () => {
     const { service } = createService({ passwordMatches: false });
 
-    await expect(service.login(loginInput)).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(service.login(loginInput)).rejects.toMatchObject({
+      response: {
+        error: 'INVALID_CREDENTIALS',
+        message: 'Email hoặc mật khẩu không đúng.',
+      },
+      status: 401,
+    });
+  });
+
+  it('returns ACCOUNT_BLOCKED before comparing a non-active account password', async () => {
+    const blockedUser = { ...user, status: 'suspended' as const };
+    const { passwordService, service } = createService({ user: blockedUser });
+
+    await expect(service.login(loginInput)).rejects.toMatchObject({
+      response: {
+        error: 'ACCOUNT_BLOCKED',
+        message: 'Tài khoản đã bị khóa.',
+      },
+      status: 403,
+    });
+    expect(passwordService.comparePassword).not.toHaveBeenCalled();
+  });
+
+  it('safely rejects a local account without a password hash', async () => {
+    const { passwordService, service } = createService({
+      user: { ...user, passwordHash: null } as never,
+    });
+
+    await expect(service.login(loginInput)).rejects.toMatchObject({
+      response: {
+        error: 'INVALID_CREDENTIALS',
+        message: 'Email hoặc mật khẩu không đúng.',
+      },
+      status: 401,
+    });
+    expect(passwordService.comparePassword).not.toHaveBeenCalled();
+  });
+
+  it('authenticates the seeded administrator through the real password service', async () => {
+    const passwordService = new PasswordService();
+    const seededPassword = 'SeededAdminPassword!123';
+    const seededAdmin = {
+      ...user,
+      email: 'admin.demo@eduai.local',
+      fullName: 'EduAI Admin',
+      passwordHash: await passwordService.hashPassword(seededPassword),
+      roles: [{ role: { name: RoleName.platform_admin } }],
+    };
+    const { service } = createService({
+      passwordService,
+      user: seededAdmin,
+    });
+
+    await expect(
+      service.login({ email: seededAdmin.email, password: seededPassword }),
+    ).resolves.toMatchObject({
+      user: {
+        email: seededAdmin.email,
+        roles: [RoleName.platform_admin],
+      },
+    });
+  });
+
+  it('rejects a wrong password for the seeded administrator', async () => {
+    const passwordService = new PasswordService();
+    const seededAdmin = {
+      ...user,
+      email: 'admin.demo@eduai.local',
+      fullName: 'EduAI Admin',
+      passwordHash: await passwordService.hashPassword(
+        'SeededAdminPassword!123',
+      ),
+      roles: [{ role: { name: RoleName.platform_admin } }],
+    };
+    const { service } = createService({
+      passwordService,
+      user: seededAdmin,
+    });
+
+    await expect(
+      service.login({
+        email: seededAdmin.email,
+        password: 'WrongSeededPassword!123',
+      }),
+    ).rejects.toMatchObject({
+      response: { error: 'INVALID_CREDENTIALS' },
+      status: 401,
+    });
   });
 
   it('issues tokens and stores only a hashed refresh token', async () => {

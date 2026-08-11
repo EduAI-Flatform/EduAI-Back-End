@@ -27,7 +27,6 @@ describe('Auth flow endpoints', () => {
   let app: INestApplication;
   const authService = {
     loginWithFirebase: jest.fn(),
-    register: jest.fn(),
     login: jest.fn(),
     logout: jest.fn(),
     getCurrentUser: jest.fn(),
@@ -89,7 +88,6 @@ describe('Auth flow endpoints', () => {
       expiresIn: 900,
       user,
     });
-    authService.register.mockResolvedValue({ user });
     authService.login.mockResolvedValue({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
@@ -121,7 +119,7 @@ describe('Auth flow endpoints', () => {
     );
   });
 
-  it('registers with validated input and returns a sanitized user', async () => {
+  it('does not expose the legacy unverified registration endpoint', async () => {
     await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .send({
@@ -130,36 +128,11 @@ describe('Auth flow endpoints', () => {
         fullName: ' Student User ',
         role: RoleName.instructor,
       })
-      .expect(201)
-      .expect(({ body }) => {
-        expect(body.success).toBe(true);
-        expect(body.data.user.email).toBe(user.email);
-        expect(JSON.stringify(body)).not.toContain('password');
-      });
-
-    expect(authService.register).toHaveBeenCalledWith({
-      email: 'student@example.com',
-      password: 'Str0ngPassword!123',
-      fullName: 'Student User',
-      role: RoleName.instructor,
-    });
-  });
-
-  it('rejects invalid register payloads', async () => {
-    await request(app.getHttpServer())
-      .post('/api/v1/auth/register')
-      .send({
-        email: 'invalid-email',
-        password: 'short',
-        fullName: '',
-      })
-      .expect(400)
+      .expect(404)
       .expect(({ body }) => {
         expect(body.success).toBe(false);
-        expect(body.error.code).toBe('BAD_REQUEST');
+        expect(body.error.code).toBe('NOT_FOUND');
       });
-
-    expect(authService.register).not.toHaveBeenCalled();
   });
 
   it('logs in with Firebase and preserves the standard response envelope', async () => {
@@ -192,6 +165,7 @@ describe('Auth flow endpoints', () => {
       .send({
         idToken: 'firebase-id-token',
         mode: 'register',
+        password: 'Str0ngPassword!123',
         role: RoleName.instructor,
       })
       .expect(200);
@@ -199,6 +173,7 @@ describe('Auth flow endpoints', () => {
     expect(authService.loginWithFirebase).toHaveBeenCalledWith({
       idToken: 'firebase-id-token',
       mode: 'register',
+      password: 'Str0ngPassword!123',
       role: RoleName.instructor,
     });
   });

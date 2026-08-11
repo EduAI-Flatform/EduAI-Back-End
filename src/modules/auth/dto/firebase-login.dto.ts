@@ -1,5 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { RoleName } from '../../../../generated/prisma/client';
 
 export type FirebaseAuthMode = 'login' | 'register';
@@ -12,6 +18,17 @@ export class FirebaseLoginDto {
   @IsString()
   @MinLength(1)
   idToken!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Original email-registration password. Accepted only when completing a verified Firebase password registration.',
+    minLength: 8,
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  password?: string;
 
   @ApiProperty({
     enum: [RoleName.student, RoleName.instructor],

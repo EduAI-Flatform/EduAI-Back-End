@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@n
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiOkResponse,
   ApiUnauthorizedResponse,
   ApiTags,
@@ -13,7 +13,6 @@ import { CurrentUser } from './current-user.decorator';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { RegisterDto } from './dto/register.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './roles.decorator';
@@ -22,7 +21,6 @@ import {
   LogoutResponse,
   RefreshResponse,
   RegisteredUserResponse,
-  RegisterResponse,
 } from './types/auth-response.types';
 
 @ApiTags('Auth')
@@ -30,20 +28,14 @@ import {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiCreatedResponse({ description: 'User registered successfully.' })
-  @ApiBadRequestResponse({ description: 'Invalid registration payload.' })
-  @ApiConflictResponse({ description: 'Email is already registered.' })
-  async register(@Body() input: RegisterDto): Promise<RegisterResponse> {
-    return this.authService.register(input);
-  }
-
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ description: 'User authenticated successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid login payload.' })
-  @ApiUnauthorizedResponse({ description: 'Invalid credentials.' })
+  @ApiUnauthorizedResponse({
+    description: 'Account not found or local credentials are invalid.',
+  })
+  @ApiForbiddenResponse({ description: 'Account is not active.' })
   async login(@Body() input: LoginDto): Promise<LoginResponse> {
     return this.authService.login(input);
   }

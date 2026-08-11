@@ -1,4 +1,3 @@
-import * as bcrypt from 'bcrypt';
 import {
   Prisma,
   type AssignmentStatus,
@@ -9,6 +8,7 @@ import {
   type RoleName,
   type SubmissionStatus,
 } from '../generated/prisma/client';
+import { PasswordService } from '../src/modules/auth/password.service';
 import {
   DEMO_ASSETS,
   DEMO_IDS,
@@ -46,8 +46,6 @@ import {
   verifyDemoData,
 } from './demo-contract';
 
-export const DEMO_BCRYPT_ROUNDS = 12;
-
 function addMilliseconds(date: Date, milliseconds: number): Date {
   return new Date(date.getTime() + milliseconds);
 }
@@ -71,7 +69,7 @@ export async function seedDemoData(
   assertDemoFixtureContract();
 
   const seedNow = new Date();
-  const passwordHash = await bcrypt.hash(password, DEMO_BCRYPT_ROUNDS);
+  const passwordHash = await new PasswordService().hashPassword(password);
   const publicAppUrl = (
     process.env.PUBLIC_APP_URL?.trim() || 'http://localhost:5173'
   ).replace(/\/+$/, '');

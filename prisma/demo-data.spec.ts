@@ -14,7 +14,7 @@ import {
   demoLessons,
   demoEnrollments,
 } from './demo-fixtures';
-import { DEMO_BCRYPT_ROUNDS } from './demo-seed';
+import { PASSWORD_HASH_ROUNDS } from '../src/modules/auth/password.service';
 
 describe('demo data contract', () => {
   it('contains the exact fixture counts and globally unique UUID v4 IDs', () => {
@@ -132,8 +132,12 @@ describe('demo data contract', () => {
     ).toBe('local-secret');
   });
 
-  it('hashes demo account passwords with twelve bcrypt rounds', () => {
-    expect(DEMO_BCRYPT_ROUNDS).toBe(12);
+  it('uses the application password service for demo account hashes', () => {
+    const source = readFileSync(resolve(__dirname, 'demo-seed.ts'), 'utf8');
+
+    expect(PASSWORD_HASH_ROUNDS).toBe(12);
+    expect(source).toContain('new PasswordService().hashPassword(password)');
+    expect(source).not.toContain('bcrypt.hash');
   });
 
   it('uses upsert-only writes for every demo entity group', () => {

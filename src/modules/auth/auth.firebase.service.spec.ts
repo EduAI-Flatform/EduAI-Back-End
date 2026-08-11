@@ -80,7 +80,9 @@ function createService(options?: {
     ),
   };
   const passwordService = {
-    hashPassword: jest.fn().mockResolvedValue('refresh-hash'),
+    hashPassword: jest.fn().mockImplementation(async (value: string) =>
+      value === 'Str0ngPassword!123' ? 'password-hash' : 'refresh-hash',
+    ),
     comparePassword: jest.fn().mockResolvedValue(true),
   } as unknown as PasswordService;
   const jwtService = {
@@ -110,7 +112,14 @@ function createService(options?: {
     firebaseAdmin,
   );
 
-  return { auditService, service, prisma, tx, firebaseAdmin };
+  return {
+    auditService,
+    service,
+    prisma,
+    tx,
+    firebaseAdmin,
+    passwordService,
+  };
 }
 
 describe('AuthService.loginWithFirebase', () => {
@@ -191,12 +200,12 @@ describe('AuthService.loginWithFirebase', () => {
     );
   });
 
-  it('accepts a verified Firebase password user and preserves the requested role', async () => {
+  it('completes verified Firebase password registration with a local password hash', async () => {
     const claims = {
       ...firebaseClaims,
       firebase: { sign_in_provider: 'password' },
     };
-    const { service, tx } = createService({
+    const { passwordService, service, tx } = createService({
       firebaseClaims: claims,
       role: { id: 'instructor-role-id', name: RoleName.instructor },
     });
@@ -204,6 +213,8 @@ describe('AuthService.loginWithFirebase', () => {
     await expect(
       service.loginWithFirebase({
         idToken: 'firebase-id-token',
+        mode: 'register',
+        password: 'Str0ngPassword!123',
         role: RoleName.instructor,
       }),
     ).resolves.toMatchObject({
@@ -217,9 +228,15 @@ describe('AuthService.loginWithFirebase', () => {
           authProvider: AuthProvider.local,
           emailVerified: true,
           firebaseUid: 'firebase-uid',
-          passwordHash: null,
+          passwordHash: 'password-hash',
         }),
       }),
+    );
+    expect(passwordService.hashPassword).toHaveBeenCalledWith(
+      'Str0ngPassword!123',
+    );
+    expect(JSON.stringify(tx.user.create.mock.calls)).not.toContain(
+      'Str0ngPassword!123',
     );
     expect(tx.role.findUnique).toHaveBeenCalledWith({
       where: { name: RoleName.instructor },
@@ -228,6 +245,47 @@ describe('AuthService.loginWithFirebase', () => {
     expect(tx.userRole.create).toHaveBeenCalledWith({
       data: { roleId: 'instructor-role-id', userId: 'user-id' },
     });
+  });
+
+  it('rejects Firebase password authentication outside registration completion', async () => {
+    const { service, prisma } = createService({
+      firebaseClaims: {
+        ...firebaseClaims,
+        firebase: { sign_in_provider: 'password' },
+      },
+    });
+
+    await expect(
+      service.loginWithFirebase({
+        idToken: 'firebase-id-token',
+        password: 'Str0ngPassword!123',
+      }),
+    ).rejects.toMatchObject({
+      response: { error: 'INVALID_FIREBASE_TOKEN' },
+      status: 401,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('requires a password to complete Firebase password registration', async () => {
+    const { service, prisma } = createService({
+      firebaseClaims: {
+        ...firebaseClaims,
+        firebase: { sign_in_provider: 'password' },
+      },
+    });
+
+    await expect(
+      service.loginWithFirebase({
+        idToken: 'firebase-id-token',
+        mode: 'register',
+        role: RoleName.student,
+      }),
+    ).rejects.toMatchObject({
+      response: { error: 'INVALID_REGISTRATION_PASSWORD' },
+      status: 400,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('links an existing email user without overwriting custom profile fields', async () => {

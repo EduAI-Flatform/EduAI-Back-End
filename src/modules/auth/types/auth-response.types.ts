@@ -10,10 +10,6 @@ export interface RegisteredUserResponse {
   updatedAt: Date;
 }
 
-export interface RegisterResponse {
-  user: RegisteredUserResponse;
-}
-
 export interface LoginResponse {
   accessToken: string;
   refreshToken: string;

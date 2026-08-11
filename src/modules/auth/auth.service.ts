@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -24,18 +25,23 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { RegisterDto } from './dto/register.dto';
 import { PasswordService } from './password.service';
 import {
   LoginResponse,
   LogoutResponse,
   RefreshResponse,
   RegisteredUserResponse,
-  RegisterResponse,
 } from './types/auth-response.types';
 
 const ACCESS_TOKEN_EXPIRES_IN_SECONDS = 15 * 60;
 const REFRESH_TOKEN_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60;
+
+const EMAIL_PASSWORD_AUTH_ERROR_MESSAGES = {
+  accountBlocked: 'Tài khoản đã bị khóa.',
+  accountNotFound: 'Tài khoản chưa tồn tại. Vui lòng đăng ký.',
+  invalidCredentials: 'Email hoặc mật khẩu không đúng.',
+  invalidRegistrationPassword: 'Mật khẩu đăng ký không hợp lệ.',
+} as const;
 
 interface JwtPayload {
   sub: string;
@@ -130,77 +136,13 @@ export class AuthService {
     private readonly firebaseAdmin?: FirebaseAdminVerifier,
   ) {}
 
-  async register(input: RegisterDto): Promise<RegisterResponse> {
-    const email = input.email.trim().toLowerCase();
-    const fullName = input.fullName.trim();
-    const passwordHash = await this.passwordService.hashPassword(input.password);
-    const requestedRole = input.role ?? RoleName.student;
-
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const existingUser = await tx.user.findUnique({
-          where: { email },
-          select: { id: true },
-        });
-
-        if (existingUser) {
-          throw new ConflictException('Email is already registered');
-        }
-
-        const role = await tx.role.findUnique({
-          where: { name: requestedRole },
-          select: { id: true, name: true },
-        });
-
-        if (!role) {
-          throw new InternalServerErrorException('Registration role is missing');
-        }
-
-        const user = await tx.user.create({
-          data: {
-            email,
-            fullName,
-            passwordHash,
-          },
-          select: {
-            createdAt: true,
-            email: true,
-            fullName: true,
-            id: true,
-            status: true,
-            updatedAt: true,
-          },
-        });
-
-        await tx.userRole.create({
-          data: {
-            roleId: role.id,
-            userId: user.id,
-          },
-        });
-
-        return {
-          user: {
-            ...user,
-            roles: [role.name],
-          },
-        };
-      });
-    } catch (error) {
-      if (this.isEmailConflict(error)) {
-        throw new ConflictException('Email is already registered');
-      }
-
-      throw error;
-    }
-  }
-
   async login(input: LoginDto): Promise<LoginResponse> {
     const email = input.email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
       where: { email },
       select: {
         createdAt: true,
+        deletedAt: true,
         email: true,
         fullName: true,
         id: true,
@@ -219,8 +161,16 @@ export class AuthService {
       },
     });
 
-    if (!user || user.status !== UserStatus.active || !user.passwordHash) {
-      throw new UnauthorizedException('Invalid credentials');
+    if (!user) {
+      throw this.accountNotFoundException();
+    }
+
+    if (user.status !== UserStatus.active || user.deletedAt) {
+      throw this.accountBlockedException();
+    }
+
+    if (!user.passwordHash) {
+      throw this.invalidCredentialsException();
     }
 
     const passwordMatches = await this.passwordService.comparePassword(
@@ -229,7 +179,7 @@ export class AuthService {
     );
 
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw this.invalidCredentialsException();
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -272,10 +222,28 @@ export class AuthService {
       throw this.invalidFirebaseTokenException();
     }
 
+    if (provider === 'password' && input.mode !== 'register') {
+      throw this.invalidFirebaseTokenException();
+    }
+
+    if (provider === 'password' && !input.password) {
+      throw new BadRequestException({
+        error: 'INVALID_REGISTRATION_PASSWORD',
+        message: EMAIL_PASSWORD_AUTH_ERROR_MESSAGES.invalidRegistrationPassword,
+      });
+    }
+
+    if (provider === 'google.com' && input.password) {
+      throw this.invalidFirebaseTokenException();
+    }
+
     const fullName = this.getFirebaseFullName(token.name, email);
     const avatarUrl = this.getOptionalValue(token.picture);
     const authProvider =
       provider === 'google.com' ? AuthProvider.google : AuthProvider.local;
+    const passwordHash = input.password
+      ? await this.passwordService.hashPassword(input.password)
+      : null;
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -378,7 +346,7 @@ export class AuthService {
             emailVerified: true,
             firebaseUid: uid,
             fullName,
-            passwordHash: null,
+            passwordHash,
           },
           select: FIREBASE_USER_SELECT,
         });
@@ -581,6 +549,27 @@ export class AuthService {
     return new UnauthorizedException({
       error: 'INVALID_FIREBASE_TOKEN',
       message: FIREBASE_AUTH_ERROR_MESSAGES.invalidFirebaseToken,
+    });
+  }
+
+  private accountNotFoundException(): UnauthorizedException {
+    return new UnauthorizedException({
+      error: 'ACCOUNT_NOT_FOUND',
+      message: EMAIL_PASSWORD_AUTH_ERROR_MESSAGES.accountNotFound,
+    });
+  }
+
+  private invalidCredentialsException(): UnauthorizedException {
+    return new UnauthorizedException({
+      error: 'INVALID_CREDENTIALS',
+      message: EMAIL_PASSWORD_AUTH_ERROR_MESSAGES.invalidCredentials,
+    });
+  }
+
+  private accountBlockedException(): ForbiddenException {
+    return new ForbiddenException({
+      error: 'ACCOUNT_BLOCKED',
+      message: EMAIL_PASSWORD_AUTH_ERROR_MESSAGES.accountBlocked,
     });
   }
 
