@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { ConflictException, INestApplication } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -57,6 +57,8 @@ describe('Admin overview endpoint', () => {
   const adminUserService = {
     listUsers: jest.fn(),
     getUser: jest.fn(),
+    setStatus: jest.fn(),
+    setRoles: jest.fn(),
   };
   const jwtService = {
     verifyAsync: jest.fn(),
@@ -116,6 +118,14 @@ describe('Admin overview endpoint', () => {
     auditService.list.mockResolvedValue(auditLogs);
     adminUserService.listUsers.mockResolvedValue(adminUsers);
     adminUserService.getUser.mockResolvedValue(adminUsers.items[0]);
+    adminUserService.setStatus.mockResolvedValue({
+      ...adminUsers.items[0],
+      status: UserStatus.suspended,
+    });
+    adminUserService.setRoles.mockResolvedValue({
+      ...adminUsers.items[0],
+      roles: [RoleName.instructor, RoleName.student],
+    });
     jwtService.verifyAsync.mockImplementation(async (token: string) => {
       const roleByToken: Record<string, RoleName> = {
         'student-token': RoleName.student,
@@ -257,4 +267,56 @@ describe('Admin overview endpoint', () => {
         .expect(403);
     },
   );
+
+  it('updates status and roles for a platform administrator', async () => {
+    await request(app.getHttpServer())
+      .patch('/api/v1/admin/users/11111111-1111-4111-8111-111111111111/status')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ status: UserStatus.suspended })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch('/api/v1/admin/users/11111111-1111-4111-8111-111111111111/roles')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ roles: [RoleName.student, RoleName.instructor] })
+      .expect(200);
+
+    expect(adminUserService.setStatus).toHaveBeenCalledWith(
+      `${RoleName.platform_admin}-id`,
+      '11111111-1111-4111-8111-111111111111',
+      UserStatus.suspended,
+    );
+    expect(adminUserService.setRoles).toHaveBeenCalledWith(
+      `${RoleName.platform_admin}-id`,
+      '11111111-1111-4111-8111-111111111111',
+      [RoleName.student, RoleName.instructor],
+    );
+  });
+
+  it('rejects invalid or unauthorized user mutations', async () => {
+    await request(app.getHttpServer())
+      .patch('/api/v1/admin/users/11111111-1111-4111-8111-111111111111/roles')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ roles: [] })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch('/api/v1/admin/users/11111111-1111-4111-8111-111111111111/status')
+      .set('Authorization', 'Bearer student-token')
+      .send({ status: UserStatus.suspended })
+      .expect(403);
+  });
+
+  it('returns conflict when the last administrator safeguard rejects a mutation', async () => {
+    adminUserService.setRoles.mockRejectedValueOnce(
+      new ConflictException('The last administrator cannot be removed'),
+    );
+
+    await request(app.getHttpServer())
+      .patch('/api/v1/admin/users/11111111-1111-4111-8111-111111111111/roles')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ roles: [RoleName.student] })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.error.code).toBe('CONFLICT');
+      });
+  });
 });

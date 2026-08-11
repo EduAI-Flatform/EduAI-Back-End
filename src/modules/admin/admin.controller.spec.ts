@@ -56,6 +56,44 @@ describe('AdminController', () => {
     expect(userService.getUser).toHaveBeenCalledWith(detail.id);
   });
 
+  it('passes the authenticated administrator to confirmed user mutations', async () => {
+    const result = { id: '11111111-1111-4111-8111-111111111111' };
+    const userService = {
+      setStatus: jest.fn().mockResolvedValue(result),
+      setRoles: jest.fn().mockResolvedValue(result),
+    };
+    const controller = new AdminController(
+      {} as never,
+      {} as AuditService,
+      userService as never,
+    );
+
+    await expect(
+      controller.updateUserStatus(
+        result.id,
+        { status: 'suspended' },
+        'actor-id',
+      ),
+    ).resolves.toBe(result);
+    await expect(
+      controller.updateUserRoles(
+        result.id,
+        { roles: [RoleName.student, RoleName.instructor] },
+        'actor-id',
+      ),
+    ).resolves.toBe(result);
+    expect(userService.setStatus).toHaveBeenCalledWith(
+      'actor-id',
+      result.id,
+      'suspended',
+    );
+    expect(userService.setRoles).toHaveBeenCalledWith(
+      'actor-id',
+      result.id,
+      [RoleName.student, RoleName.instructor],
+    );
+  });
+
   it('requires authentication and the platform administrator role', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, AdminController)).toBeDefined();
     expect(
@@ -75,6 +113,18 @@ describe('AdminController', () => {
     ).toEqual([RoleName.platform_admin]);
     expect(
       Reflect.getMetadata(ROLES_KEY, AdminController.prototype.getUser),
+    ).toEqual([RoleName.platform_admin]);
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        AdminController.prototype.updateUserStatus,
+      ),
+    ).toEqual([RoleName.platform_admin]);
+    expect(
+      Reflect.getMetadata(
+        ROLES_KEY,
+        AdminController.prototype.updateUserRoles,
+      ),
     ).toEqual([RoleName.platform_admin]);
   });
 });

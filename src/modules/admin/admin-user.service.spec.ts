@@ -32,7 +32,7 @@ describe('AdminUserService read operations', () => {
       },
       $transaction: jest.fn().mockResolvedValue([1, [databaseUser]]),
     };
-    const service = new AdminUserService(prisma as never);
+    const service = new AdminUserService(prisma as never, {} as never);
 
     await expect(
       service.listUsers({
@@ -92,7 +92,7 @@ describe('AdminUserService read operations', () => {
     const prisma = {
       user: { findFirst: jest.fn().mockResolvedValue(databaseUser) },
     };
-    const service = new AdminUserService(prisma as never);
+    const service = new AdminUserService(prisma as never, {} as never);
 
     await expect(service.getUser(databaseUser.id)).resolves.toEqual(
       expect.objectContaining({
@@ -111,7 +111,7 @@ describe('AdminUserService read operations', () => {
     const prisma = {
       user: { findFirst: jest.fn().mockResolvedValue(null) },
     };
-    const service = new AdminUserService(prisma as never);
+    const service = new AdminUserService(prisma as never, {} as never);
 
     await expect(service.getUser('missing-user')).rejects.toBeInstanceOf(
       NotFoundException,
