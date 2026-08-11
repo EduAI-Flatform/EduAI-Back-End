@@ -2,13 +2,14 @@ import { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
-import { RoleName } from '../generated/prisma/client';
+import { RoleName, UserStatus } from '../generated/prisma/client';
 import { configureApp } from '../src/app.setup';
 import { AppLoggerService } from '../src/common/logging/app-logger.service';
 import { AppConfigService } from '../src/config/app-config.service';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { ProfileController } from '../src/modules/profile/profile.controller';
 import { ProfileService } from '../src/modules/profile/profile.service';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 describe('Profile endpoints', () => {
   let app: INestApplication;
@@ -39,6 +40,17 @@ describe('Profile endpoints', () => {
   const jwtService = {
     verifyAsync: jest.fn(),
   };
+  const prismaService = {
+    user: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'user-id',
+        email: 'student@example.com',
+        status: UserStatus.active,
+        deletedAt: null,
+        roles: [{ role: { name: RoleName.student } }],
+      }),
+    },
+  };
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -60,6 +72,10 @@ describe('Profile endpoints', () => {
               accessSecret: 'test-access-secret',
             },
           },
+        },
+        {
+          provide: PrismaService,
+          useValue: prismaService,
         },
       ],
     }).compile();

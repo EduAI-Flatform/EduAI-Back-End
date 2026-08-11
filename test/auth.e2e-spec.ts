@@ -11,6 +11,7 @@ import { AuthController } from '../src/modules/auth/auth.controller';
 import { AuthService } from '../src/modules/auth/auth.service';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../src/modules/auth/guards/roles.guard';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 const user = {
   id: 'user-id',
@@ -33,6 +34,11 @@ describe('Auth flow endpoints', () => {
   };
   const jwtService = {
     verifyAsync: jest.fn(),
+  };
+  const prismaService = {
+    user: {
+      findUnique: jest.fn(),
+    },
   };
 
   beforeAll(async () => {
@@ -57,6 +63,10 @@ describe('Auth flow endpoints', () => {
               accessSecret: 'test-access-secret',
             },
           },
+        },
+        {
+          provide: PrismaService,
+          useValue: prismaService,
         },
       ],
     }).compile();
@@ -94,6 +104,21 @@ describe('Auth flow endpoints', () => {
       email: user.email,
       roles: user.roles,
     });
+    prismaService.user.findUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) => {
+        const role =
+          where.id === 'admin-id'
+            ? RoleName.platform_admin
+            : RoleName.student;
+        return {
+          id: where.id,
+          email: role === RoleName.platform_admin ? 'admin@example.com' : user.email,
+          status: user.status,
+          deletedAt: null,
+          roles: [{ role: { name: role } }],
+        };
+      },
+    );
   });
 
   it('registers with validated input and returns a sanitized user', async () => {

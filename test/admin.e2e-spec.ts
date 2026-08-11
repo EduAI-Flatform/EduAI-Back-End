@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
-import { RoleName } from '../generated/prisma/client';
+import { RoleName, UserStatus } from '../generated/prisma/client';
 import { configureApp } from '../src/app.setup';
 import { AppLoggerService } from '../src/common/logging/app-logger.service';
 import { AuditService } from '../src/common/audit/audit.service';
@@ -12,6 +12,7 @@ import { AdminController } from '../src/modules/admin/admin.controller';
 import { AdminService } from '../src/modules/admin/admin.service';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../src/modules/auth/guards/roles.guard';
+import { PrismaService } from '../src/prisma/prisma.service';
 
 const overview = {
   users: { total: 3, active: 3, inactive: 0, suspended: 0 },
@@ -35,6 +36,9 @@ describe('Admin overview endpoint', () => {
   };
   const jwtService = {
     verifyAsync: jest.fn(),
+  };
+  const prismaService = {
+    user: { findUnique: jest.fn() },
   };
 
   beforeAll(async () => {
@@ -61,6 +65,10 @@ describe('Admin overview endpoint', () => {
           useValue: {
             jwt: { accessSecret: 'test-access-secret' },
           },
+        },
+        {
+          provide: PrismaService,
+          useValue: prismaService,
         },
       ],
     }).compile();
@@ -90,6 +98,18 @@ describe('Admin overview endpoint', () => {
         roles: [roleByToken[token]],
       };
     });
+    prismaService.user.findUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) => {
+        const role = where.id.replace(/-id$/, '') as RoleName;
+        return {
+          id: where.id,
+          email: `${role}@example.com`,
+          status: UserStatus.active,
+          deletedAt: null,
+          roles: [{ role: { name: role } }],
+        };
+      },
+    );
   });
 
   it('requires authentication', async () => {
