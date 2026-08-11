@@ -17,6 +17,7 @@ import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CourseThumbnailStorageService } from './course-thumbnail-storage.service';
+import { CourseCompletionService } from './course-completion.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
@@ -324,6 +325,7 @@ export class CoursesService {
     private readonly prisma: PrismaService,
     private readonly thumbnailStorage: CourseThumbnailStorageService,
     private readonly auditService: AuditService,
+    private readonly courseCompletionService: CourseCompletionService,
   ) {}
 
   async listCourses(): Promise<CourseCatalogResponse[]> {
@@ -695,20 +697,13 @@ export class CoursesService {
         );
       }
 
-      if (progress.completed && !enrollment.completedAt) {
-        const now = new Date();
-        await tx.enrollment.update({
-          where: {
-            id: enrollment.id,
-          },
-          data: {
-            status: ENROLLMENT_COMPLETED_STATUS,
-            completedAt: now,
-          },
-        });
-      }
+      const completion = await this.courseCompletionService.evaluateAndSync(
+        tx,
+        userId,
+        lesson.courseId,
+      );
 
-      return progress;
+      return { ...progress, completed: completion.completed };
     });
   }
 
@@ -733,12 +728,16 @@ export class CoursesService {
       throw new NotFoundException('Enrollment not found');
     }
 
-    return this.calculateCourseProgress(
+    const progress = await this.calculateCourseProgress(
       this.prisma,
       userId,
       courseId,
       enrollment.course.lessons.map((lesson) => lesson.id),
     );
+    return {
+      ...progress,
+      completed: enrollment.status === ENROLLMENT_COMPLETED_STATUS,
+    };
   }
 
   private async findCourseOrThrow(courseId: string): Promise<ManageableCourse> {

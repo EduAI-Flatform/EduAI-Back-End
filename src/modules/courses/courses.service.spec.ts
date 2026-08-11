@@ -206,8 +206,18 @@ function createService(options?: {
   storedPublishedCourse?: typeof publishedCourseWithLessons | null;
   existingEnrollment?: { id: string } | null;
   storedLesson?: typeof progressLesson | null;
-  storedEnrollment?: typeof progressEnrollment | null;
+  storedEnrollment?:
+    | (Omit<typeof progressEnrollment, 'completedAt'> & {
+        completedAt: Date | null;
+      })
+    | null;
   progress?: typeof progressRows;
+  completionResult?: {
+    completed: boolean;
+    completedRequiredItems: number;
+    totalRequiredItems: number;
+    enrollmentUpdated: boolean;
+  };
 }) {
   const storedCourse = options?.storedCourse ?? course;
   let prisma: {
@@ -327,15 +337,27 @@ function createService(options?: {
   const auditService = {
     record: jest.fn().mockResolvedValue(undefined),
   };
+  const completionService = {
+    evaluateAndSync: jest.fn().mockResolvedValue(
+      options?.completionResult ?? {
+        completed: false,
+        completedRequiredItems: 1,
+        totalRequiredItems: 2,
+        enrollmentUpdated: false,
+      },
+    ),
+  };
 
   return {
     auditService,
+    completionService,
     prisma,
     storage,
     service: new CoursesService(
       prisma as never,
       storage as never,
       auditService as never,
+      completionService as never,
     ),
   };
 }
@@ -1017,12 +1039,18 @@ describe('CoursesService', () => {
     );
   });
 
-  it('marks the enrollment completed when all lessons are complete', async () => {
-    const { prisma, service } = createService({
+  it('delegates authoritative completion after earned lesson progress', async () => {
+    const { completionService, prisma, service } = createService({
       progress: [
         { ...progressRows[0], lessonId: 'lesson-1' },
         { ...progressRows[0], lessonId: 'lesson-2' },
       ],
+      completionResult: {
+        completed: true,
+        completedRequiredItems: 3,
+        totalRequiredItems: 3,
+        enrollmentUpdated: true,
+      },
     });
 
     await expect(service.completeLesson(student.id, 'lesson-1')).resolves.toMatchObject({
@@ -1031,12 +1059,26 @@ describe('CoursesService', () => {
       progressPercent: 100,
       completed: true,
     });
-    expect(prisma.enrollment.update).toHaveBeenCalledWith({
-      where: { id: progressEnrollment.id },
-      data: {
-        status: 'completed',
-        completedAt: expect.any(Date),
-      },
+    expect(completionService.evaluateAndSync).toHaveBeenCalledWith(
+      prisma,
+      student.id,
+      course.id,
+    );
+    expect(prisma.enrollment.update).not.toHaveBeenCalled();
+  });
+
+  it('does not report course completion from lesson-only progress', async () => {
+    const { service } = createService({
+      progress: [
+        { ...progressRows[0], lessonId: 'lesson-1' },
+        { ...progressRows[0], lessonId: 'lesson-2' },
+      ],
+    });
+
+    await expect(service.completeLesson(student.id, 'lesson-1')).resolves.toMatchObject({
+      completedLessons: 2,
+      progressPercent: 100,
+      completed: false,
     });
   });
 
@@ -1074,6 +1116,23 @@ describe('CoursesService', () => {
           },
         },
       },
+    });
+  });
+
+  it('reports authoritative completion from enrollment state', async () => {
+    const { service } = createService({
+      storedEnrollment: {
+        ...progressEnrollment,
+        status: 'completed',
+        completedAt: new Date('2026-07-02T00:00:00.000Z'),
+      },
+      progress: [{ ...progressRows[0], lessonId: 'lesson-1' }],
+    });
+
+    await expect(service.getCourseProgress(student.id, course.id)).resolves.toMatchObject({
+      completedLessons: 1,
+      totalLessons: 2,
+      completed: true,
     });
   });
 });

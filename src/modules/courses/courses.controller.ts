@@ -48,6 +48,7 @@ import {
 import { LearningPathResponse, LearningPathService } from './learning-path.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
+import { LearningPathResponseDto } from './dto/learning-path-response.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 import { Optional } from '@nestjs/common';
 import {
@@ -297,7 +298,10 @@ export class CoursesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.student)
   @ApiBearerAuth()
-  @ApiOkResponse({ description: 'Learning path returned successfully.' })
+  @ApiOkResponse({
+    description: 'Learning path returned successfully.',
+    type: LearningPathResponseDto,
+  })
   @ApiBadRequestResponse({ description: 'Invalid course id.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })

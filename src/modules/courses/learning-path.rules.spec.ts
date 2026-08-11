@@ -9,6 +9,7 @@ function candidate(
 ): LearningStepCandidate {
   return {
     id: 'step-1',
+    isRequired: true,
     type: 'LESSON',
     title: 'Bài học',
     position: 1,
@@ -60,6 +61,63 @@ describe('learning path rules', () => {
       completedSteps: 1,
       totalSteps: 3,
       progressPercent: 33,
+      completed: false,
+    });
+  });
+
+  it('does not let an incomplete optional step block the next required step', () => {
+    const steps = buildLearningPathSteps([
+      candidate({ id: 'lesson-1', completed: true, isRequired: true }),
+      candidate({
+        id: 'optional-quiz',
+        type: 'QUIZ',
+        title: 'Optional practice',
+        position: 1,
+        isRequired: false,
+      }),
+      candidate({
+        id: 'lesson-2',
+        title: 'Required lesson',
+        position: 2,
+        isRequired: true,
+      }),
+    ]);
+
+    expect(steps.map((step) => step.status)).toEqual([
+      'COMPLETED',
+      'AVAILABLE',
+      'AVAILABLE',
+    ]);
+  });
+
+  it('derives course completion only from required steps', () => {
+    const steps = buildLearningPathSteps([
+      candidate({ id: 'lesson-1', completed: true, isRequired: true }),
+      candidate({
+        id: 'optional-assignment',
+        type: 'ASSIGNMENT',
+        completed: false,
+        isRequired: false,
+      }),
+    ]);
+
+    expect(calculateLearningPathProgress(steps)).toEqual({
+      completedSteps: 1,
+      totalSteps: 1,
+      progressPercent: 100,
+      completed: true,
+    });
+  });
+
+  it('does not complete a course with no required steps', () => {
+    const steps = buildLearningPathSteps([
+      candidate({ completed: true, isRequired: false }),
+    ]);
+
+    expect(calculateLearningPathProgress(steps)).toEqual({
+      completedSteps: 0,
+      totalSteps: 0,
+      progressPercent: 0,
       completed: false,
     });
   });

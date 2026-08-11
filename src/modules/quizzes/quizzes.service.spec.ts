@@ -15,6 +15,7 @@ const quiz = {
   description: null,
   passingScore: 70,
   timeLimitMinutes: 30,
+  isRequired: true,
   status: QuizStatus.draft,
   createdAt: new Date('2026-07-02T00:00:00.000Z'),
   updatedAt: new Date('2026-07-02T00:00:00.000Z'),
@@ -115,12 +116,21 @@ function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQui
     },
   };
   const auditService = { record: jest.fn().mockResolvedValue(undefined) };
+  const completionService = {
+    evaluateAndSync: jest.fn().mockResolvedValue(undefined),
+  };
 
   return {
     attempt,
     auditService,
+    completionService,
     prisma,
-    service: new QuizzesService(prisma as never, auditService as never),
+    service: new QuizzesService(
+      prisma as never,
+      auditService as never,
+      completionService as never,
+      undefined,
+    ),
   };
 }
 
@@ -148,6 +158,7 @@ describe('QuizzesService', () => {
         description: undefined,
         passingScore: quiz.passingScore,
         timeLimitMinutes: quiz.timeLimitMinutes,
+        isRequired: true,
         status: QuizStatus.draft,
       },
       select: expect.any(Object),
@@ -224,7 +235,7 @@ describe('QuizzesService', () => {
   });
 
   it('scores weighted objective answers, stores the attempt, and calculates passed', async () => {
-    const { prisma, service } = createService();
+    const { completionService, prisma, service } = createService();
     const answers = [
       { questionId: attemptQuiz.questions[0].id, answer: ' a ' },
       { questionId: attemptQuiz.questions[1].id, answer: false },
@@ -252,6 +263,11 @@ describe('QuizzesService', () => {
       },
       select: expect.not.objectContaining({ answersJson: true }),
     });
+    expect(completionService.evaluateAndSync).toHaveBeenCalledWith(
+      prisma,
+      'student-id',
+      course.id,
+    );
   });
 
   it('returns a student-safe published quiz without answer keys', async () => {

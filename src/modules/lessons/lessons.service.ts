@@ -30,6 +30,7 @@ const lessonSummarySelect = {
   orderIndex: true,
   durationMinutes: true,
   isPreview: true,
+  isRequired: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.LessonSelect;
@@ -178,6 +179,7 @@ export class LessonsService {
           orderIndex: input.orderIndex,
           durationMinutes: input.durationMinutes,
           isPreview: input.isPreview ?? false,
+          isRequired: input.isRequired ?? true,
         },
         select: lessonResponseSelect,
       });
@@ -209,6 +211,7 @@ export class LessonsService {
       orderIndex: input.orderIndex,
       durationMinutes: input.durationMinutes,
       isPreview: input.isPreview,
+      isRequired: input.isRequired,
     });
 
     try {

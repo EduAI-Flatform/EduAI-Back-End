@@ -11,6 +11,7 @@ model Assignment {
   dueDate     DateTime?        @map("due_date")
   maxScore    Float            @map("max_score")
   status      AssignmentStatus @default(draft)
+  isRequired  Boolean          @default(true) @map("is_required")
   createdAt   DateTime         @default(now()) @map("created_at")
   updatedAt   DateTime         @updatedAt @map("updated_at")
   deletedAt   DateTime?        @map("deleted_at")
@@ -19,6 +20,7 @@ model Assignment {
   submissions Submission[]
 
   @@index([courseId])
+  @@index([courseId, status, isRequired, deletedAt])
   @@index([lessonId])
   @@index([status])
   @@index([dueDate])

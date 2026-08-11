@@ -285,6 +285,7 @@ model Lesson {
   orderIndex      Int                @map("order_index")
   durationMinutes Int?               @map("duration_minutes")
   isPreview       Boolean            @default(false) @map("is_preview")
+  isRequired      Boolean            @default(true) @map("is_required")
   createdAt       DateTime           @default(now()) @map("created_at")
   updatedAt       DateTime           @updatedAt @map("updated_at")
   deletedAt       DateTime?          @map("deleted_at")
@@ -296,6 +297,7 @@ model Lesson {
   @@unique([courseId, slug])
   @@unique([courseId, orderIndex])
   @@index([courseId])
+  @@index([courseId, isRequired, deletedAt])
   @@index([type])
   @@index([deletedAt])
   @@map("lessons")
@@ -355,6 +357,7 @@ model Quiz {
   passingScore     Float         @map("passing_score")
   timeLimitMinutes Int?          @map("time_limit_minutes")
   status           QuizStatus    @default(draft)
+  isRequired       Boolean       @default(true) @map("is_required")
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
   deletedAt        DateTime?     @map("deleted_at")
@@ -364,6 +367,7 @@ model Quiz {
   attempts         QuizAttempt[]
 
   @@index([courseId])
+  @@index([courseId, status, isRequired, deletedAt])
   @@index([lessonId])
   @@index([status])
   @@index([deletedAt])
@@ -423,6 +427,7 @@ model Assignment {
   dueDate     DateTime?        @map("due_date")
   maxScore    Float            @map("max_score")
   status      AssignmentStatus @default(draft)
+  isRequired  Boolean          @default(true) @map("is_required")
   createdAt   DateTime         @default(now()) @map("created_at")
   updatedAt   DateTime         @updatedAt @map("updated_at")
   deletedAt   DateTime?        @map("deleted_at")
@@ -431,6 +436,7 @@ model Assignment {
   submissions Submission[]
 
   @@index([courseId])
+  @@index([courseId, status, isRequired, deletedAt])
   @@index([lessonId])
   @@index([status])
   @@index([dueDate])

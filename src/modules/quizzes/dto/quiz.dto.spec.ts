@@ -17,6 +17,7 @@ describe('Quiz DTO validation', () => {
         title: 'Quiz AI',
         passingScore: 70,
         timeLimitMinutes: 30,
+        isRequired: false,
       }),
     ).resolves.toEqual([]);
     await expect(
@@ -54,5 +55,15 @@ describe('Quiz DTO validation', () => {
     await expect(
       validationMessages(UpdateQuizDto, { title: 'Tên mới' }),
     ).resolves.toEqual([]);
+  });
+
+  it('requires the completion policy flag to be boolean when supplied', async () => {
+    await expect(
+      validationMessages(CreateQuizDto, {
+        title: 'Quiz',
+        passingScore: 70,
+        isRequired: 'false',
+      }),
+    ).resolves.toEqual([expect.stringContaining('isRequired must be a boolean')]);
   });
 });

@@ -14,6 +14,7 @@ function createFixture() {
         type: 'video',
         orderIndex: 1,
         isPreview: false,
+        isRequired: true,
         progress: [],
       },
       {
@@ -22,6 +23,7 @@ function createFixture() {
         type: 'video',
         orderIndex: 2,
         isPreview: false,
+        isRequired: true,
         progress: [],
       },
     ],
@@ -59,17 +61,30 @@ function createFixture() {
     quiz: { findFirst: jest.fn() },
     $transaction: jest.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
   };
+  const completionService = {
+    evaluateAndSync: jest.fn().mockResolvedValue({
+      completed: false,
+      completedRequiredItems: 0,
+      totalRequiredItems: 2,
+      enrollmentUpdated: false,
+    }),
+  };
 
   return {
+    completionService,
     course,
     prisma: prisma as never,
-    service: new LearningPathService(prisma as never),
+    tx,
+    service: new LearningPathService(
+      prisma as never,
+      completionService as never,
+    ),
   };
 }
 
 describe('LearningPathService', () => {
   it('does not complete a video when the learner only seeks to the end', async () => {
-    const { service } = createFixture();
+    const { completionService, service, tx } = createFixture();
 
     const result = await service.updateLessonProgress(student, 'lesson-1', {
       durationSeconds: 120,
@@ -80,6 +95,11 @@ describe('LearningPathService', () => {
     expect(result.progressPercent).toBe(0);
     expect(result.completed).toBe(false);
     expect(result.steps[0].status).toBe('AVAILABLE');
+    expect(completionService.evaluateAndSync).toHaveBeenCalledWith(
+      tx,
+      'student-1',
+      'course-1',
+    );
   });
 
   it('rejects direct access to a lesson that is still locked', async () => {

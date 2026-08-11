@@ -26,6 +26,12 @@ export class LessonDetailDto {
   @ApiProperty()
   isPreview!: boolean;
 
+  @ApiProperty({
+    default: true,
+    description: 'Whether this lesson is required for course completion.',
+  })
+  isRequired!: boolean;
+
   @ApiPropertyOptional({ nullable: true })
   content!: string | null;
 

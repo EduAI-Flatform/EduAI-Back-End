@@ -16,6 +16,7 @@ describe('Assignment DTO validation', () => {
         title: 'Bài tập',
         maxScore: 10,
         dueDate: '2026-07-10T00:00:00.000Z',
+        isRequired: false,
       }),
     ).resolves.toEqual([]);
     await expect(
@@ -58,5 +59,15 @@ describe('Assignment DTO validation', () => {
         score: -1,
       }),
     ).resolves.toEqual([expect.stringContaining('score')]);
+  });
+
+  it('requires the completion policy flag to be boolean when supplied', async () => {
+    await expect(
+      validationMessages(CreateAssignmentDto, {
+        title: 'Assignment',
+        maxScore: 10,
+        isRequired: 'false',
+      }),
+    ).resolves.toEqual([expect.stringContaining('isRequired must be a boolean')]);
   });
 });

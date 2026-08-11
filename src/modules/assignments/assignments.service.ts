@@ -17,6 +17,7 @@ import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
+import { CourseCompletionService } from '../courses/course-completion.service';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { GradeSubmissionDto } from './dto/grade-submission.dto';
 import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
@@ -36,6 +37,7 @@ const assignmentResponseSelect = {
   maxFileSizeBytes: true,
   dueDate: true,
   maxScore: true,
+  isRequired: true,
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -93,6 +95,7 @@ export class AssignmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly courseCompletionService: CourseCompletionService,
     @Optional() private readonly learningPathService?: LearningPathService,
     @Optional() private readonly assignmentStorageService?: AssignmentStorageService,
   ) {}
@@ -116,6 +119,7 @@ export class AssignmentsService {
         maxFileSizeBytes: input.maxFileSizeBytes,
         dueDate: this.toOptionalDate(input.dueDate),
         maxScore: input.maxScore,
+        isRequired: input.isRequired ?? true,
         status: AssignmentStatus.draft,
       },
       select: assignmentResponseSelect,
@@ -205,6 +209,7 @@ export class AssignmentsService {
         maxFileSizeBytes: input.maxFileSizeBytes,
         dueDate: this.toOptionalDate(input.dueDate),
         maxScore: input.maxScore,
+        isRequired: input.isRequired,
       }),
       select: assignmentResponseSelect,
     });
@@ -268,6 +273,7 @@ export class AssignmentsService {
       },
       select: {
         id: true,
+        courseId: true,
         dueDate: true,
         allowedFileMimeTypes: true,
         maxFileSizeBytes: true,
@@ -301,23 +307,31 @@ export class AssignmentsService {
       : undefined;
 
     try {
-      const submission = await this.prisma.submission.create({
-        data: {
-          assignmentId,
+      const submission = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.submission.create({
+          data: {
+            assignmentId,
+            userId,
+            content: input.content,
+            fileUrl: input.fileUrl,
+            ...(storedFile
+              ? {
+                  fileUrl: storedFile.url,
+                  fileName: file!.originalname,
+                  fileSize: file!.size,
+                  fileMimeType: file!.mimetype,
+                }
+              : {}),
+            status: SubmissionStatus.submitted,
+          },
+          select: submissionResponseSelect,
+        });
+        await this.courseCompletionService.evaluateAndSync(
+          tx,
           userId,
-          content: input.content,
-          fileUrl: input.fileUrl,
-          ...(storedFile
-            ? {
-                fileUrl: storedFile.url,
-                fileName: file!.originalname,
-                fileSize: file!.size,
-                fileMimeType: file!.mimetype,
-              }
-            : {}),
-          status: SubmissionStatus.submitted,
-        },
-        select: submissionResponseSelect,
+          assignment.courseId,
+        );
+        return created;
       });
       return this.toSubmissionResponse(submission, assignment.dueDate);
     } catch (error) {

@@ -7,6 +7,7 @@ model Quiz {
   passingScore     Float         @map("passing_score")
   timeLimitMinutes Int?          @map("time_limit_minutes")
   status           QuizStatus    @default(draft)
+  isRequired       Boolean       @default(true) @map("is_required")
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
   deletedAt        DateTime?     @map("deleted_at")
@@ -16,6 +17,7 @@ model Quiz {
   attempts         QuizAttempt[]
 
   @@index([courseId])
+  @@index([courseId, status, isRequired, deletedAt])
   @@index([lessonId])
   @@index([status])
   @@index([deletedAt])

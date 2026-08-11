@@ -95,4 +95,9 @@ export class CreateLessonDto {
   @IsOptional()
   @IsBoolean()
   isPreview?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  isRequired?: boolean;
 }

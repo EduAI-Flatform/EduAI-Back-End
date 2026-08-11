@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsInt,
   IsNumber,
   IsOptional,
@@ -48,4 +49,9 @@ export class CreateQuizDto {
   @Min(1)
   @Max(1440)
   timeLimitMinutes?: number;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  isRequired?: boolean;
 }

@@ -29,6 +29,7 @@ const assignment = {
   description: null,
   dueDate,
   maxScore: 10,
+  isRequired: true,
   status: AssignmentStatus.draft,
   createdAt: dueDate,
   updatedAt: dueDate,
@@ -88,12 +89,17 @@ function createService(storage?: { upload: jest.Mock }) {
   const auditService = {
     record: jest.fn().mockResolvedValue(undefined),
   };
+  const completionService = {
+    evaluateAndSync: jest.fn().mockResolvedValue(undefined),
+  };
   return {
     auditService,
+    completionService,
     prisma,
     service: new AssignmentsService(
       prisma as never,
       auditService as never,
+      completionService as never,
       undefined,
       storage as never,
     ),
@@ -139,7 +145,7 @@ describe('AssignmentsService', () => {
   });
 
   it('stores enrolled student submissions and flags late work', async () => {
-    const { prisma, service } = createService();
+    const { completionService, prisma, service } = createService();
 
     await expect(
       service.submitAssignment(student.id, assignment.id, { content: 'Bài làm' }),
@@ -159,6 +165,11 @@ describe('AssignmentsService', () => {
       },
       select: expect.any(Object),
     });
+    expect(completionService.evaluateAndSync).toHaveBeenCalledWith(
+      prisma,
+      student.id,
+      course.id,
+    );
   });
 
   it('stores uploaded assignment metadata and the generated file URL', async () => {

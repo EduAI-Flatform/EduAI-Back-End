@@ -17,6 +17,7 @@ import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
+import { CourseCompletionService } from '../courses/course-completion.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { CreateQuizDto } from './dto/create-quiz.dto';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
@@ -31,6 +32,7 @@ const quizResponseSelect = {
   description: true,
   passingScore: true,
   timeLimitMinutes: true,
+  isRequired: true,
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -123,6 +125,7 @@ export class QuizzesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly courseCompletionService: CourseCompletionService,
     @Optional() private readonly learningPathService?: LearningPathService,
   ) {}
 
@@ -142,6 +145,7 @@ export class QuizzesService {
         description: input.description,
         passingScore: input.passingScore,
         timeLimitMinutes: input.timeLimitMinutes,
+        isRequired: input.isRequired ?? true,
         status: QuizStatus.draft,
       },
       select: quizResponseSelect,
@@ -181,6 +185,7 @@ export class QuizzesService {
         description: input.description,
         passingScore: input.passingScore,
         timeLimitMinutes: input.timeLimitMinutes,
+        isRequired: input.isRequired,
       }),
       select: quizResponseSelect,
     });
@@ -314,6 +319,7 @@ export class QuizzesService {
       },
       select: {
         id: true,
+        courseId: true,
         passingScore: true,
         questions: {
           orderBy: { orderIndex: 'asc' },
@@ -366,18 +372,26 @@ export class QuizzesService {
       questionId,
       answer,
     })) as Prisma.InputJsonArray;
-    const attempt = await this.prisma.quizAttempt.create({
-      data: {
-        quizId,
+    const attempt = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.quizAttempt.create({
+        data: {
+          quizId,
+          userId,
+          score,
+          maxScore,
+          passed,
+          answersJson: storedAnswers,
+          startedAt: now,
+          submittedAt: now,
+        },
+        select: attemptResponseSelect,
+      });
+      await this.courseCompletionService.evaluateAndSync(
+        tx,
         userId,
-        score,
-        maxScore,
-        passed,
-        answersJson: storedAnswers,
-        startedAt: now,
-        submittedAt: now,
-      },
-      select: attemptResponseSelect,
+        quiz.courseId,
+      );
+      return created;
     });
 
     return {

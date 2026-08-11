@@ -10,6 +10,7 @@ export interface LearningStepCandidate {
   type: LearningStepType;
   title: string;
   position: number;
+  isRequired: boolean;
   completed: boolean;
   inProgress: boolean;
   lessonId?: string | null;
@@ -71,7 +72,9 @@ export function buildLearningPathSteps(
       status,
       lockedReason,
     };
-    previousStep = step;
+    if (!previousStep && candidate.isRequired && !candidate.completed) {
+      previousStep = step;
+    }
     return step;
   });
 }
@@ -79,8 +82,11 @@ export function buildLearningPathSteps(
 export function calculateLearningPathProgress(
   steps: LearningStep[],
 ): LearningPathProgress {
-  const totalSteps = steps.length;
-  const completedSteps = steps.filter((step) => step.status === 'COMPLETED').length;
+  const requiredSteps = steps.filter((step) => step.isRequired);
+  const totalSteps = requiredSteps.length;
+  const completedSteps = requiredSteps.filter(
+    (step) => step.status === 'COMPLETED',
+  ).length;
 
   return {
     completedSteps,

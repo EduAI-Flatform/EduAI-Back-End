@@ -21,6 +21,7 @@ describe('Lesson DTO validation', () => {
       orderIndex: 0,
       durationMinutes: 12,
       isPreview: true,
+      isRequired: false,
     });
 
     expect(messages).toEqual([]);
@@ -71,5 +72,17 @@ describe('Lesson DTO validation', () => {
     });
 
     expect(messages).toEqual([]);
+  });
+
+  it('requires the completion policy flag to be boolean when supplied', async () => {
+    await expect(
+      validationMessages(CreateLessonDto, {
+        title: 'Introduction',
+        slug: 'introduction',
+        type: LessonType.article,
+        orderIndex: 0,
+        isRequired: 'false',
+      }),
+    ).resolves.toEqual([expect.stringContaining('isRequired must be a boolean')]);
   });
 });

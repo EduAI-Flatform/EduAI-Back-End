@@ -12,6 +12,7 @@ import {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CourseCompletionService } from './course-completion.service';
 import { UpdateLessonProgressDto } from './dto/update-lesson-progress.dto';
 import {
   buildLearningPathSteps,
@@ -37,6 +38,7 @@ const learningPathSelect = (userId: string) => ({
       type: true,
       orderIndex: true,
       isPreview: true,
+      isRequired: true,
       progress: {
         where: { userId },
         select: {
@@ -57,6 +59,7 @@ const learningPathSelect = (userId: string) => ({
       id: true,
       title: true,
       lessonId: true,
+      isRequired: true,
       submissions: {
         where: { userId },
         select: { id: true },
@@ -70,6 +73,7 @@ const learningPathSelect = (userId: string) => ({
       id: true,
       title: true,
       lessonId: true,
+      isRequired: true,
       attempts: {
         where: { userId, submittedAt: { not: null } },
         select: { id: true, passed: true },
@@ -109,7 +113,10 @@ export interface LessonProgressResponse {
 
 @Injectable()
 export class LearningPathService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly courseCompletionService: CourseCompletionService,
+  ) {}
 
   async getLearningPath(
     user: AuthenticatedUser,
@@ -187,16 +194,11 @@ export class LearningPathService {
       });
 
       const path = await this.getLearningPathForUser(tx, user.id, lesson.courseId);
-      if (path.completed) {
-        await tx.enrollment.updateMany({
-          where: {
-            userId: user.id,
-            courseId: lesson.courseId,
-            status: { not: 'completed' },
-          },
-          data: { status: 'completed', completedAt: new Date() },
-        });
-      }
+      await this.courseCompletionService.evaluateAndSync(
+        tx,
+        user.id,
+        lesson.courseId,
+      );
       return path;
     });
   }
@@ -312,6 +314,7 @@ export class LearningPathService {
         position: lesson.orderIndex,
         lessonId: lesson.id,
         isPreview: lesson.isPreview,
+        isRequired: lesson.isRequired,
         progressPercent: progress?.progressPercent ?? 0,
         watchedSeconds: progress?.watchedSeconds ?? 0,
         durationSeconds: progress?.durationSeconds ?? null,
@@ -333,6 +336,7 @@ export class LearningPathService {
           ? (lessonPositions.get(assignment.lessonId) ?? maxPosition + 1)
           : maxPosition + 1,
         lessonId: assignment.lessonId,
+        isRequired: assignment.isRequired,
         completed: assignment.submissions.length > 0,
         inProgress: assignment.submissions.length > 0,
       })),
@@ -344,6 +348,7 @@ export class LearningPathService {
           ? (lessonPositions.get(quiz.lessonId) ?? maxPosition + 1)
           : maxPosition + 1,
         lessonId: quiz.lessonId,
+        isRequired: quiz.isRequired,
         completed: quiz.attempts.some((attempt) => attempt.passed === true),
         inProgress: quiz.attempts.length > 0,
       })),

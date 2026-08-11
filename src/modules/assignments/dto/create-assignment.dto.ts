@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsISO8601,
   IsNumber,
   IsOptional,
@@ -90,4 +91,9 @@ export class CreateAssignmentDto {
   @Min(0.01)
   @Max(10000)
   maxScore!: number;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  isRequired?: boolean;
 }
