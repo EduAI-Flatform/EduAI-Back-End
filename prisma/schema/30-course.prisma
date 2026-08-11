@@ -12,6 +12,9 @@ model Course {
   level        CourseLevel
   status       CourseStatus       @default(draft)
   visibility   CourseVisibility   @default(public)
+  moderationStatus ModerationStatus @default(clear) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt     DateTime?         @map("moderated_at")
   createdAt    DateTime           @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
   deletedAt    DateTime?          @map("deleted_at")
@@ -27,6 +30,7 @@ model Course {
 
   @@index([instructorId])
   @@index([status])
+  @@index([moderationStatus, updatedAt])
   @@index([featuredRank])
   @@index([deletedAt])
   @@map("courses")

@@ -44,6 +44,13 @@ enum CourseVisibility {
   private
 }
 
+enum ModerationStatus {
+  clear
+  hidden
+  rejected
+  archived
+}
+
 enum LessonType {
   video
   pdf
@@ -226,6 +233,9 @@ model Course {
   level        CourseLevel
   status       CourseStatus       @default(draft)
   visibility   CourseVisibility   @default(public)
+  moderationStatus ModerationStatus @default(clear) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt     DateTime?         @map("moderated_at")
   createdAt    DateTime           @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
   deletedAt    DateTime?          @map("deleted_at")
@@ -241,6 +251,7 @@ model Course {
 
   @@index([instructorId])
   @@index([status])
+  @@index([moderationStatus, updatedAt])
   @@index([featuredRank])
   @@index([deletedAt])
   @@map("courses")
@@ -536,6 +547,9 @@ model LibraryResource {
   fileUrl     String?           @map("file_url")
   externalUrl String?           @map("external_url")
   visibility  String            @default("public")
+  moderationStatus ModerationStatus @default(clear) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt     DateTime?         @map("moderated_at")
   createdAt   DateTime          @default(now()) @map("created_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
   deletedAt   DateTime?         @map("deleted_at")
@@ -548,6 +562,7 @@ model LibraryResource {
   @@index([categoryId])
   @@index([type])
   @@index([visibility])
+  @@index([moderationStatus, updatedAt])
   @@index([deletedAt])
   @@map("library_resources")
 }
@@ -594,6 +609,9 @@ model CommunityPost {
   content    String
   visibility String              @default("public")
   status     String              @default("active")
+  moderationStatus ModerationStatus @default(clear) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt     DateTime?         @map("moderated_at")
   createdAt  DateTime            @default(now()) @map("created_at")
   updatedAt  DateTime            @updatedAt @map("updated_at")
   deletedAt  DateTime?           @map("deleted_at")
@@ -604,6 +622,7 @@ model CommunityPost {
   @@index([authorId])
   @@index([visibility])
   @@index([status])
+  @@index([moderationStatus, updatedAt])
   @@index([deletedAt])
   @@map("community_posts")
 }
@@ -615,6 +634,9 @@ model CommunityComment {
   parentId  String?           @map("parent_id") @db.Uuid
   content   String
   status    String            @default("active")
+  moderationStatus ModerationStatus @default(clear) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt     DateTime?         @map("moderated_at")
   createdAt DateTime          @default(now()) @map("created_at")
   updatedAt DateTime          @updatedAt @map("updated_at")
   deletedAt DateTime?         @map("deleted_at")
@@ -627,6 +649,7 @@ model CommunityComment {
   @@index([authorId])
   @@index([parentId])
   @@index([status])
+  @@index([moderationStatus, updatedAt])
   @@index([deletedAt])
   @@map("community_comments")
 }

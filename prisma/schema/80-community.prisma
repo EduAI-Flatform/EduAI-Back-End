@@ -5,6 +5,9 @@ model CommunityPost {
   content    String
   visibility String              @default("public")
   status     String              @default("active")
+  moderationStatus ModerationStatus @default(clear) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt     DateTime?         @map("moderated_at")
   createdAt  DateTime            @default(now()) @map("created_at")
   updatedAt  DateTime            @updatedAt @map("updated_at")
   deletedAt  DateTime?           @map("deleted_at")
@@ -15,6 +18,7 @@ model CommunityPost {
   @@index([authorId])
   @@index([visibility])
   @@index([status])
+  @@index([moderationStatus, updatedAt])
   @@index([deletedAt])
   @@map("community_posts")
 }
@@ -26,6 +30,9 @@ model CommunityComment {
   parentId  String?           @map("parent_id") @db.Uuid
   content   String
   status    String            @default("active")
+  moderationStatus ModerationStatus @default(clear) @map("moderation_status")
+  moderationReason String?          @map("moderation_reason")
+  moderatedAt     DateTime?         @map("moderated_at")
   createdAt DateTime          @default(now()) @map("created_at")
   updatedAt DateTime          @updatedAt @map("updated_at")
   deletedAt DateTime?         @map("deleted_at")
@@ -38,6 +45,7 @@ model CommunityComment {
   @@index([authorId])
   @@index([parentId])
   @@index([status])
+  @@index([moderationStatus, updatedAt])
   @@index([deletedAt])
   @@map("community_comments")
 }

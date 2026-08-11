@@ -32,6 +32,13 @@ enum CourseVisibility {
   private
 }
 
+enum ModerationStatus {
+  clear
+  hidden
+  rejected
+  archived
+}
+
 enum LessonType {
   video
   pdf
