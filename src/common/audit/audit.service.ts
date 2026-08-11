@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AuditActionValue } from './audit.constants';
+import { AuditAction, AuditActionValue } from './audit.constants';
 
 export { AuditAction } from './audit.constants';
 
@@ -99,6 +99,23 @@ export class AuditService {
       total,
       totalPages: Math.ceil(total / query.pageSize),
     };
+  }
+
+  listTargetHistory(
+    targetType: string,
+    targetId: string,
+    take = 50,
+  ): Promise<AuditLogResponse[]> {
+    return this.prisma.auditLog.findMany({
+      where: {
+        action: AuditAction.ContentModerationChanged,
+        targetType,
+        targetId,
+      },
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      take: Math.min(Math.max(take, 1), 100),
+      select: auditLogSelect,
+    });
   }
 
   private buildWhere(query: ListAuditLogsQuery): Prisma.AuditLogWhereInput {

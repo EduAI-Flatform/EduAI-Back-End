@@ -11,6 +11,7 @@ export const AuditAction = {
   CommunityPostModerated: 'COMMUNITY_POST_MODERATED',
   CommunityPostRemoved: 'COMMUNITY_POST_REMOVED',
   CommunityCommentRemoved: 'COMMUNITY_COMMENT_REMOVED',
+  ContentModerationChanged: 'CONTENT_MODERATION_CHANGED',
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];

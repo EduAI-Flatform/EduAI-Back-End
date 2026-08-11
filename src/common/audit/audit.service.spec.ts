@@ -105,4 +105,22 @@ describe('AuditService', () => {
       }),
     );
   });
+
+  it('returns exact bounded moderation history for one target', async () => {
+    const { prisma, service } = createHarness();
+
+    await expect(
+      service.listTargetHistory('community_post', 'post-id', 500),
+    ).resolves.toEqual([auditRecord]);
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith({
+      where: {
+        action: AuditAction.ContentModerationChanged,
+        targetType: 'community_post',
+        targetId: 'post-id',
+      },
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      take: 100,
+      select: expect.any(Object),
+    });
+  });
 });

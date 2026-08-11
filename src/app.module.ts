@@ -15,6 +15,7 @@ import { DashboardsModule } from './modules/dashboards/dashboards.module';
 import { HealthModule } from './modules/health/health.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
 import { LibraryModule } from './modules/library/library.module';
+import { ModerationModule } from './modules/moderation/moderation.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -35,6 +36,7 @@ import { PrismaModule } from './prisma/prisma.module';
     DashboardsModule,
     LessonsModule,
     LibraryModule,
+    ModerationModule,
     QuizzesModule,
     AssignmentsModule,
     ClassroomsModule,
