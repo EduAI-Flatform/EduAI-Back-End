@@ -177,7 +177,7 @@ jobs:
           pm2 save
 
           BACKEND_PORT="$(node -e '
-            require("dotenv").config();
+            require("dotenv").config({ quiet: true });
             const port = Number(process.env.PORT || 3000);
             if (!Number.isInteger(port) || port < 1 || port > 65535) process.exit(1);
             process.stdout.write(String(port));
