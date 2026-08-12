@@ -108,9 +108,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     const meta = this.isObjectRecord(exception.meta) ? exception.meta : undefined;
-    const target = Array.isArray(meta?.target)
-      ? meta.target.filter((value): value is string => typeof value === 'string')
-      : [];
+    const target = typeof meta?.target === 'string'
+      ? [meta.target]
+      : Array.isArray(meta?.target)
+        ? meta.target.filter((value): value is string => typeof value === 'string')
+        : [];
     const normalized = target.join(' ').toLowerCase();
 
     if (
