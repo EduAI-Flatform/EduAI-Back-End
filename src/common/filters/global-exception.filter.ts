@@ -108,6 +108,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     const meta = this.isObjectRecord(exception.meta) ? exception.meta : undefined;
+    const modelName = typeof meta?.modelName === 'string' ? meta.modelName.toLowerCase() : '';
     const target = typeof meta?.target === 'string'
       ? [meta.target]
       : Array.isArray(meta?.target)
@@ -116,11 +117,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const normalized = target.join(' ').toLowerCase();
 
     if (
+      modelName === 'submission' ||
       normalized.includes('submission') ||
       ['assignment_id', 'user_id', 'version'].every((field) => normalized.includes(field))
     ) {
       return 'ASSIGNMENT_VERSION_CONFLICT';
     }
+    if (modelName === 'enrollment') return 'ENROLLMENT_UNIQUE_CONFLICT';
     if (normalized.includes('refresh')) return 'AUTH_REFRESH_TOKEN_CONFLICT';
     if (normalized.includes('certificate')) return 'CERTIFICATE_UNIQUE_CONFLICT';
     if (normalized.includes('audit')) return 'AUDIT_LOG_UNIQUE_CONFLICT';
