@@ -13,7 +13,10 @@ const certificate = {
   certificateTemplateId: templateId,
   certificateCode: 'CERT-existing',
   title: 'AI Foundations',
+  status: 'active',
   issuedAt: new Date('2026-07-17T00:00:00.000Z'),
+  revokedAt: null,
+  revocationReason: null,
   verificationUrl: null,
   qrCodeUrl: null,
   metadataJson: null,
@@ -23,6 +26,7 @@ const certificate = {
 function createService(overrides: Record<string, unknown> = {}) {
   let prisma: Record<string, any>;
   prisma = {
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 'enrollment-id' }]),
     $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
       callback(prisma),
     ),
@@ -35,6 +39,7 @@ function createService(overrides: Record<string, unknown> = {}) {
     },
     certificate: {
       findUnique: jest.fn().mockResolvedValue(null),
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue(certificate),
     },
     certificateTemplate: {
@@ -72,6 +77,7 @@ describe('CertificatesService.issueCertificate', () => {
     const { prisma, service } = createService({
       certificate: {
         findUnique: jest.fn().mockResolvedValue(certificate),
+        findFirst: jest.fn().mockResolvedValue(certificate),
         create: jest.fn(),
       },
     });
@@ -116,6 +122,7 @@ describe('CertificatesService.issueCertificate', () => {
         select: expect.any(Object),
       }),
     );
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(auditService.record).toHaveBeenCalledWith(
       {
         actorId: userId,
@@ -128,12 +135,77 @@ describe('CertificatesService.issueCertificate', () => {
   });
 });
 
+describe('CertificatesService.issueForCompletion', () => {
+  it('uses the deterministic default template and returns the active certificate', async () => {
+    const { prisma, service } = createService({
+      course: { findUnique: jest.fn().mockResolvedValue({ id: courseId, title: 'AI Foundations' }) },
+      certificateTemplate: { findFirst: jest.fn().mockResolvedValue({ id: templateId }) },
+      certificate: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ ...certificate, status: 'active' }),
+      },
+    });
+
+    await expect(
+      service.issueForCompletion(prisma as never, userId, courseId),
+    ).resolves.toMatchObject({ id: certificate.id, status: 'active' });
+    expect(prisma.certificateTemplate.findFirst).toHaveBeenCalledWith({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+  });
+
+  it('is idempotent when an active certificate already exists', async () => {
+    const activeCertificate = { ...certificate, status: 'active' };
+    const { prisma, service } = createService({
+      certificate: {
+        findFirst: jest.fn().mockResolvedValue(activeCertificate),
+        create: jest.fn(),
+      },
+    });
+
+    await expect(
+      service.issueForCompletion(prisma as never, userId, courseId),
+    ).resolves.toEqual(activeCertificate);
+    expect(prisma.certificate.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('CertificatesService.revokeCertificate', () => {
+  it('revokes an active certificate with an audit trail while preserving its code', async () => {
+    const revoked = {
+      ...certificate,
+      status: 'revoked',
+      revokedAt: new Date('2026-08-12T00:00:00.000Z'),
+      revocationReason: 'Course completion invalidated',
+    };
+    const { auditService, prisma, service } = createService({
+      certificate: {
+        findUnique: jest.fn().mockResolvedValue({ id: certificate.id, status: 'active' }),
+        update: jest.fn().mockResolvedValue(revoked),
+      },
+    });
+
+    await expect(
+      service.revokeCertificate('admin-id', certificate.id, {
+        reason: 'Course completion invalidated',
+      }),
+    ).resolves.toEqual(revoked);
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: AuditAction.CertificateRevoked }),
+      prisma,
+    );
+  });
+});
+
 describe('CertificatesService.verifyCertificate', () => {
   it('returns a public certificate projection without sensitive or internal fields', async () => {
     const publicCertificate = {
       certificateCode: 'CERT-abc123',
       title: 'AI Foundations',
+      status: 'active' as const,
       issuedAt: new Date('2026-07-17T00:00:00.000Z'),
+      revokedAt: null,
       verificationUrl: '/api/v1/certificates/verify/CERT-abc123',
       courseTitle: 'AI Foundations',
       recipientName: 'Nguyễn Minh Anh',
@@ -143,7 +215,9 @@ describe('CertificatesService.verifyCertificate', () => {
         findUnique: jest.fn().mockResolvedValue({
           certificateCode: publicCertificate.certificateCode,
           title: publicCertificate.title,
+          status: publicCertificate.status,
           issuedAt: publicCertificate.issuedAt,
+          revokedAt: publicCertificate.revokedAt,
           verificationUrl: publicCertificate.verificationUrl,
           course: { title: publicCertificate.courseTitle },
           user: { fullName: publicCertificate.recipientName },
@@ -182,7 +256,10 @@ describe('CertificatesService.listMyCertificates', () => {
             id: certificate.id,
             certificateCode: certificate.certificateCode,
             title: certificate.title,
+            status: certificate.status,
             issuedAt: certificate.issuedAt,
+            revokedAt: certificate.revokedAt,
+            revocationReason: certificate.revocationReason,
             verificationUrl: certificate.verificationUrl,
             qrCodeUrl: certificate.qrCodeUrl,
             course: { title: 'AI Foundations' },
@@ -199,7 +276,10 @@ describe('CertificatesService.listMyCertificates', () => {
         id: certificate.id,
         certificateCode: certificate.certificateCode,
         title: certificate.title,
+        status: certificate.status,
         issuedAt: certificate.issuedAt,
+        revokedAt: certificate.revokedAt,
+        revocationReason: certificate.revocationReason,
         verificationUrl: certificate.verificationUrl,
         qrCodeUrl: certificate.qrCodeUrl,
         courseTitle: 'AI Foundations',
@@ -212,5 +292,31 @@ describe('CertificatesService.listMyCertificates', () => {
         course: { select: { title: true } },
       }),
     });
+  });
+
+  it('keeps a revoked legacy code traceable without exposing its reason or internal fields', async () => {
+    const { service } = createService({
+      certificate: {
+        findUnique: jest.fn().mockResolvedValue({
+          certificateCode: 'EDUAI-DEMO-2026-001',
+          title: 'AI Foundations',
+          issuedAt: certificate.issuedAt,
+          verificationUrl: null,
+          status: 'revoked',
+          revokedAt: new Date('2026-08-12T00:00:00.000Z'),
+          course: { title: 'AI Foundations' },
+          user: { fullName: 'Student Name' },
+        }),
+      },
+    });
+
+    const result = await service.verifyCertificate('EDUAI-DEMO-2026-001');
+    expect(result).toMatchObject({
+      certificateCode: 'EDUAI-DEMO-2026-001',
+      status: 'revoked',
+      revokedAt: expect.any(Date),
+    });
+    expect(result).not.toHaveProperty('revocationReason');
+    expect(result).not.toHaveProperty('email');
   });
 });

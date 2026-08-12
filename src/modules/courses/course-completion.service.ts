@@ -4,10 +4,11 @@ import {
   Prisma,
   QuizStatus,
 } from '../../../generated/prisma/client';
+import { CertificatesService } from '../certificates/certificates.service';
 
 type CompletionClient = Pick<
   Prisma.TransactionClient,
-  '$queryRaw' | 'assignment' | 'enrollment' | 'lesson' | 'quiz'
+  '$queryRaw' | 'assignment' | 'certificate' | 'certificateTemplate' | 'course' | 'enrollment' | 'lesson' | 'quiz'
 >;
 
 export interface CourseCompletionEvaluation {
@@ -19,6 +20,8 @@ export interface CourseCompletionEvaluation {
 
 @Injectable()
 export class CourseCompletionService {
+  constructor(private readonly certificatesService: CertificatesService) {}
+
   async evaluateAndSync(
     client: CompletionClient,
     userId: string,
@@ -99,6 +102,7 @@ export class CourseCompletionService {
       totalRequiredItems > 0 && completedRequiredItems === totalRequiredItems;
 
     if (enrollment.status === 'completed') {
+      await this.certificatesService.issueForCompletion(client, userId, courseId);
       return {
         completed: true,
         completedRequiredItems,
@@ -120,6 +124,8 @@ export class CourseCompletionService {
       where: { userId, courseId, status: 'active' },
       data: { status: 'completed', completedAt: new Date() },
     });
+
+    await this.certificatesService.issueForCompletion(client, userId, courseId);
 
     return {
       completed: true,

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { CertificateStatus } from '../../../../generated/prisma/client';
 
 export class CertificateListItemDto {
   @ApiProperty({ format: 'uuid' })
@@ -10,8 +11,17 @@ export class CertificateListItemDto {
   @ApiProperty({ example: 'AI Foundations' })
   title!: string;
 
+  @ApiProperty({ enum: CertificateStatus })
+  status!: CertificateStatus;
+
   @ApiProperty({ format: 'date-time' })
   issuedAt!: Date;
+
+  @ApiPropertyOptional({ nullable: true, format: 'date-time' })
+  revokedAt!: Date | null;
+
+  @ApiPropertyOptional({ nullable: true, maxLength: 500 })
+  revocationReason!: string | null;
 
   @ApiPropertyOptional({ nullable: true })
   verificationUrl!: string | null;
@@ -30,8 +40,14 @@ export class CertificateVerificationDto {
   @ApiProperty({ example: 'AI Foundations' })
   title!: string;
 
+  @ApiProperty({ enum: CertificateStatus })
+  status!: CertificateStatus;
+
   @ApiProperty({ format: 'date-time' })
   issuedAt!: Date;
+
+  @ApiPropertyOptional({ nullable: true, format: 'date-time' })
+  revokedAt!: Date | null;
 
   @ApiPropertyOptional({ nullable: true })
   verificationUrl!: string | null;

@@ -58,9 +58,15 @@ function createClient(
 }
 
 describe('CourseCompletionService', () => {
+  const certificateIssuer = {
+    issueForCompletion: jest.fn().mockResolvedValue({ id: 'certificate-id' }),
+  };
+
+  beforeEach(() => certificateIssuer.issueForCompletion.mockClear());
+
   it('completes an enrollment only when every required learning item is complete', async () => {
     const { client, enrollment } = createClient();
-    const service = new CourseCompletionService();
+    const service = new CourseCompletionService(certificateIssuer as never);
 
     await expect(
       service.evaluateAndSync(client as never, 'student-id', 'course-id'),
@@ -74,6 +80,11 @@ describe('CourseCompletionService', () => {
       status: 'completed',
       completedAt: expect.any(Date),
     });
+    expect(certificateIssuer.issueForCompletion).toHaveBeenCalledWith(
+      client,
+      'student-id',
+      'course-id',
+    );
   });
 
   it('ignores optional items and keeps an enrollment active when a required item is incomplete', async () => {
@@ -82,7 +93,7 @@ describe('CourseCompletionService', () => {
       quizzes: [0, 0],
       assignments: [0, 0],
     });
-    const service = new CourseCompletionService();
+    const service = new CourseCompletionService(certificateIssuer as never);
 
     await expect(
       service.evaluateAndSync(client as never, 'student-id', 'course-id'),
@@ -93,6 +104,7 @@ describe('CourseCompletionService', () => {
       enrollmentUpdated: false,
     });
     expect(enrollment()).toEqual({ status: 'active', completedAt: null });
+    expect(certificateIssuer.issueForCompletion).not.toHaveBeenCalled();
     expect(client.lesson.count).toHaveBeenNthCalledWith(1, {
       where: { courseId: 'course-id', deletedAt: null, isRequired: true },
     });
@@ -120,7 +132,7 @@ describe('CourseCompletionService', () => {
       quizzes: [0, 0],
       assignments: [0, 0],
     });
-    const service = new CourseCompletionService();
+    const service = new CourseCompletionService(certificateIssuer as never);
 
     await expect(
       service.evaluateAndSync(client as never, 'student-id', 'course-id'),
@@ -134,7 +146,7 @@ describe('CourseCompletionService', () => {
 
   it('keeps completedAt stable across concurrent serialized evaluations', async () => {
     const { client, enrollment } = createClient();
-    const service = new CourseCompletionService();
+    const service = new CourseCompletionService(certificateIssuer as never);
     let transactionQueue = Promise.resolve();
     const runTransaction = <T>(callback: () => Promise<T>): Promise<T> => {
       const result = transactionQueue.then(callback);
@@ -164,11 +176,28 @@ describe('CourseCompletionService', () => {
 
   it('rejects evaluation when the enrollment does not exist', async () => {
     const { client } = createClient({}, null);
-    const service = new CourseCompletionService();
+    const service = new CourseCompletionService(certificateIssuer as never);
 
     await expect(
       service.evaluateAndSync(client as never, 'student-id', 'course-id'),
     ).rejects.toEqual(new NotFoundException('Enrollment not found'));
     expect(client.enrollment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('backfills certificate issuance for an already completed enrollment', async () => {
+    const { client } = createClient({}, {
+      status: 'completed',
+      completedAt: new Date('2026-08-12T00:00:00.000Z'),
+    });
+    const service = new CourseCompletionService(certificateIssuer as never);
+
+    await expect(
+      service.evaluateAndSync(client as never, 'student-id', 'course-id'),
+    ).resolves.toMatchObject({ completed: true, enrollmentUpdated: false });
+    expect(certificateIssuer.issueForCompletion).toHaveBeenCalledWith(
+      client,
+      'student-id',
+      'course-id',
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBadRequestResponse,
@@ -26,6 +26,7 @@ import {
   CertificateVerificationDto,
 } from './dto/certificate-response.dto';
 import { IssueCertificateDto } from './dto/issue-certificate.dto';
+import { RevokeCertificateDto } from './dto/revoke-certificate.dto';
 
 @ApiTags('Certificates')
 @Controller()
@@ -61,6 +62,20 @@ export class CertificatesController {
     @Body() input: IssueCertificateDto,
   ): Promise<CertificateResponse> {
     return this.certificatesService.issueCertificate(user.id, input);
+  }
+
+  @Patch('admin/certificates/:id/revoke')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.platform_admin)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Certificate revoked and retained for verification.' })
+  @ApiNotFoundResponse({ description: 'Certificate not found.' })
+  revokeCertificate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) certificateId: string,
+    @Body() input: RevokeCertificateDto,
+  ): Promise<CertificateResponse> {
+    return this.certificatesService.revokeCertificate(user.id, certificateId, input);
   }
 
   @Get('certificates/verify/:code')
