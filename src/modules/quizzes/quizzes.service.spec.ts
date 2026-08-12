@@ -78,6 +78,7 @@ function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQui
     $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
       callback(prisma),
     ),
+    $queryRaw: jest.fn().mockResolvedValue([]),
     course: { findFirst: jest.fn().mockResolvedValue(course) },
     lesson: { findFirst: jest.fn() },
     quiz: {
@@ -111,6 +112,7 @@ function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQui
       delete: jest.fn(),
     },
     quizAttempt: {
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn().mockResolvedValue(attempt),
       findMany: jest.fn().mockResolvedValue([attempt]),
     },
@@ -158,6 +160,10 @@ describe('QuizzesService', () => {
         description: undefined,
         passingScore: quiz.passingScore,
         timeLimitMinutes: quiz.timeLimitMinutes,
+        maxAttempts: null,
+        randomizeQuestions: false,
+        randomizeOptions: false,
+        showCorrectAnswers: true,
         isRequired: true,
         status: QuizStatus.draft,
       },
@@ -357,6 +363,62 @@ describe('QuizzesService', () => {
         ],
       }),
     ).rejects.toEqual(new BadRequestException('Each quiz question must be answered once'));
+  });
+
+  it('enforces a configured attempt limit before storing another attempt', async () => {
+    const limitedQuiz = { ...attemptQuiz, maxAttempts: 1 };
+    const { prisma, service } = createService(limitedQuiz as typeof attemptQuiz);
+    prisma.quizAttempt.count.mockResolvedValue(1);
+
+    await expect(
+      service.submitAttempt('student-id', quiz.id, {
+        answers: [
+          { questionId: attemptQuiz.questions[0].id, answer: 'A' },
+          { questionId: attemptQuiz.questions[1].id, answer: true },
+        ],
+      }),
+    ).rejects.toEqual(new BadRequestException('Quiz attempt limit reached'));
+    expect(prisma.quizAttempt.create).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reveal per-question correctness when review is disabled', async () => {
+    const hiddenReviewQuiz = { ...attemptQuiz, showCorrectAnswers: false };
+    const { service } = createService(hiddenReviewQuiz as typeof attemptQuiz);
+
+    await expect(
+      service.submitAttempt('student-id', quiz.id, {
+        answers: [
+          { questionId: attemptQuiz.questions[0].id, answer: 'A' },
+          { questionId: attemptQuiz.questions[1].id, answer: true },
+        ],
+      }),
+    ).resolves.toEqual(expect.not.objectContaining({ answers: expect.anything() }));
+  });
+
+  it('randomizes the student-safe presentation without changing question identities or options', async () => {
+    const randomizedQuiz = {
+      ...attemptQuiz,
+      randomizeQuestions: true,
+      randomizeOptions: true,
+    };
+    const { service } = createService(randomizedQuiz as typeof attemptQuiz);
+
+    const result = await service.getStudentQuiz('student-id', quiz.id);
+    const repeatedResult = await service.getStudentQuiz('student-id', quiz.id);
+
+    expect(result.questions.map((question) => question.id).sort()).toEqual(
+      attemptQuiz.questions.map((question) => question.id).sort(),
+    );
+    expect(
+      [
+        ...(result.questions.find(
+          (question) => question.id === attemptQuiz.questions[0].id,
+        )?.optionsJson as string[]),
+      ].sort(),
+    ).toEqual(['A', 'B']);
+    expect(repeatedResult.questions).toEqual(result.questions);
+    expect(JSON.stringify(result)).not.toContain('correctAnswerJson');
   });
 
   it('hides unpublished, missing, or unenrolled quizzes', async () => {

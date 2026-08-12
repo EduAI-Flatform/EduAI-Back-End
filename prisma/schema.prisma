@@ -356,6 +356,10 @@ model Quiz {
   description      String?
   passingScore     Float         @map("passing_score")
   timeLimitMinutes Int?          @map("time_limit_minutes")
+  maxAttempts      Int?          @map("max_attempts")
+  randomizeQuestions Boolean     @default(false) @map("randomize_questions")
+  randomizeOptions Boolean       @default(false) @map("randomize_options")
+  showCorrectAnswers Boolean     @default(true) @map("show_correct_answers")
   status           QuizStatus    @default(draft)
   isRequired       Boolean       @default(true) @map("is_required")
   createdAt        DateTime      @default(now()) @map("created_at")

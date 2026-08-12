@@ -32,6 +32,10 @@ const quizResponseSelect = {
   description: true,
   passingScore: true,
   timeLimitMinutes: true,
+  maxAttempts: true,
+  randomizeQuestions: true,
+  randomizeOptions: true,
+  showCorrectAnswers: true,
   isRequired: true,
   status: true,
   createdAt: true,
@@ -145,6 +149,10 @@ export class QuizzesService {
         description: input.description,
         passingScore: input.passingScore,
         timeLimitMinutes: input.timeLimitMinutes,
+        maxAttempts: input.maxAttempts ?? null,
+        randomizeQuestions: input.randomizeQuestions ?? false,
+        randomizeOptions: input.randomizeOptions ?? false,
+        showCorrectAnswers: input.showCorrectAnswers ?? true,
         isRequired: input.isRequired ?? true,
         status: QuizStatus.draft,
       },
@@ -185,6 +193,10 @@ export class QuizzesService {
         description: input.description,
         passingScore: input.passingScore,
         timeLimitMinutes: input.timeLimitMinutes,
+        maxAttempts: input.maxAttempts,
+        randomizeQuestions: input.randomizeQuestions,
+        randomizeOptions: input.randomizeOptions,
+        showCorrectAnswers: input.showCorrectAnswers,
         isRequired: input.isRequired,
       }),
       select: quizResponseSelect,
@@ -321,6 +333,8 @@ export class QuizzesService {
         id: true,
         courseId: true,
         passingScore: true,
+        maxAttempts: true,
+        showCorrectAnswers: true,
         questions: {
           orderBy: { orderIndex: 'asc' },
           select: {
@@ -373,6 +387,20 @@ export class QuizzesService {
       answer,
     })) as Prisma.InputJsonArray;
     const attempt = await this.prisma.$transaction(async (tx) => {
+      if (quiz.maxAttempts !== null && quiz.maxAttempts !== undefined) {
+        // Serializes limit checks for this quiz before counting and inserting.
+        // The parameterized row lock also prevents concurrent final submissions
+        // from both passing the same count check.
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "quizzes" WHERE "id" = ${quizId} FOR UPDATE`,
+        );
+        const attemptCount = await tx.quizAttempt.count({
+          where: { quizId, userId, submittedAt: { not: null } },
+        });
+        if (attemptCount >= quiz.maxAttempts) {
+          throw new BadRequestException('Quiz attempt limit reached');
+        }
+      }
       const created = await tx.quizAttempt.create({
         data: {
           quizId,
@@ -397,7 +425,7 @@ export class QuizzesService {
     return {
       ...attempt,
       scorePercent: this.roundScore(scorePercent),
-      answers: answerResults,
+      ...(quiz.showCorrectAnswers ? { answers: answerResults } : {}),
     };
   }
 
@@ -427,16 +455,29 @@ export class QuizzesService {
     );
 
     const { questions, ...quizResponse } = quiz;
+    const submittedAttemptCount = await this.prisma.quizAttempt.count({
+      where: { quizId, userId, submittedAt: { not: null } },
+    });
+    const shuffledQuestions = quiz.randomizeQuestions
+      ? this.shuffleDeterministically(questions, `${quizId}:${userId}:${submittedAttemptCount}:questions`)
+      : questions;
+
     return {
       ...quizResponse,
-      questions: questions.map((question) => ({
+      questions: shuffledQuestions.map((question, index) => ({
         id: question.id,
         quizId: question.quizId,
         type: question.type,
         questionText: question.questionText,
-        optionsJson: question.optionsJson,
+        optionsJson:
+          quiz.randomizeOptions && Array.isArray(question.optionsJson)
+            ? this.shuffleDeterministically(
+                question.optionsJson,
+                `${quizId}:${userId}:${submittedAttemptCount}:${question.id}:options`,
+              )
+            : question.optionsJson,
         points: question.points,
-        orderIndex: question.orderIndex,
+        orderIndex: quiz.randomizeQuestions ? index + 1 : question.orderIndex,
       })),
     };
   }
@@ -653,5 +694,25 @@ export class QuizzesService {
 
   private roundScore(value: number): number {
     return Math.round(value * 100) / 100;
+  }
+
+  private shuffleDeterministically<T>(items: readonly T[], seed: string): T[] {
+    const shuffled = [...items];
+    let state = 2166136261;
+    for (const character of seed) {
+      state ^= character.charCodeAt(0);
+      state = Math.imul(state, 16777619);
+    }
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      const swapIndex = (state >>> 0) % (index + 1);
+      [shuffled[index], shuffled[swapIndex]] = [
+        shuffled[swapIndex],
+        shuffled[index],
+      ];
+    }
+    return shuffled;
   }
 }

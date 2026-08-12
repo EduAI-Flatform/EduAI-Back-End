@@ -50,6 +50,28 @@ export class CreateQuizDto {
   @Max(1440)
   timeLimitMinutes?: number;
 
+  @ApiPropertyOptional({ example: 3, minimum: 1, nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  maxAttempts?: number | null;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  randomizeQuestions?: boolean;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  randomizeOptions?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  showCorrectAnswers?: boolean;
+
   @ApiPropertyOptional({ default: true })
   @IsOptional()
   @IsBoolean()
