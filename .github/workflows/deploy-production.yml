@@ -152,15 +152,15 @@ jobs:
             let log = "";
             process.stdin.on("data", (chunk) => { log += chunk; });
             process.stdin.on("end", () => {
-              const failureClass = /failureClass["': ]+ASSIGNMENT_VERSION_CONFLICT/i.test(log)
+              const failureClass = /failureClass[": ]+ASSIGNMENT_VERSION_CONFLICT/i.test(log)
                 ? "ASSIGNMENT_VERSION_CONFLICT"
-                : /failureClass["': ]+AUTH_REFRESH_TOKEN_CONFLICT/i.test(log)
+                : /failureClass[": ]+AUTH_REFRESH_TOKEN_CONFLICT/i.test(log)
                   ? "AUTH_REFRESH_TOKEN_CONFLICT"
-                  : /failureClass["': ]+CERTIFICATE_UNIQUE_CONFLICT/i.test(log)
+                  : /failureClass[": ]+CERTIFICATE_UNIQUE_CONFLICT/i.test(log)
                     ? "CERTIFICATE_UNIQUE_CONFLICT"
-                    : /failureClass["': ]+AUDIT_LOG_UNIQUE_CONFLICT/i.test(log)
+                    : /failureClass[": ]+AUDIT_LOG_UNIQUE_CONFLICT/i.test(log)
                       ? "AUDIT_LOG_UNIQUE_CONFLICT"
-                      : /failureClass["': ]+OTHER_UNIQUE_CONSTRAINT_CONFLICT/i.test(log)
+                      : /failureClass[": ]+OTHER_UNIQUE_CONSTRAINT_CONFLICT/i.test(log)
                         ? "OTHER_UNIQUE_CONSTRAINT_CONFLICT"
               : /P2021|table .* does not exist/i.test(log)
                 ? "ASSIGNMENT_SCHEMA_TABLE_MISSING"
