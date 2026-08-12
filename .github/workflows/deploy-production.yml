@@ -176,6 +176,13 @@ jobs:
           pm2 restart eduai-backend --update-env
           pm2 save
 
+          BACKEND_PORT="$(node -e '
+            require("dotenv").config();
+            const port = Number(process.env.PORT || 3000);
+            if (!Number.isInteger(port) || port < 1 || port > 65535) process.exit(1);
+            process.stdout.write(String(port));
+          ')"
+
           echo "Waiting for backend readiness..."
           for attempt in {1..12}; do
             if curl \
@@ -183,7 +190,7 @@ jobs:
               --silent \
               --show-error \
               --max-time 5 \
-              http://127.0.0.1:3010/api/docs \
+              "http://127.0.0.1:${BACKEND_PORT}/api/docs" \
               > /dev/null; then
               break
             fi
