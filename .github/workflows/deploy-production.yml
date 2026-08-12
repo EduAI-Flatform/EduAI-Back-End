@@ -274,7 +274,7 @@ jobs:
             sleep 5
           done
 
-          pm2 logs eduai-backend --err --lines 300 --nostream 2>&1 | node -e '
+          pm2 logs eduai-backend --lines 300 --nostream 2>&1 | node -e '
             let log = "";
             process.stdin.on("data", (chunk) => { log += chunk; });
             process.stdin.on("end", () => {
