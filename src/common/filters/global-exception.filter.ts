@@ -34,6 +34,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error('critical request error', this.getStack(exception), 'GlobalExceptionFilter', {
         code,
+        failureClass: this.getFailureClass(exception),
         method: request.method,
         path: request.originalUrl ?? request.url,
         statusCode: status,
@@ -99,6 +100,29 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
   private getStack(exception: unknown): string | undefined {
     return exception instanceof Error ? exception.stack : undefined;
+  }
+
+  private getFailureClass(exception: unknown): string {
+    if (!this.isObjectRecord(exception) || exception.code !== 'P2002') {
+      return 'APPLICATION_RUNTIME_ERROR';
+    }
+
+    const meta = this.isObjectRecord(exception.meta) ? exception.meta : undefined;
+    const target = Array.isArray(meta?.target)
+      ? meta.target.filter((value): value is string => typeof value === 'string')
+      : [];
+    const normalized = target.join(' ').toLowerCase();
+
+    if (
+      normalized.includes('submission') ||
+      ['assignment_id', 'user_id', 'version'].every((field) => normalized.includes(field))
+    ) {
+      return 'ASSIGNMENT_VERSION_CONFLICT';
+    }
+    if (normalized.includes('refresh')) return 'AUTH_REFRESH_TOKEN_CONFLICT';
+    if (normalized.includes('certificate')) return 'CERTIFICATE_UNIQUE_CONFLICT';
+    if (normalized.includes('audit')) return 'AUDIT_LOG_UNIQUE_CONFLICT';
+    return 'OTHER_UNIQUE_CONSTRAINT_CONFLICT';
   }
 
   private formatMessage(message: unknown): string {
