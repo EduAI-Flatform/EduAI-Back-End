@@ -1,6 +1,6 @@
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import { IsEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 function normalizeOptionalString(value: unknown): unknown {
   if (value === null || value === undefined) return value;
@@ -18,12 +18,10 @@ export class SubmitAssignmentDto {
   content?: string | null;
 
   @ApiPropertyOptional({
-    description: 'HTTPS URL from the approved file storage pipeline.',
-    nullable: true,
+    deprecated: true,
+    description: 'External file URLs are rejected; upload a multipart file instead.',
   })
-  @Transform(({ value }) => normalizeOptionalString(value))
-  @IsOptional()
-  @IsUrl({ protocols: ['https'], require_protocol: true })
-  @MaxLength(2048)
-  fileUrl?: string | null;
+  @IsEmpty({ message: 'fileUrl is not accepted; upload a file instead' })
+  fileUrl?: never;
+
 }

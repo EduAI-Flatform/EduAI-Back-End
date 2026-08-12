@@ -35,7 +35,7 @@ const assignment = {
   updatedAt: dueDate,
 };
 
-function createService(storage?: { upload: jest.Mock }) {
+function createService(storage?: { upload: jest.Mock; createDownloadUrl?: jest.Mock }) {
   const submission = {
     id: 'submission-id',
     assignmentId: assignment.id,
@@ -164,7 +164,7 @@ describe('AssignmentsService', () => {
         assignmentId: assignment.id,
         userId: student.id,
         content: 'Bài làm',
-        fileUrl: undefined,
+        fileUrl: null,
         version: 2,
         isLate: true,
         submittedAt: expect.any(Date),
@@ -179,12 +179,12 @@ describe('AssignmentsService', () => {
     );
   });
 
-  it('stores uploaded assignment metadata and the generated file URL', async () => {
+  it('stores uploaded assignment metadata with a private object key', async () => {
     const storage = {
       upload: jest.fn().mockResolvedValue({
         key: 'assignments/file-id.pdf',
-        url: 'https://cdn.example.com/assignments/file-id.pdf',
       }),
+      createDownloadUrl: jest.fn(),
     };
     const { prisma, service } = createService(storage);
     prisma.submission.findFirst.mockResolvedValue(null);
@@ -203,7 +203,8 @@ describe('AssignmentsService', () => {
     });
     expect(prisma.submission.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        fileUrl: 'https://cdn.example.com/assignments/file-id.pdf',
+        fileUrl: null,
+        fileKey: 'assignments/file-id.pdf',
         fileName: 'bai-lam.pdf',
         fileSize: 8,
         fileMimeType: 'application/pdf',

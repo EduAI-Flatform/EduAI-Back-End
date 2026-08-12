@@ -1,4 +1,5 @@
 import { S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   BadRequestException,
   InternalServerErrorException,
@@ -7,6 +8,8 @@ import {
   AssignmentStorageService,
   MAX_ASSIGNMENT_FILE_SIZE_BYTES,
 } from './assignment-storage.service';
+
+jest.mock('@aws-sdk/s3-request-presigner', () => ({ getSignedUrl: jest.fn() }));
 
 function createService(options?: { configured?: boolean; production?: boolean }) {
   const configured = options?.configured ?? true;
@@ -37,8 +40,22 @@ describe('AssignmentStorageService', () => {
     });
 
     expect(result.key).toMatch(/^assignments\/[0-9a-f-]{36}\.pdf$/);
-    expect(result.url).toBe(`https://cdn.example.com/${result.key}`);
+    expect(result).toEqual({ key: expect.stringMatching(/^assignments\/[0-9a-f-]{36}\.pdf$/) });
     expect(S3Client.prototype.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a short-lived download URL only for an authenticated storage client', async () => {
+    jest.mocked(getSignedUrl).mockResolvedValue('https://signed.example.com/download');
+    const service = createService();
+
+    await expect(service.createDownloadUrl('assignments/file-id.pdf')).resolves.toBe(
+      'https://signed.example.com/download',
+    );
+    expect(getSignedUrl).toHaveBeenCalledWith(
+      expect.any(S3Client),
+      expect.objectContaining({ input: expect.objectContaining({ Key: 'assignments/file-id.pdf' }) }),
+      { expiresIn: 300 },
+    );
   });
 
   it('rejects unsupported types and oversized files', async () => {

@@ -10,7 +10,7 @@ async function validationMessages(dtoClass: new () => object, payload: object) {
 }
 
 describe('Assignment DTO validation', () => {
-  it('accepts valid assignment, text, and HTTPS file inputs', async () => {
+  it('accepts valid assignment and text inputs', async () => {
     await expect(
       validationMessages(CreateAssignmentDto, {
         title: 'Bài tập',
@@ -22,12 +22,11 @@ describe('Assignment DTO validation', () => {
     await expect(
       validationMessages(SubmitAssignmentDto, {
         content: 'Bài làm',
-        fileUrl: 'https://files.example.com/submission.pdf',
       }),
     ).resolves.toEqual([]);
   });
 
-  it('rejects invalid scores, dates, and non-HTTPS file references', async () => {
+  it('rejects invalid scores, dates, and external file references', async () => {
     await expect(
       validationMessages(CreateAssignmentDto, {
         title: 'Bài tập',
@@ -44,7 +43,7 @@ describe('Assignment DTO validation', () => {
       validationMessages(SubmitAssignmentDto, {
         fileUrl: 'http://files.example.com/submission.pdf',
       }),
-    ).resolves.toEqual([expect.stringContaining('fileUrl must be a URL')]);
+    ).resolves.toEqual([expect.stringContaining('fileUrl is not accepted')]);
   });
 
   it('validates manual grade payloads', async () => {

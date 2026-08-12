@@ -1,7 +1,7 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -51,6 +51,7 @@ const submissionResponseSelect = {
   userId: true,
   content: true,
   fileUrl: true,
+  fileKey: true,
   fileName: true,
   fileSize: true,
   fileMimeType: true,
@@ -82,7 +83,7 @@ type StoredSubmissionResponse = Prisma.SubmissionGetPayload<{
   select: typeof submissionResponseSelect;
 }>;
 
-export type SubmissionResponse = Omit<StoredSubmissionResponse, 'user'> & {
+export type SubmissionResponse = Omit<StoredSubmissionResponse, 'user' | 'fileKey'> & {
   student: StoredSubmissionResponse['user'];
 };
 
@@ -265,7 +266,7 @@ export class AssignmentsService {
     input: SubmitAssignmentDto,
     file?: UploadedAssignmentFile,
   ): Promise<SubmissionResponse> {
-    if (!input.content && !input.fileUrl && !file) {
+    if (!input.content && !file) {
       throw new BadRequestException('Submission requires text or file');
     }
     const assignment = await this.prisma.assignment.findFirst({
@@ -321,10 +322,10 @@ export class AssignmentsService {
             assignmentId,
             userId,
             content: input.content,
-            fileUrl: input.fileUrl,
+            fileUrl: null,
             ...(storedFile
               ? {
-                  fileUrl: storedFile.url,
+                  fileKey: storedFile.key,
                   fileName: file!.originalname,
                   fileSize: file!.size,
                   fileMimeType: file!.mimetype,
@@ -420,7 +421,7 @@ export class AssignmentsService {
       orderBy: { version: 'desc' },
       select: submissionResponseSelect,
     });
-    return submissions.map((submission) => this.toSubmissionResponse(submission));
+    return Promise.all(submissions.map((submission) => this.toSubmissionResponse(submission)));
   }
 
   async listSubmissions(
@@ -433,9 +434,7 @@ export class AssignmentsService {
       orderBy: { submittedAt: 'desc' },
       select: submissionResponseSelect,
     });
-    return submissions.map((submission) =>
-      this.toSubmissionResponse(submission),
-    );
+    return Promise.all(submissions.map((submission) => this.toSubmissionResponse(submission)));
   }
 
   async gradeSubmission(
@@ -590,11 +589,18 @@ export class AssignmentsService {
       (user.roles.includes(RoleName.instructor) && user.id === instructorId);
   }
 
-  private toSubmissionResponse(submission: StoredSubmissionResponse): SubmissionResponse {
-    const { user, ...response } = submission;
+  private async toSubmissionResponse(submission: StoredSubmissionResponse): Promise<SubmissionResponse> {
+    const { user, fileKey, fileUrl: _legacyFileUrl, ...response } = submission;
+    const storageService = this.assignmentStorageService;
+    if (fileKey && !storageService) {
+      throw new InternalServerErrorException('Assignment file storage is unavailable');
+    }
 
     return {
       ...response,
+      fileUrl: fileKey
+        ? await storageService!.createDownloadUrl(fileKey)
+        : null,
       student: user,
     };
   }
@@ -610,13 +616,6 @@ export class AssignmentsService {
   ): Date | null | undefined {
     if (value === undefined || value === null) return value;
     return new Date(value);
-  }
-
-  private isUniqueConflict(error: unknown): boolean {
-    return (
-      error instanceof Prisma.PrismaClientKnownRequestError ||
-      (typeof error === 'object' && error !== null && 'code' in error)
-    ) && (error as { code?: string }).code === 'P2002';
   }
 
   private toNullableJson(

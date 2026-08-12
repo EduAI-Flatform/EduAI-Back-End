@@ -36,6 +36,7 @@ model Submission {
   userId       String           @map("user_id") @db.Uuid
   content      String?
   fileUrl      String?          @map("file_url")
+  fileKey      String?          @map("file_key")
   fileName     String?          @map("file_name")
   fileSize     Int?             @map("file_size")
   fileMimeType String?          @map("file_mime_type")

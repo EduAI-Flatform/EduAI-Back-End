@@ -1,4 +1,5 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   BadRequestException,
   Injectable,
@@ -45,7 +46,7 @@ export class AssignmentStorageService {
       if (this.appConfig.app.nodeEnv === 'production') {
         throw new InternalServerErrorException('R2 storage is not configured');
       }
-      return { key, url: `${this.publicBaseUrl()}/${key}` };
+      return { key };
     }
 
     await this.clientFor(r2.accountId, r2.accessKeyId, r2.secretAccessKey).send(
@@ -58,7 +59,19 @@ export class AssignmentStorageService {
       }),
     );
 
-    return { key, url: `${this.publicBaseUrl()}/${key}` };
+    return { key };
+  }
+
+  async createDownloadUrl(key: string): Promise<string> {
+    const r2 = this.appConfig.r2;
+    if (!r2.accountId || !r2.accessKeyId || !r2.secretAccessKey || !r2.bucketName) {
+      throw new InternalServerErrorException('R2 storage is not configured');
+    }
+    return getSignedUrl(
+      this.clientFor(r2.accountId, r2.accessKeyId, r2.secretAccessKey),
+      new GetObjectCommand({ Bucket: r2.bucketName, Key: key }),
+      { expiresIn: 300 },
+    );
   }
 
   private validate(
@@ -113,12 +126,4 @@ export class AssignmentStorageService {
     return this.client;
   }
 
-  private publicBaseUrl(): string {
-    const publicUrl = this.appConfig.r2.publicUrl?.replace(/\/+$/, '');
-    if (publicUrl) return publicUrl;
-    if (this.appConfig.app.nodeEnv === 'production') {
-      throw new InternalServerErrorException('R2 public URL is required for assignment uploads');
-    }
-    return 'https://storage.local';
-  }
 }

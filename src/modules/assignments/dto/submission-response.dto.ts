@@ -25,7 +25,7 @@ export class SubmissionResponseDto {
   @ApiPropertyOptional({ nullable: true })
   content!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ nullable: true, description: 'Short-lived authorized download URL for a private uploaded file.' })
   fileUrl!: string | null;
 
   @ApiPropertyOptional({ nullable: true })

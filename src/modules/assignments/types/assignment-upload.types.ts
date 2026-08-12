@@ -7,5 +7,4 @@ export interface UploadedAssignmentFile {
 
 export interface StoredAssignmentFile {
   key: string;
-  url: string;
 }
