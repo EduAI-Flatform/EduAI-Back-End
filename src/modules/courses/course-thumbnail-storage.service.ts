@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import {
   BadRequestException,
   Injectable,
@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { AppConfigService } from '../../config/app-config.service';
+import { createPublicMediaUrl } from '../media/public-media-url.util';
 import {
   StoredCourseThumbnail,
   UploadedCourseThumbnail,
@@ -35,8 +36,7 @@ export class CourseThumbnailStorageService {
       !r2.accountId ||
       !r2.accessKeyId ||
       !r2.secretAccessKey ||
-      !r2.bucketName ||
-      !r2.publicUrl
+      !r2.bucketName
     ) {
       throw new InternalServerErrorException(
         'R2 storage is not configured for course thumbnails',
@@ -64,8 +64,18 @@ export class CourseThumbnailStorageService {
 
     return {
       key,
-      url: `${r2.publicUrl.replace(/\/+$/, '')}/${key}`,
+      url: createPublicMediaUrl(key),
     };
+  }
+
+  async deleteThumbnail(key: string): Promise<void> {
+    const r2 = this.appConfig.r2;
+    if (!r2.accountId || !r2.accessKeyId || !r2.secretAccessKey || !r2.bucketName) {
+      throw new InternalServerErrorException('R2 storage is not configured for course thumbnails');
+    }
+    await this.getClient(r2.accountId, r2.accessKeyId, r2.secretAccessKey).send(
+      new DeleteObjectCommand({ Bucket: r2.bucketName, Key: key }),
+    );
   }
 
   private validateFile(file: UploadedCourseThumbnail | undefined): void {

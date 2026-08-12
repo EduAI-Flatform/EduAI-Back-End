@@ -83,22 +83,33 @@ export class ProfileService {
   async createPortfolio(
     userId: string,
     input: CreatePortfolioDto,
+    image?: UploadedAvatarFile,
   ): Promise<PortfolioResponse> {
-    return this.prisma.portfolio.create({
-      data: {
-        userId,
-        title: input.title,
-        description: input.description,
-        projectUrl: input.projectUrl,
-        imageUrl: input.imageUrl,
-        startDate: input.startDate,
-        endDate: input.endDate,
-      },
-    });
+    const storedImage = image
+      ? await this.avatarStorage.uploadPortfolioImage(image)
+      : undefined;
+    try {
+      const portfolio = await this.prisma.portfolio.create({
+        data: {
+          userId,
+          title: input.title,
+          description: input.description,
+          projectUrl: input.projectUrl,
+          imageUrl: storedImage?.url ?? input.imageUrl,
+          imageStorageKey: storedImage?.key,
+          startDate: input.startDate,
+          endDate: input.endDate,
+        },
+      });
+      return this.toPortfolioResponse(portfolio);
+    } catch (error) {
+      if (storedImage) await this.deleteBestEffort(storedImage.key);
+      throw error;
+    }
   }
 
   async listPortfolio(userId: string): Promise<PortfolioResponse[]> {
-    return this.prisma.portfolio.findMany({
+    const portfolios = await this.prisma.portfolio.findMany({
       where: {
         userId,
         deletedAt: null,
@@ -107,14 +118,28 @@ export class ProfileService {
         createdAt: 'desc',
       },
     });
+    return portfolios.map((portfolio) => this.toPortfolioResponse(portfolio));
   }
 
   async updatePortfolio(
     userId: string,
     portfolioId: string,
     input: UpdatePortfolioDto,
+    image?: UploadedAvatarFile,
   ): Promise<PortfolioResponse> {
-    const data = this.removeUndefinedFields(input);
+    const existing = await this.prisma.portfolio.findFirst({
+      where: { id: portfolioId, userId, deletedAt: null },
+      select: { imageStorageKey: true },
+    });
+    if (!existing) throw new NotFoundException('Portfolio item not found');
+    const storedImage = image
+      ? await this.avatarStorage.uploadPortfolioImage(image)
+      : undefined;
+    const data = this.removeUndefinedFields({
+      ...input,
+      imageUrl: storedImage?.url ?? input.imageUrl,
+      imageStorageKey: storedImage?.key,
+    });
     const result = await this.prisma.portfolio.updateMany({
       where: {
         id: portfolioId,
@@ -125,6 +150,7 @@ export class ProfileService {
     });
 
     if (result.count === 0) {
+      if (storedImage) await this.deleteBestEffort(storedImage.key);
       throw new NotFoundException('Portfolio item not found');
     }
 
@@ -136,13 +162,21 @@ export class ProfileService {
       throw new NotFoundException('Portfolio item not found');
     }
 
-    return portfolio;
+    if (storedImage && existing.imageStorageKey) {
+      await this.deleteBestEffort(existing.imageStorageKey);
+    }
+    return this.toPortfolioResponse(portfolio);
   }
 
   async deletePortfolio(
     userId: string,
     portfolioId: string,
   ): Promise<DeletePortfolioResponse> {
+    const existing = await this.prisma.portfolio.findFirst({
+      where: { id: portfolioId, userId, deletedAt: null },
+      select: { imageStorageKey: true },
+    });
+    if (!existing) throw new NotFoundException('Portfolio item not found');
     const result = await this.prisma.portfolio.updateMany({
       where: {
         id: portfolioId,
@@ -158,6 +192,10 @@ export class ProfileService {
       throw new NotFoundException('Portfolio item not found');
     }
 
+    if (existing.imageStorageKey) {
+      await this.deleteBestEffort(existing.imageStorageKey);
+    }
+
     return { deleted: true };
   }
 
@@ -169,20 +207,49 @@ export class ProfileService {
       throw new BadRequestException('Avatar file is required');
     }
 
-    const storedAvatar = await this.avatarStorage.uploadAvatar(file);
-    const user = await this.prisma.user.update({
+    const previous = await this.prisma.user.findUnique({
       where: { id: userId },
-      data: {
-        avatarUrl: storedAvatar.url,
-      },
-      select: {
-        avatarUrl: true,
-      },
+      select: { avatarStorageKey: true },
     });
+    const storedAvatar = await this.avatarStorage.uploadAvatar(file);
+    let user;
+    try {
+      user = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          avatarUrl: storedAvatar.url,
+          avatarStorageKey: storedAvatar.key,
+        },
+        select: {
+          avatarUrl: true,
+        },
+      });
+    } catch (error) {
+      await this.deleteBestEffort(storedAvatar.key);
+      throw error;
+    }
+    if (previous?.avatarStorageKey) {
+      await this.deleteBestEffort(previous.avatarStorageKey);
+    }
 
     return {
       avatarUrl: user.avatarUrl ?? storedAvatar.url,
     };
+  }
+
+  private async deleteBestEffort(storageKey: string): Promise<void> {
+    try {
+      await this.avatarStorage.delete(storageKey);
+    } catch {
+      // The database remains authoritative; orphan cleanup can be retried separately.
+    }
+  }
+
+  private toPortfolioResponse(
+    portfolio: PortfolioResponse & { imageStorageKey?: string | null },
+  ): PortfolioResponse {
+    const { imageStorageKey: _storageKey, ...response } = portfolio;
+    return response;
   }
 
   private removeUndefinedFields<T extends object>(input: T): T {

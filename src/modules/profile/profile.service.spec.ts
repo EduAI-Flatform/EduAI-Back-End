@@ -52,20 +52,27 @@ describe('ProfileService', () => {
       },
       portfolio: {
         create: jest.fn().mockResolvedValue(portfolio),
+        findFirst: jest.fn().mockResolvedValue({ imageStorageKey: null }),
         findMany: jest.fn().mockResolvedValue([portfolio]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findUnique: jest.fn().mockResolvedValue(portfolio),
       },
       user: {
+        findUnique: jest.fn().mockResolvedValue({ avatarStorageKey: null }),
         update: jest.fn().mockResolvedValue({
           avatarUrl: 'https://cdn.example.com/avatars/generated.png',
         }),
       },
     };
     const avatarStorage = {
+      delete: jest.fn().mockResolvedValue(undefined),
       uploadAvatar: jest.fn().mockResolvedValue({
         key: 'avatars/generated.png',
         url: 'https://cdn.example.com/avatars/generated.png',
+      }),
+      uploadPortfolioImage: jest.fn().mockResolvedValue({
+        key: 'portfolio-images/generated.png',
+        url: 'https://cdn.example.com/portfolio-images/generated.png',
       }),
     };
 
@@ -207,6 +214,7 @@ describe('ProfileService', () => {
         description: 'Project description',
         projectUrl: 'https://example.com/project',
         imageUrl: undefined,
+        imageStorageKey: undefined,
         startDate: undefined,
         endDate: undefined,
       },
@@ -300,15 +308,67 @@ describe('ProfileService', () => {
     });
 
     expect(avatarStorage.uploadAvatar).toHaveBeenCalledWith(file);
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'user-id' },
+      select: { avatarStorageKey: true },
+    });
     expect(prisma.user.update).toHaveBeenCalledWith({
       where: { id: 'user-id' },
       data: {
         avatarUrl: 'https://cdn.example.com/avatars/generated.png',
+        avatarStorageKey: 'avatars/generated.png',
       },
       select: {
         avatarUrl: true,
       },
     });
+  });
+
+  it('removes a newly uploaded avatar when the database update fails', async () => {
+    const { avatarStorage, prisma, service } = createService();
+    prisma.user.update.mockRejectedValue(new Error('database unavailable'));
+    const file = {
+      buffer: Buffer.from('avatar'),
+      mimetype: 'image/png',
+      originalname: 'avatar.png',
+      size: 6,
+    };
+
+    await expect(service.uploadAvatar('user-id', file)).rejects.toThrow('database unavailable');
+    expect(avatarStorage.delete).toHaveBeenCalledWith('avatars/generated.png');
+  });
+
+  it('uploads a project image and stores its URL and canonical key', async () => {
+    const { avatarStorage, prisma, service } = createService();
+    const image = {
+      buffer: Buffer.from('image'),
+      mimetype: 'image/png',
+      originalname: 'project.png',
+      size: 5,
+    };
+
+    await service.createPortfolio('user-id', { title: 'AI Assistant' }, image);
+
+    expect(avatarStorage.uploadPortfolioImage).toHaveBeenCalledWith(image);
+    expect(prisma.portfolio.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        imageStorageKey: 'portfolio-images/generated.png',
+        imageUrl: 'https://cdn.example.com/portfolio-images/generated.png',
+      }),
+    });
+  });
+
+  it('removes the stored project image after a portfolio item is deleted', async () => {
+    const { avatarStorage, prisma, service } = createService();
+    prisma.portfolio.findFirst.mockResolvedValue({
+      imageStorageKey: 'portfolio-images/old.png',
+    });
+
+    await service.deletePortfolio('user-id', 'portfolio-id');
+
+    expect(avatarStorage.delete).toHaveBeenCalledWith(
+      'portfolio-images/old.png',
+    );
   });
 
   it('rejects missing avatar files', async () => {

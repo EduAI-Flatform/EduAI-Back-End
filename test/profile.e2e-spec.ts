@@ -314,11 +314,15 @@ describe('Profile endpoints', () => {
         expect(body.data.userId).toBe('user-id');
       });
 
-    expect(profileService.createPortfolio).toHaveBeenCalledWith('user-id', {
-      title: 'AI Learning Assistant',
-      description: 'Project description',
-      projectUrl: 'https://example.com/project',
-    });
+    expect(profileService.createPortfolio).toHaveBeenCalledWith(
+      'user-id',
+      {
+        title: 'AI Learning Assistant',
+        description: 'Project description',
+        projectUrl: 'https://example.com/project',
+      },
+      undefined,
+    );
   });
 
   it('rejects invalid portfolio payloads', async () => {
@@ -359,6 +363,7 @@ describe('Profile endpoints', () => {
         title: 'Updated project',
         description: null,
       },
+      undefined,
     );
   });
 

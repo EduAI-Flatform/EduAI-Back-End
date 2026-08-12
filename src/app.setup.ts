@@ -8,6 +8,7 @@ export function configureApp(
   app: INestApplication,
   nodeEnv: string,
   logger: AppLoggerService,
+  legacyPublicMediaBaseUrl?: string,
 ): void {
   const configuredOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((o) =>
     o.trim(),
@@ -38,7 +39,7 @@ export function configureApp(
 
   app.useGlobalInterceptors(
     new RequestLoggingInterceptor(logger),
-    new ApiResponseInterceptor(),
+    new ApiResponseInterceptor(legacyPublicMediaBaseUrl),
   );
 
   app.useGlobalFilters(new GlobalExceptionFilter(nodeEnv, logger));

@@ -4,6 +4,7 @@ model User {
   passwordHash  String?            @map("password_hash")
   fullName      String             @map("full_name")
   avatarUrl     String?            @map("avatar_url")
+  avatarStorageKey String?         @map("avatar_storage_key")
   firebaseUid   String?            @unique @map("firebase_uid")
   authProvider  AuthProvider       @default(local) @map("auth_provider")
   emailVerified Boolean            @default(false) @map("email_verified")

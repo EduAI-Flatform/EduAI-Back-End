@@ -8,12 +8,15 @@ import {
   Post,
   Patch,
   Put,
+  UploadedFile,
+  UseInterceptors,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -21,6 +24,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -34,6 +38,13 @@ import { UpdateLessonProgressDto } from '../courses/dto/update-lesson-progress.d
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { LessonDetailDto } from './dto/lesson-response.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
+import { AuthorizeVideoUploadDto } from './dto/authorize-video-upload.dto';
+import { FinalizeVideoUploadDto } from './dto/finalize-video-upload.dto';
+import { DiscardLessonMediaDto } from './dto/discard-lesson-media.dto';
+import {
+  MAX_LESSON_DOCUMENT_SIZE_BYTES,
+} from './lesson-media-storage.service';
+import { UploadedLessonDocument } from './types/lesson-media-upload.types';
 import {
   DeleteLessonResponse,
   LessonResponse,
@@ -128,6 +139,75 @@ export class LessonsController {
     @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
   ): Promise<LessonSummary[]> {
     return this.lessonsService.listInstructorLessons(user, courseId);
+  }
+
+  @Post('courses/:courseId/lesson-media/video-upload-url')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.instructor, RoleName.platform_admin)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'Short-lived direct R2 upload authorization returned.' })
+  authorizeVideoUpload(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
+    @Body() input: AuthorizeVideoUploadDto,
+  ) {
+    return this.lessonsService.authorizeVideoUpload(
+      user,
+      courseId,
+      input.mimeType,
+      input.size,
+    );
+  }
+
+  @Post('courses/:courseId/lesson-media/video-finalize')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.instructor, RoleName.platform_admin)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'Uploaded R2 object verified and finalized.' })
+  finalizeVideoUpload(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
+    @Body() input: FinalizeVideoUploadDto,
+  ) {
+    return this.lessonsService.finalizeVideoUpload(
+      user,
+      courseId,
+      input.storageKey,
+      input.mimeType,
+      input.size,
+    );
+  }
+
+  @Post('courses/:courseId/lesson-media/documents')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.instructor, RoleName.platform_admin)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_LESSON_DOCUMENT_SIZE_BYTES },
+    }),
+  )
+  @ApiBearerAuth()
+  @ApiConsumes('multipart/form-data')
+  @ApiCreatedResponse({ description: 'Private lesson PDF uploaded.' })
+  uploadDocument(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
+    @UploadedFile() file?: UploadedLessonDocument,
+  ) {
+    return this.lessonsService.uploadDocument(user, courseId, file);
+  }
+
+  @Post('courses/:courseId/lesson-media/discard')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.instructor, RoleName.platform_admin)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Unattached lesson media discarded.' })
+  discardMedia(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('courseId', new ParseUUIDPipe({ version: '4' })) courseId: string,
+    @Body() input: DiscardLessonMediaDto,
+  ) {
+    return this.lessonsService.discardMedia(user, courseId, input.storageKey);
   }
 
   @Post('courses/:courseId/lessons')

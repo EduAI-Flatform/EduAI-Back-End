@@ -9,7 +9,11 @@ describe('LessonsController', () => {
   function createController() {
     const service = {
       createLesson: jest.fn().mockResolvedValue({ id: 'lesson-id' }),
+      authorizeVideoUpload: jest.fn().mockResolvedValue({ uploadUrl: 'signed' }),
+      finalizeVideoUpload: jest.fn().mockResolvedValue({ storageKey: 'key' }),
+      uploadDocument: jest.fn().mockResolvedValue({ storageKey: 'key' }),
       deleteLesson: jest.fn().mockResolvedValue({ deleted: true }),
+      discardMedia: jest.fn().mockResolvedValue({ deleted: true }),
       getLesson: jest.fn().mockResolvedValue({ id: 'lesson-id' }),
       listInstructorLessons: jest.fn().mockResolvedValue([{ id: 'lesson-id' }]),
       listLessons: jest.fn().mockResolvedValue([{ id: 'lesson-id' }]),
@@ -77,6 +81,10 @@ describe('LessonsController', () => {
   it('requires instructor or admin roles for mutations', () => {
     for (const method of [
       LessonsController.prototype.listInstructorLessons,
+      LessonsController.prototype.authorizeVideoUpload,
+      LessonsController.prototype.finalizeVideoUpload,
+      LessonsController.prototype.uploadDocument,
+      LessonsController.prototype.discardMedia,
       LessonsController.prototype.createLesson,
       LessonsController.prototype.updateLesson,
       LessonsController.prototype.deleteLesson,
@@ -87,6 +95,27 @@ describe('LessonsController', () => {
       ]);
       expect(Reflect.getMetadata(GUARDS_METADATA, method)).toBeDefined();
     }
+  });
+
+  it('delegates media authorization and upload with course context', async () => {
+    const { controller, service } = createController();
+    await controller.authorizeVideoUpload(user, 'course-id', {
+      mimeType: 'video/mp4',
+      size: 1024,
+    });
+    await controller.finalizeVideoUpload(user, 'course-id', {
+      storageKey: 'key',
+      mimeType: 'video/mp4',
+      size: 1024,
+    });
+    const file = { buffer: Buffer.from('%PDF-'), size: 5, mimetype: 'application/pdf' };
+    await controller.uploadDocument(user, 'course-id', file);
+    await controller.discardMedia(user, 'course-id', { storageKey: 'key' });
+
+    expect(service.authorizeVideoUpload).toHaveBeenCalledWith(user, 'course-id', 'video/mp4', 1024);
+    expect(service.finalizeVideoUpload).toHaveBeenCalledWith(user, 'course-id', 'key', 'video/mp4', 1024);
+    expect(service.uploadDocument).toHaveBeenCalledWith(user, 'course-id', file);
+    expect(service.discardMedia).toHaveBeenCalledWith(user, 'course-id', 'key');
   });
 
   it('uses optional authentication for lesson detail access', () => {

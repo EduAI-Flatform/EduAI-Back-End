@@ -5,6 +5,7 @@ model Portfolio {
   description String?
   projectUrl  String?   @map("project_url")
   imageUrl    String?   @map("image_url")
+  imageStorageKey String? @map("image_storage_key")
   startDate   DateTime? @map("start_date") @db.Date
   endDate     DateTime? @map("end_date") @db.Date
   createdAt   DateTime  @default(now()) @map("created_at")

@@ -293,6 +293,7 @@ export interface CourseProgressResponse {
 
 const manageableCourseSelect = {
   ...courseResponseSelect,
+  thumbnailStorageKey: true,
   instructorId: true,
   _count: {
     select: {
@@ -393,9 +394,10 @@ export class CoursesService {
     this.assertCanCreateCourse(user);
     this.assertValidPricePair(input.priceAmountMinor, input.priceCurrency);
     let slug = input.slug ?? (await this.createUniqueCourseSlug(input.title));
-    const thumbnailUrl = thumbnail
-      ? (await this.thumbnailStorage.uploadThumbnail(thumbnail)).url
-      : input.thumbnailUrl;
+    const storedThumbnail = thumbnail
+      ? await this.thumbnailStorage.uploadThumbnail(thumbnail)
+      : undefined;
+    const thumbnailUrl = storedThumbnail?.url ?? input.thumbnailUrl;
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
@@ -406,6 +408,7 @@ export class CoursesService {
             slug,
             description: input.description,
             thumbnailUrl,
+            thumbnailStorageKey: storedThumbnail?.key,
             badge: input.badge,
             priceAmountMinor: input.priceAmountMinor,
             priceCurrency: input.priceCurrency,
@@ -417,10 +420,12 @@ export class CoursesService {
         });
       } catch (error) {
         if (!this.isCourseSlugConflict(error)) {
+          if (storedThumbnail) await this.deleteThumbnailBestEffort(storedThumbnail.key);
           throw error;
         }
 
         if (input.slug || attempt === 3) {
+          if (storedThumbnail) await this.deleteThumbnailBestEffort(storedThumbnail.key);
           throw new ConflictException('Course slug is already in use');
         }
 
@@ -456,14 +461,17 @@ export class CoursesService {
         : course.priceCurrency;
     this.assertValidPricePair(priceAmountMinor, priceCurrency);
 
-    const thumbnailUrl = thumbnail
-      ? (await this.thumbnailStorage.uploadThumbnail(thumbnail)).url
-      : input.thumbnailUrl;
+    const storedThumbnail = thumbnail
+      ? await this.thumbnailStorage.uploadThumbnail(thumbnail)
+      : undefined;
+    const thumbnailUrl = storedThumbnail?.url ?? input.thumbnailUrl;
     const data = this.removeUndefinedFields({
       title: input.title,
       slug: input.slug,
       description: input.description,
       thumbnailUrl,
+      thumbnailStorageKey:
+        storedThumbnail?.key ?? (input.thumbnailUrl === null ? null : undefined),
       badge: input.badge,
       priceAmountMinor: input.priceAmountMinor,
       priceCurrency: input.priceCurrency,
@@ -472,12 +480,20 @@ export class CoursesService {
     });
 
     try {
-      return await this.prisma.course.update({
+      const updated = await this.prisma.course.update({
         where: { id: courseId },
         data,
         select: courseCommandResponseSelect,
       });
+      if (
+        course.thumbnailStorageKey &&
+        (storedThumbnail || input.thumbnailUrl === null)
+      ) {
+        await this.deleteThumbnailBestEffort(course.thumbnailStorageKey);
+      }
+      return updated;
     } catch (error) {
+      if (storedThumbnail) await this.deleteThumbnailBestEffort(storedThumbnail.key);
       if (this.isCourseSlugConflict(error)) {
         throw new ConflictException('Course slug is already in use');
       }
@@ -756,6 +772,14 @@ export class CoursesService {
     }
 
     return course;
+  }
+
+  private async deleteThumbnailBestEffort(key: string): Promise<void> {
+    try {
+      await this.thumbnailStorage.deleteThumbnail(key);
+    } catch {
+      // A failed cleanup must not roll back a successful database update.
+    }
   }
 
   private async findCourseDetailOrThrow(

@@ -11,7 +11,7 @@ async function bootstrap(): Promise<void> {
   const logger = app.get(AppLoggerService);
 
   app.useLogger(logger);
-  configureApp(app, config.app.nodeEnv, logger);
+  configureApp(app, config.app.nodeEnv, logger, config.r2.publicUrl);
   configureSwagger(app);
   configureRootRedirect(app);
 

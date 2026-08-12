@@ -329,6 +329,7 @@ function createService(options?: {
   };
 
   const storage = {
+    deleteThumbnail: jest.fn().mockResolvedValue(undefined),
     uploadThumbnail: jest.fn().mockResolvedValue({
       key: 'course-thumbnails/generated.png',
       url: 'https://cdn.example.com/course-thumbnails/generated.png',
@@ -596,7 +597,7 @@ describe('CoursesService', () => {
     );
   });
 
-  it('uploads a selected thumbnail and stores only the generated R2 URL', async () => {
+  it('uploads a selected thumbnail and stores the generated R2 URL and key', async () => {
     const { prisma, service, storage } = createService();
     const thumbnail = {
       buffer: Buffer.from('thumbnail'),
@@ -620,6 +621,7 @@ describe('CoursesService', () => {
         data: expect.objectContaining({
           thumbnailUrl:
             'https://cdn.example.com/course-thumbnails/generated.png',
+          thumbnailStorageKey: 'course-thumbnails/generated.png',
         }),
       }),
     );
@@ -714,6 +716,33 @@ describe('CoursesService', () => {
     expect(managementLookup.select).not.toHaveProperty('reviews');
     expect(managementLookup.select).not.toHaveProperty('instructor');
     expect(managementLookup.select).not.toHaveProperty('lessons');
+  });
+
+  it('replaces a thumbnail only after the course update and cleans up the old key', async () => {
+    const { prisma, service, storage } = createService({
+      storedCourse: {
+        ...course,
+        thumbnailUrl: 'https://cdn.example.com/course-thumbnails/old.png',
+        thumbnailStorageKey: 'course-thumbnails/old.png',
+      } as never,
+    });
+    const thumbnail = {
+      buffer: Buffer.from('thumbnail'),
+      mimetype: 'image/png',
+      originalname: 'new.png',
+      size: 9,
+    };
+
+    await service.updateCourse(instructor, course.id, { title: 'Updated' }, thumbnail);
+
+    expect(prisma.course.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          thumbnailStorageKey: 'course-thumbnails/generated.png',
+        }),
+      }),
+    );
+    expect(storage.deleteThumbnail).toHaveBeenCalledWith('course-thumbnails/old.png');
   });
 
   it('keeps the existing slug when only the course title changes', async () => {

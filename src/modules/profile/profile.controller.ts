@@ -25,7 +25,10 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { MAX_AVATAR_FILE_SIZE_BYTES } from './avatar-storage.service';
+import {
+  MAX_AVATAR_FILE_SIZE_BYTES,
+  MAX_PORTFOLIO_IMAGE_SIZE_BYTES,
+} from './avatar-storage.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
@@ -138,17 +141,26 @@ export class ProfileController {
   }
 
   @Post('portfolio')
+  @UseInterceptors(
+    FileInterceptor('image', { limits: { fileSize: MAX_PORTFOLIO_IMAGE_SIZE_BYTES } }),
+  )
+  @ApiConsumes('application/json', 'multipart/form-data')
   @ApiCreatedResponse({ description: 'Portfolio item added to current user profile.' })
   @ApiBadRequestResponse({ description: 'Invalid portfolio payload.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   createPortfolio(
     @CurrentUser('id') userId: string,
     @Body() input: CreatePortfolioDto,
+    @UploadedFile() image?: UploadedAvatarFile,
   ): Promise<PortfolioResponse> {
-    return this.profileService.createPortfolio(userId, input);
+    return this.profileService.createPortfolio(userId, input, image);
   }
 
   @Put('portfolio/:id')
+  @UseInterceptors(
+    FileInterceptor('image', { limits: { fileSize: MAX_PORTFOLIO_IMAGE_SIZE_BYTES } }),
+  )
+  @ApiConsumes('application/json', 'multipart/form-data')
   @ApiOkResponse({ description: 'Portfolio item updated successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid portfolio id or payload.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
@@ -157,8 +169,9 @@ export class ProfileController {
     @CurrentUser('id') userId: string,
     @Param('id', new ParseUUIDPipe({ version: '4' })) portfolioId: string,
     @Body() input: UpdatePortfolioDto,
+    @UploadedFile() image?: UploadedAvatarFile,
   ): Promise<PortfolioResponse> {
-    return this.profileService.updatePortfolio(userId, portfolioId, input);
+    return this.profileService.updatePortfolio(userId, portfolioId, input, image);
   }
 
   @Delete('portfolio/:id')

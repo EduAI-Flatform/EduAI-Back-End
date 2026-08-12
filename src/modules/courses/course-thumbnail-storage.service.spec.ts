@@ -44,7 +44,7 @@ describe('CourseThumbnailStorageService', () => {
     expect(result.key).toMatch(
       /^course-thumbnails\/[0-9a-f-]{36}\.webp$/,
     );
-    expect(result.url).toBe(`https://cdn.example.com/${result.key}`);
+    expect(result.url).toMatch(/^\/api\/v1\/media\/public\/[A-Za-z0-9_-]+$/);
     expect(S3Client.prototype.send).toHaveBeenCalledTimes(1);
   });
 

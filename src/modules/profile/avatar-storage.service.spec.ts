@@ -1,8 +1,16 @@
 import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { AvatarStorageService } from './avatar-storage.service';
 
+jest.mock('@aws-sdk/client-s3', () => ({
+  PutObjectCommand: jest.fn((input) => input),
+  S3Client: jest.fn().mockImplementation(() => ({ send: jest.fn() })),
+}));
+
 describe('AvatarStorageService', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   function createService(options?: {
+    configured?: boolean;
     nodeEnv?: 'development' | 'test' | 'production';
     publicUrl?: string;
   }) {
@@ -11,6 +19,10 @@ describe('AvatarStorageService', () => {
         nodeEnv: options?.nodeEnv ?? 'test',
       },
       r2: {
+        accountId: options?.configured === false ? undefined : 'account-id',
+        accessKeyId: options?.configured === false ? undefined : 'access-key-id',
+        secretAccessKey: options?.configured === false ? undefined : 'secret-access-key',
+        bucketName: options?.configured === false ? undefined : 'media-bucket',
         publicUrl: Object.prototype.hasOwnProperty.call(options ?? {}, 'publicUrl')
           ? options?.publicUrl
           : 'https://cdn.example.com/',
@@ -25,19 +37,37 @@ describe('AvatarStorageService', () => {
 
     await expect(
       service.uploadAvatar({
-        buffer: Buffer.from('avatar'),
+        buffer: png,
         mimetype: 'image/png',
         originalname: 'client-name.exe',
-        size: 6,
+        size: png.length,
       }),
     ).resolves.toEqual({
       key: expect.stringMatching(
         /^avatars\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/,
       ),
       url: expect.stringMatching(
-        /^https:\/\/cdn\.example\.com\/avatars\/[0-9a-f-]{36}\.png$/,
+        /^\/api\/v1\/media\/public\/[A-Za-z0-9_-]+$/,
       ),
     });
+
+    expect(S3Client).toHaveBeenCalledWith({
+      endpoint: 'https://account-id.r2.cloudflarestorage.com',
+      region: 'auto',
+      credentials: {
+        accessKeyId: 'access-key-id',
+        secretAccessKey: 'secret-access-key',
+      },
+    });
+    expect(PutObjectCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Bucket: 'media-bucket',
+        Body: png,
+        ContentLength: png.length,
+        ContentType: 'image/png',
+        Key: expect.stringMatching(/^avatars\/[0-9a-f-]{36}\.png$/),
+      }),
+    );
   });
 
   it('rejects unsupported avatar file types', async () => {
@@ -53,18 +83,18 @@ describe('AvatarStorageService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('does not fall back to local storage paths in production', async () => {
+  it('rejects missing R2 configuration instead of returning a fake URL', async () => {
     const service = createService({
+      configured: false,
       nodeEnv: 'production',
-      publicUrl: undefined,
     });
 
     await expect(
       service.uploadAvatar({
-        buffer: Buffer.from('avatar'),
-        mimetype: 'image/webp',
-        originalname: 'avatar.webp',
-        size: 6,
+        buffer: png,
+        mimetype: 'image/png',
+        originalname: 'avatar.png',
+        size: png.length,
       }),
     ).rejects.toBeInstanceOf(InternalServerErrorException);
   });

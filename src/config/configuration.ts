@@ -31,6 +31,8 @@ export interface BackendConfig {
     secretAccessKey?: string;
     bucketName?: string;
     publicUrl?: string;
+    maxVideoUploadSize: number;
+    maxDocumentUploadSize: number;
   };
   openai: {
     apiKey?: string;
@@ -79,6 +81,8 @@ export default function configuration(): BackendConfig {
       secretAccessKey: env.R2_SECRET_ACCESS_KEY,
       bucketName: env.R2_BUCKET_NAME,
       publicUrl: env.R2_PUBLIC_URL,
+      maxVideoUploadSize: env.MAX_VIDEO_UPLOAD_SIZE,
+      maxDocumentUploadSize: env.MAX_DOCUMENT_UPLOAD_SIZE,
     },
     openai: {
       apiKey: env.OPENAI_API_KEY,

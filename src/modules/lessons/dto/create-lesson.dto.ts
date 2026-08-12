@@ -70,6 +70,13 @@ export class CreateLessonDto {
   @MaxLength(2048)
   videoUrl?: string | null;
 
+  @ApiPropertyOptional({ nullable: true, description: 'Canonical private R2 object key.' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  videoStorageKey?: string | null;
+
   @ApiPropertyOptional({
     example: 'https://example.com/lesson.pdf',
     nullable: true,
@@ -79,6 +86,13 @@ export class CreateLessonDto {
   @IsUrl({ require_protocol: true })
   @MaxLength(2048)
   documentUrl?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Canonical private R2 object key.' })
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  documentStorageKey?: string | null;
 
   @ApiProperty({ example: 0, minimum: 0 })
   @IsInt()

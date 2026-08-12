@@ -6,7 +6,9 @@ model Lesson {
   type            LessonType
   content         String?
   videoUrl        String?            @map("video_url")
+  videoStorageKey String?            @map("video_storage_key")
   documentUrl     String?            @map("document_url")
+  documentStorageKey String?         @map("document_storage_key")
   orderIndex      Int                @map("order_index")
   durationMinutes Int?               @map("duration_minutes")
   isPreview       Boolean            @default(false) @map("is_preview")

@@ -5,6 +5,7 @@ model Course {
   slug         String             @unique
   description  String?
   thumbnailUrl String?            @map("thumbnail_url")
+  thumbnailStorageKey String?     @map("thumbnail_storage_key")
   badge        String?
   featuredRank Int?               @map("featured_rank")
   priceAmountMinor Int?           @map("price_amount_minor")

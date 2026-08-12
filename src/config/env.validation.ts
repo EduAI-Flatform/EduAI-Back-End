@@ -17,6 +17,8 @@ export interface ValidatedEnv {
   R2_SECRET_ACCESS_KEY?: string;
   R2_BUCKET_NAME?: string;
   R2_PUBLIC_URL?: string;
+  MAX_VIDEO_UPLOAD_SIZE: number;
+  MAX_DOCUMENT_UPLOAD_SIZE: number;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
   OPENAI_EMBEDDING_MODEL?: string;
@@ -90,6 +92,16 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     R2_SECRET_ACCESS_KEY: optionalString(config.R2_SECRET_ACCESS_KEY),
     R2_BUCKET_NAME: optionalString(config.R2_BUCKET_NAME),
     R2_PUBLIC_URL: optionalString(config.R2_PUBLIC_URL),
+    MAX_VIDEO_UPLOAD_SIZE: parsePositiveInteger(
+      config.MAX_VIDEO_UPLOAD_SIZE,
+      'MAX_VIDEO_UPLOAD_SIZE',
+      2 * 1024 * 1024 * 1024,
+    ),
+    MAX_DOCUMENT_UPLOAD_SIZE: parsePositiveInteger(
+      config.MAX_DOCUMENT_UPLOAD_SIZE,
+      'MAX_DOCUMENT_UPLOAD_SIZE',
+      50 * 1024 * 1024,
+    ),
     OPENAI_API_KEY: optionalString(config.OPENAI_API_KEY),
     OPENAI_MODEL: optionalString(config.OPENAI_MODEL),
     OPENAI_EMBEDDING_MODEL: optionalString(config.OPENAI_EMBEDDING_MODEL),

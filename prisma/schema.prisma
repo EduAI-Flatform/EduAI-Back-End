@@ -93,6 +93,7 @@ model User {
   passwordHash  String?            @map("password_hash")
   fullName      String             @map("full_name")
   avatarUrl     String?            @map("avatar_url")
+  avatarStorageKey String?         @map("avatar_storage_key")
   firebaseUid   String?            @unique @map("firebase_uid")
   authProvider  AuthProvider       @default(local) @map("auth_provider")
   emailVerified Boolean            @default(false) @map("email_verified")
@@ -207,6 +208,7 @@ model Portfolio {
   description String?
   projectUrl  String?   @map("project_url")
   imageUrl    String?   @map("image_url")
+  imageStorageKey String? @map("image_storage_key")
   startDate   DateTime? @map("start_date") @db.Date
   endDate     DateTime? @map("end_date") @db.Date
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -226,6 +228,7 @@ model Course {
   slug         String             @unique
   description  String?
   thumbnailUrl String?            @map("thumbnail_url")
+  thumbnailStorageKey String?     @map("thumbnail_storage_key")
   badge        String?
   featuredRank Int?               @map("featured_rank")
   priceAmountMinor Int?           @map("price_amount_minor")
@@ -281,7 +284,9 @@ model Lesson {
   type            LessonType
   content         String?
   videoUrl        String?            @map("video_url")
+  videoStorageKey String?            @map("video_storage_key")
   documentUrl     String?            @map("document_url")
+  documentStorageKey String?         @map("document_storage_key")
   orderIndex      Int                @map("order_index")
   durationMinutes Int?               @map("duration_minutes")
   isPreview       Boolean            @default(false) @map("is_preview")

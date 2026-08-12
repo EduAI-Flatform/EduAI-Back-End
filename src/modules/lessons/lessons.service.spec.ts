@@ -86,6 +86,7 @@ function createService(options?: { storedCourse?: typeof course | null; storedLe
       findFirst: jest.fn().mockResolvedValue(options?.storedCourse ?? course),
     },
     lesson: {
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn().mockResolvedValue(lesson),
       findFirst: jest.fn().mockResolvedValue(options?.storedLesson ?? lesson),
       findMany: jest.fn().mockResolvedValue([lesson]),
@@ -93,14 +94,85 @@ function createService(options?: { storedCourse?: typeof course | null; storedLe
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   };
+  const mediaStorage = {
+    assertLessonMedia: jest.fn().mockResolvedValue(undefined),
+    authorizeVideoUpload: jest.fn().mockResolvedValue({
+      storageKey: 'lessons/course-id/videos/generated.mp4',
+      uploadUrl: 'https://signed.example/upload',
+      expiresInSeconds: 900,
+      requiredHeaders: { 'Content-Type': 'video/mp4' },
+    }),
+    createDownloadUrl: jest.fn().mockResolvedValue('https://signed.example/download'),
+    delete: jest.fn().mockResolvedValue(undefined),
+    discard: jest.fn().mockResolvedValue(undefined),
+    finalizeVideoUpload: jest.fn().mockResolvedValue({
+      storageKey: 'lessons/course-id/videos/generated.mp4',
+    }),
+    uploadDocument: jest.fn().mockResolvedValue({
+      storageKey: 'lessons/course-id/documents/generated.pdf',
+    }),
+  };
 
   return {
+    mediaStorage,
     prisma,
-    service: new LessonsService(prisma as never),
+    service: new LessonsService(prisma as never, undefined, mediaStorage as never),
   };
 }
 
 describe('LessonsService', () => {
+  it('authorizes direct video uploads only for the owning instructor', async () => {
+    const { mediaStorage, service } = createService();
+
+    await expect(
+      service.authorizeVideoUpload(instructor, course.id, 'video/mp4', 1024),
+    ).resolves.toEqual(expect.objectContaining({ uploadUrl: expect.any(String) }));
+    expect(mediaStorage.authorizeVideoUpload).toHaveBeenCalledWith(
+      course.id,
+      'video/mp4',
+      1024,
+    );
+
+    await expect(
+      service.authorizeVideoUpload(otherInstructor, course.id, 'video/mp4', 1024),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service.authorizeVideoUpload(student, course.id, 'video/mp4', 1024),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('verifies canonical media keys before storing them on a lesson', async () => {
+    const { mediaStorage, service } = createService();
+    const videoStorageKey =
+      'lessons/course-id/videos/00000000-0000-4000-8000-000000000000.mp4';
+
+    await service.createLesson(instructor, course.id, {
+      title: 'Uploaded video',
+      slug: 'uploaded-video',
+      type: LessonType.video,
+      videoStorageKey,
+      orderIndex: 1,
+    });
+
+    expect(mediaStorage.assertLessonMedia).toHaveBeenCalledWith(
+      course.id,
+      videoStorageKey,
+      'videos',
+    );
+  });
+
+  it('does not discard media that is still referenced by an active lesson', async () => {
+    const { mediaStorage, prisma, service } = createService();
+    prisma.lesson.count.mockResolvedValue(1);
+    const storageKey =
+      'lessons/course-id/videos/00000000-0000-4000-8000-000000000000.mp4';
+
+    await expect(
+      service.discardMedia(instructor, course.id, storageKey),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(mediaStorage.discard).not.toHaveBeenCalled();
+  });
+
   it('returns complete lesson content for an anonymous public preview', async () => {
     const { prisma, service } = createService();
     prisma.lesson.findFirst.mockResolvedValue({
@@ -137,6 +209,52 @@ describe('LessonsService', () => {
         }),
       }),
     );
+  });
+
+  it('resolves private storage keys to short-lived playback URLs without exposing keys', async () => {
+    const { mediaStorage, prisma, service } = createService();
+    prisma.lesson.findFirst.mockResolvedValue({
+      ...lesson,
+      videoStorageKey: 'lessons/course-id/videos/stored.mp4',
+      course: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+        enrollments: [],
+      },
+    });
+
+    const response = await service.getLesson(undefined, lesson.id);
+
+    expect(response.videoUrl).toBe('https://signed.example/download');
+    expect(response).not.toHaveProperty('videoStorageKey');
+    expect(mediaStorage.createDownloadUrl).toHaveBeenCalledWith(
+      'lessons/course-id/videos/stored.mp4',
+    );
+  });
+
+  it('keeps legacy external video and document URLs readable', async () => {
+    const { mediaStorage, prisma, service } = createService();
+    prisma.lesson.findFirst.mockResolvedValue({
+      ...lesson,
+      documentUrl: 'https://example.com/legacy.pdf',
+      videoStorageKey: null,
+      documentStorageKey: null,
+      course: {
+        ...course,
+        status: CourseStatus.published,
+        visibility: CourseVisibility.public,
+        enrollments: [],
+      },
+    });
+
+    await expect(service.getLesson(undefined, lesson.id)).resolves.toEqual(
+      expect.objectContaining({
+        videoUrl: lesson.videoUrl,
+        documentUrl: 'https://example.com/legacy.pdf',
+      }),
+    );
+    expect(mediaStorage.createDownloadUrl).not.toHaveBeenCalled();
   });
 
   it('does not expose a moderated course preview publicly', async () => {
@@ -341,7 +459,9 @@ describe('LessonsService', () => {
         type: LessonType.video,
         content: undefined,
         videoUrl: 'https://example.com/video.mp4',
+        videoStorageKey: undefined,
         documentUrl: undefined,
+        documentStorageKey: undefined,
         orderIndex: 0,
         durationMinutes: 12,
         isPreview: true,
@@ -355,7 +475,9 @@ describe('LessonsService', () => {
         type: true,
         content: true,
         videoUrl: true,
+        videoStorageKey: true,
         documentUrl: true,
+        documentStorageKey: true,
         orderIndex: true,
         durationMinutes: true,
         isPreview: true,
@@ -402,7 +524,9 @@ describe('LessonsService', () => {
         type: true,
         content: true,
         videoUrl: true,
+        videoStorageKey: true,
         documentUrl: true,
+        documentStorageKey: true,
         orderIndex: true,
         durationMinutes: true,
         isPreview: true,
