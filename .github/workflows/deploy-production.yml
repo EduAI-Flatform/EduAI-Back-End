@@ -190,6 +190,24 @@ jobs:
 
             if [ "$attempt" -eq 12 ]; then
               echo "ERROR: Backend readiness check timed out"
+              pm2 logs eduai-backend --err --lines 100 --nostream 2>&1 | node -e '
+                let log = "";
+                process.stdin.on("data", (chunk) => { log += chunk; });
+                process.stdin.on("end", () => {
+                  const failureClass = /EADDRINUSE/.test(log)
+                    ? "PORT_BIND_FAILED"
+                    : /Cannot find module|MODULE_NOT_FOUND/.test(log)
+                      ? "MODULE_LOAD_FAILED"
+                      : /P1001|ECONNREFUSED.*(?:postgres|database)|database.*unreachable/i.test(log)
+                        ? "DATABASE_CONNECTION_FAILED"
+                        : /environment|configuration|config validation|missing required/i.test(log)
+                          ? "ENV_CONFIG_INVALID"
+                          : /SyntaxError|TypeError|ReferenceError/.test(log)
+                            ? "APPLICATION_STARTUP_ERROR"
+                            : "UNKNOWN_PROCESS_STARTUP_FAILURE";
+                  console.log(`deploymentFailureClass: ${failureClass}`);
+                });
+              '
               exit 1
             fi
 
