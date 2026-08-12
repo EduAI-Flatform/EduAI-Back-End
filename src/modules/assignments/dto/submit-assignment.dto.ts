@@ -18,6 +18,8 @@ export class SubmitAssignmentDto {
   content?: string | null;
 
   @ApiPropertyOptional({
+    type: String,
+    format: 'uri',
     deprecated: true,
     description: 'External file URLs are rejected; upload a multipart file instead.',
   })

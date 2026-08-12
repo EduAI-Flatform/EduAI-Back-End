@@ -197,11 +197,35 @@ jobs:
 
             if [ "$attempt" -eq 12 ]; then
               echo "ERROR: Backend readiness check timed out"
+              pm2 jlist | node -e '
+                let input = "";
+                process.stdin.on("data", (chunk) => { input += chunk; });
+                process.stdin.on("end", () => {
+                  const processInfo = JSON.parse(input).find((item) => item.name === "eduai-backend");
+                  if (!processInfo) {
+                    console.log("pm2Status: NOT_FOUND");
+                    return;
+                  }
+                  const uptimeSeconds = processInfo.pm2_env.pm_uptime
+                    ? Math.max(0, Math.floor((Date.now() - processInfo.pm2_env.pm_uptime) / 1000))
+                    : 0;
+                  console.log(`pm2Status: ${processInfo.pm2_env.status || "unknown"}`);
+                  console.log(`pm2RestartCount: ${processInfo.pm2_env.restart_time || 0}`);
+                  console.log(`pm2UptimeSeconds: ${uptimeSeconds}`);
+                });
+              '
+              if ss -ltn "sport = :${BACKEND_PORT}" | tail -n +2 | grep -q .; then
+                echo "expectedPortListening: true"
+              else
+                echo "expectedPortListening: false"
+              fi
               pm2 logs eduai-backend --err --lines 100 --nostream 2>&1 | node -e '
                 let log = "";
                 process.stdin.on("data", (chunk) => { log += chunk; });
                 process.stdin.on("end", () => {
-                  const failureClass = /EADDRINUSE/.test(log)
+                  const failureClass = /circular dependency.*property key: \"fileUrl\"/i.test(log)
+                    ? "SWAGGER_SCHEMA_GENERATION_FAILED"
+                    : /EADDRINUSE/.test(log)
                     ? "PORT_BIND_FAILED"
                     : /Cannot find module|MODULE_NOT_FOUND/.test(log)
                       ? "MODULE_LOAD_FAILED"
@@ -213,6 +237,35 @@ jobs:
                             ? "APPLICATION_STARTUP_ERROR"
                             : "UNKNOWN_PROCESS_STARTUP_FAILURE";
                   console.log(`deploymentFailureClass: ${failureClass}`);
+
+                  const sanitizedLines = log.split(/\r?\n/)
+                    .filter((line) => /Error|Exception|WARN|Nest|listen|ready|bootstrap/i.test(line))
+                    .map((line) => line
+                      .replace(/(?:\/home|\/var|\/opt)\/\S+/gi, "[SERVER_PATH]")
+                      .replace(/https?:\/\/\S+/gi, "[URL_REDACTED]")
+                      .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[HOST]")
+                      .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, "[ID]")
+                      .replace(/(token|password|secret|key)[=:]\S+/gi, "$1=[REDACTED]"))
+                    .slice(-10);
+                  console.log("sanitizedStderr:");
+                  sanitizedLines.forEach((line) => console.log(line));
+                });
+              '
+              pm2 logs eduai-backend --out --lines 100 --nostream 2>&1 | node -e '
+                let log = "";
+                process.stdin.on("data", (chunk) => { log += chunk; });
+                process.stdin.on("end", () => {
+                  const sanitizedLines = log.split(/\r?\n/)
+                    .filter((line) => /Error|Exception|WARN|Nest|listen|ready|bootstrap/i.test(line))
+                    .map((line) => line
+                      .replace(/(?:\/home|\/var|\/opt)\/\S+/gi, "[SERVER_PATH]")
+                      .replace(/https?:\/\/\S+/gi, "[URL_REDACTED]")
+                      .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[HOST]")
+                      .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, "[ID]")
+                      .replace(/(token|password|secret|key)[=:]\S+/gi, "$1=[REDACTED]"))
+                    .slice(-10);
+                  console.log("sanitizedStdout:");
+                  sanitizedLines.forEach((line) => console.log(line));
                 });
               '
               exit 1
