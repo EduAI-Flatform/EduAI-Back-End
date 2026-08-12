@@ -37,6 +37,15 @@ export class SubmissionResponseDto {
   @ApiPropertyOptional({ nullable: true })
   fileMimeType!: string | null;
 
+  @ApiProperty({ minimum: 1 })
+  version!: number;
+
+  @ApiProperty()
+  isLate!: boolean;
+
+  @ApiPropertyOptional({ nullable: true, type: 'object', additionalProperties: true })
+  rubricScores!: unknown | null;
+
   @ApiPropertyOptional({ nullable: true })
   score!: number | null;
 
@@ -64,6 +73,4 @@ export class SubmissionResponseDto {
   @ApiProperty({ type: SubmissionStudentDto })
   student!: SubmissionStudentDto;
 
-  @ApiProperty()
-  isLate!: boolean;
 }

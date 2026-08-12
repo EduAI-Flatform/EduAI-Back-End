@@ -167,6 +167,16 @@ export class AssignmentsController {
     return this.assignmentsService.getMySubmission(user.id, assignmentId);
   }
 
+  @Get('assignments/:id/submissions/me/history')
+  @Roles(RoleName.student)
+  @ApiOkResponse({ description: 'Current student submission history returned.', type: SubmissionResponseDto, isArray: true })
+  listMySubmissions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) assignmentId: string,
+  ): Promise<SubmissionResponse[]> {
+    return this.assignmentsService.listMySubmissions(user.id, assignmentId);
+  }
+
   @Get('assignments/:id/submissions')
   @Roles(...MANAGER_ROLES)
   @ApiOkResponse({

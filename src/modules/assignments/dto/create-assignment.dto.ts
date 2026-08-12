@@ -1,4 +1,4 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsArray,
+  IsEnum,
   IsIn,
   IsString,
   IsUUID,
@@ -14,6 +15,26 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+
+export enum AssignmentFinalScorePolicy {
+  latest = 'latest',
+  highest = 'highest',
+}
+
+export class RubricCriterionDto {
+  @ApiProperty({ example: 'Correctness' })
+  @Transform(({ value }) => trimString(value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(180)
+  criterion!: string;
+
+  @ApiProperty({ example: 5, minimum: 0.01, maximum: 10000 })
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(10000)
+  maxScore!: number;
+}
 
 function trimString(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
@@ -47,6 +68,17 @@ export class CreateAssignmentDto {
   @IsString()
   @MaxLength(10000)
   rubric?: string | null;
+
+  @ApiPropertyOptional({ type: [RubricCriterionDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @Type(() => RubricCriterionDto)
+  rubricCriteria?: RubricCriterionDto[] | null;
+
+  @ApiPropertyOptional({ enum: AssignmentFinalScorePolicy, default: AssignmentFinalScorePolicy.latest })
+  @IsOptional()
+  @IsEnum(AssignmentFinalScorePolicy)
+  finalScorePolicy?: AssignmentFinalScorePolicy;
 
   @ApiPropertyOptional({
     type: [String],

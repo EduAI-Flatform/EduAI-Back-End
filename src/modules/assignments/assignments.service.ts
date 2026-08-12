@@ -33,6 +33,8 @@ const assignmentResponseSelect = {
   description: true,
   instructions: true,
   rubric: true,
+  rubricCriteria: true,
+  finalScorePolicy: true,
   allowedFileMimeTypes: true,
   maxFileSizeBytes: true,
   dueDate: true,
@@ -52,6 +54,9 @@ const submissionResponseSelect = {
   fileName: true,
   fileSize: true,
   fileMimeType: true,
+  version: true,
+  isLate: true,
+  rubricScores: true,
   score: true,
   feedback: true,
   status: true,
@@ -79,7 +84,6 @@ type StoredSubmissionResponse = Prisma.SubmissionGetPayload<{
 
 export type SubmissionResponse = Omit<StoredSubmissionResponse, 'user'> & {
   student: StoredSubmissionResponse['user'];
-  isLate: boolean;
 };
 
 export interface DeletedAssignmentResponse {
@@ -115,6 +119,8 @@ export class AssignmentsService {
         description: input.description,
         instructions: input.instructions,
         rubric: input.rubric,
+        rubricCriteria: this.toNullableJson(input.rubricCriteria as Prisma.InputJsonValue | null | undefined),
+        finalScorePolicy: input.finalScorePolicy ?? 'latest',
         allowedFileMimeTypes: input.allowedFileMimeTypes,
         maxFileSizeBytes: input.maxFileSizeBytes,
         dueDate: this.toOptionalDate(input.dueDate),
@@ -205,6 +211,8 @@ export class AssignmentsService {
         description: input.description,
         instructions: input.instructions,
         rubric: input.rubric,
+        rubricCriteria: this.toNullableJson(input.rubricCriteria as Prisma.InputJsonValue | null | undefined),
+        finalScorePolicy: input.finalScorePolicy,
         allowedFileMimeTypes: input.allowedFileMimeTypes,
         maxFileSizeBytes: input.maxFileSizeBytes,
         dueDate: this.toOptionalDate(input.dueDate),
@@ -286,17 +294,8 @@ export class AssignmentsService {
       'ASSIGNMENT',
     );
 
-    if (file) {
-      if (!this.assignmentStorageService) {
-        throw new BadRequestException('Assignment file storage is unavailable');
-      }
-      const existingSubmission = await this.prisma.submission.findFirst({
-        where: { assignmentId, userId },
-        select: { id: true },
-      });
-      if (existingSubmission) {
-        throw new ConflictException('Assignment already submitted');
-      }
+    if (file && !this.assignmentStorageService) {
+      throw new BadRequestException('Assignment file storage is unavailable');
     }
 
     const storedFile = file
@@ -308,6 +307,15 @@ export class AssignmentsService {
 
     try {
       const submission = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "assignments" WHERE "id" = ${assignmentId} FOR UPDATE`,
+        );
+        const previousSubmission = await tx.submission.findFirst({
+          where: { assignmentId, userId },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        });
+        const submittedAt = new Date();
         const created = await tx.submission.create({
           data: {
             assignmentId,
@@ -322,6 +330,9 @@ export class AssignmentsService {
                   fileMimeType: file!.mimetype,
                 }
               : {}),
+            version: (previousSubmission?.version ?? 0) + 1,
+            isLate: Boolean(assignment.dueDate && submittedAt > assignment.dueDate),
+            submittedAt,
             status: SubmissionStatus.submitted,
           },
           select: submissionResponseSelect,
@@ -333,11 +344,8 @@ export class AssignmentsService {
         );
         return created;
       });
-      return this.toSubmissionResponse(submission, assignment.dueDate);
+      return this.toSubmissionResponse(submission);
     } catch (error) {
-      if (this.isUniqueConflict(error)) {
-        throw new ConflictException('Assignment already submitted');
-      }
       throw error;
     }
   }
@@ -365,16 +373,54 @@ export class AssignmentsService {
           },
         },
       },
+      orderBy: { version: 'desc' },
       select: {
         ...submissionResponseSelect,
-        assignment: { select: { dueDate: true } },
+        assignment: { select: { finalScorePolicy: true } },
       },
     });
 
     if (!submission) throw new NotFoundException('Submission not found');
 
-    const { assignment, ...response } = submission;
-    return this.toSubmissionResponse(response, assignment.dueDate);
+    if (submission.assignment.finalScorePolicy === 'highest') {
+      const highestGraded = await this.prisma.submission.findFirst({
+        where: { assignmentId, userId, status: SubmissionStatus.graded },
+        orderBy: [{ score: 'desc' }, { version: 'desc' }],
+        select: submissionResponseSelect,
+      });
+      if (highestGraded) return this.toSubmissionResponse(highestGraded);
+    }
+    const { assignment: _assignment, ...response } = submission;
+    return this.toSubmissionResponse(response);
+  }
+
+  async listMySubmissions(
+    userId: string,
+    assignmentId: string,
+  ): Promise<SubmissionResponse[]> {
+    await this.learningPathService?.assertStudentStepAccessible(
+      userId,
+      assignmentId,
+      'ASSIGNMENT',
+    );
+    const submissions = await this.prisma.submission.findMany({
+      where: {
+        assignmentId,
+        userId,
+        assignment: {
+          deletedAt: null,
+          status: AssignmentStatus.published,
+          course: {
+            deletedAt: null,
+            status: CourseStatus.published,
+            enrollments: { some: { userId } },
+          },
+        },
+      },
+      orderBy: { version: 'desc' },
+      select: submissionResponseSelect,
+    });
+    return submissions.map((submission) => this.toSubmissionResponse(submission));
   }
 
   async listSubmissions(
@@ -388,7 +434,7 @@ export class AssignmentsService {
       select: submissionResponseSelect,
     });
     return submissions.map((submission) =>
-      this.toSubmissionResponse(submission, assignment.dueDate),
+      this.toSubmissionResponse(submission),
     );
   }
 
@@ -411,6 +457,8 @@ export class AssignmentsService {
           select: {
             dueDate: true,
             maxScore: true,
+            rubricCriteria: true,
+            finalScorePolicy: true,
             course: { select: { instructorId: true } },
           },
         },
@@ -422,7 +470,12 @@ export class AssignmentsService {
     ) {
       throw new NotFoundException('Submission not found');
     }
-    if (input.score > submission.assignment.maxScore) {
+    const rubricScore = this.resolveRubricScore(
+      input.rubricScores,
+      submission.assignment.rubricCriteria,
+    );
+    const score = rubricScore ?? input.score;
+    if (score > submission.assignment.maxScore) {
       throw new BadRequestException('Score cannot exceed assignment max score');
     }
 
@@ -430,8 +483,9 @@ export class AssignmentsService {
       const graded = await tx.submission.update({
         where: { id: submissionId },
         data: {
-          score: input.score,
+          score,
           feedback: input.feedback,
+          rubricScores: input.rubricScores ?? undefined,
           status: SubmissionStatus.graded,
           gradedAt: new Date(),
           gradedById: user.id,
@@ -445,7 +499,7 @@ export class AssignmentsService {
           target: { type: 'submission', id: submissionId },
           metadata: {
             assignmentId: submission.assignmentId,
-            score: input.score,
+            score,
             status: SubmissionStatus.graded,
           },
         },
@@ -453,10 +507,7 @@ export class AssignmentsService {
       );
       return graded;
     });
-    return this.toSubmissionResponse(
-      gradedSubmission,
-      submission.assignment.dueDate,
-    );
+    return this.toSubmissionResponse(gradedSubmission);
   }
 
   private async findManageableCourseOrThrow(
@@ -539,16 +590,12 @@ export class AssignmentsService {
       (user.roles.includes(RoleName.instructor) && user.id === instructorId);
   }
 
-  private toSubmissionResponse(
-    submission: StoredSubmissionResponse,
-    dueDate: Date | null,
-  ): SubmissionResponse {
+  private toSubmissionResponse(submission: StoredSubmissionResponse): SubmissionResponse {
     const { user, ...response } = submission;
 
     return {
       ...response,
       student: user,
-      isLate: Boolean(dueDate && submission.submittedAt > dueDate),
     };
   }
 
@@ -570,5 +617,58 @@ export class AssignmentsService {
       error instanceof Prisma.PrismaClientKnownRequestError ||
       (typeof error === 'object' && error !== null && 'code' in error)
     ) && (error as { code?: string }).code === 'P2002';
+  }
+
+  private toNullableJson(
+    value: Prisma.InputJsonValue | null | undefined,
+  ): Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined {
+    if (value === undefined) return undefined;
+    return value === null ? Prisma.JsonNull : value;
+  }
+
+  private resolveRubricScore(
+    rubricScores: Prisma.InputJsonArray | null | undefined,
+    rubricCriteria: Prisma.JsonValue | null,
+  ): number | null {
+    if (!rubricCriteria || !Array.isArray(rubricCriteria)) return null;
+    if (!rubricScores || !Array.isArray(rubricScores)) {
+      throw new BadRequestException('Rubric scores are required');
+    }
+    const criteria = rubricCriteria.map((criterion) => {
+      if (
+        !criterion ||
+        typeof criterion !== 'object' ||
+        typeof (criterion as { criterion?: unknown }).criterion !== 'string' ||
+        typeof (criterion as { maxScore?: unknown }).maxScore !== 'number'
+      ) {
+        throw new BadRequestException('Assignment rubric is invalid');
+      }
+      return criterion as { criterion: string; maxScore: number };
+    });
+    if (rubricScores.length !== criteria.length) {
+      throw new BadRequestException('Each rubric criterion must be scored once');
+    }
+    const scores = rubricScores.map((rubricScore) => {
+      if (
+        !rubricScore ||
+        typeof rubricScore !== 'object' ||
+        typeof (rubricScore as { criterion?: unknown }).criterion !== 'string' ||
+        typeof (rubricScore as { score?: unknown }).score !== 'number'
+      ) {
+        throw new BadRequestException('Rubric score is invalid');
+      }
+      return rubricScore as { criterion: string; score: number };
+    });
+    const criteriaByName = new Map(criteria.map((criterion) => [criterion.criterion, criterion.maxScore]));
+    if (
+      new Set(scores.map((rubricScore) => rubricScore.criterion)).size !== scores.length ||
+      scores.some((rubricScore) => {
+        const maxScore = criteriaByName.get(rubricScore.criterion);
+        return maxScore === undefined || rubricScore.score < 0 || rubricScore.score > maxScore;
+      })
+    ) {
+      throw new BadRequestException('Rubric scores do not match assignment criteria');
+    }
+    return scores.reduce((total, rubricScore) => total + rubricScore.score, 0);
   }
 }

@@ -8,6 +8,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { Prisma } from '../../../../generated/prisma/client';
 
 function normalizeOptionalString(value: unknown): unknown {
   if (value === null || value === undefined) return value;
@@ -29,4 +30,8 @@ export class GradeSubmissionDto {
   @IsString()
   @MaxLength(10000)
   feedback?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, type: 'array', items: { type: 'object' } })
+  @IsOptional()
+  rubricScores?: Prisma.InputJsonArray | null;
 }

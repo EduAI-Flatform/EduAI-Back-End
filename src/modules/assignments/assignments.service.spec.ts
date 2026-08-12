@@ -42,6 +42,9 @@ function createService(storage?: { upload: jest.Mock }) {
     userId: student.id,
     content: 'Bài làm',
     fileUrl: null,
+    version: 1,
+    isLate: true,
+    rubricScores: null,
     score: null,
     feedback: null,
     status: SubmissionStatus.submitted,
@@ -57,6 +60,7 @@ function createService(storage?: { upload: jest.Mock }) {
     $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
       callback(prisma),
     ),
+    $queryRaw: jest.fn().mockResolvedValue([]),
     course: { findFirst: jest.fn().mockResolvedValue(course) },
     lesson: { findFirst: jest.fn() },
     assignment: {
@@ -161,6 +165,9 @@ describe('AssignmentsService', () => {
         userId: student.id,
         content: 'Bài làm',
         fileUrl: undefined,
+        version: 2,
+        isLate: true,
+        submittedAt: expect.any(Date),
         status: SubmissionStatus.submitted,
       },
       select: expect.any(Object),
@@ -228,13 +235,17 @@ describe('AssignmentsService', () => {
     ).rejects.toEqual(new NotFoundException('Assignment not found'));
   });
 
-  it('maps duplicate submissions to a conflict', async () => {
+  it('creates a new immutable submission version for resubmission', async () => {
     const { prisma, service } = createService();
-    prisma.submission.create.mockRejectedValue({ code: 'P2002' });
 
     await expect(
       service.submitAssignment(student.id, assignment.id, { content: 'Bài làm' }),
-    ).rejects.toEqual(new ConflictException('Assignment already submitted'));
+    ).resolves.toEqual(expect.objectContaining({ id: 'submission-id' }));
+    expect(prisma.submission.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ version: 2, isLate: true }),
+      }),
+    );
   });
 
   it('returns the authenticated student submission with grade state', async () => {
@@ -262,8 +273,9 @@ describe('AssignmentsService', () => {
           },
         },
       },
+      orderBy: { version: 'desc' },
       select: expect.objectContaining({
-        assignment: { select: { dueDate: true } },
+        assignment: { select: { finalScorePolicy: true } },
       }),
     });
   });
@@ -323,6 +335,51 @@ describe('AssignmentsService', () => {
         },
       },
       prisma,
+    );
+  });
+
+  it('derives rubric grades from the configured criteria', async () => {
+    const { prisma, service } = createService();
+    prisma.submission.findFirst.mockResolvedValue({
+      ...prisma.submission.findFirst.mock.results[0]?.value,
+      ...createService().submission,
+      assignment: {
+        ...assignment,
+        course,
+        rubricCriteria: [{ criterion: 'Correctness', maxScore: 5 }],
+      },
+    });
+
+    await service.gradeSubmission(instructor, 'submission-id', {
+      score: 0,
+      rubricScores: [{ criterion: 'Correctness', score: 4 }],
+    });
+
+    expect(prisma.submission.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ score: 4, rubricScores: [{ criterion: 'Correctness', score: 4 }] }),
+      }),
+    );
+  });
+
+  it('uses the configured highest-score policy for the final student result', async () => {
+    const { prisma, service, submission } = createService();
+    const highest = { ...submission, score: 9, status: SubmissionStatus.graded };
+    prisma.submission.findFirst
+      .mockResolvedValueOnce({
+        ...submission,
+        assignment: { finalScorePolicy: 'highest' },
+      })
+      .mockResolvedValueOnce(highest);
+
+    await expect(service.getMySubmission(student.id, assignment.id)).resolves.toEqual(
+      expect.objectContaining({ score: 9, status: SubmissionStatus.graded }),
+    );
+    expect(prisma.submission.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: SubmissionStatus.graded }),
+        orderBy: [{ score: 'desc' }, { version: 'desc' }],
+      }),
     );
   });
 
