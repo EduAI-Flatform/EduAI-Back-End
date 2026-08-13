@@ -17,6 +17,7 @@ import { LessonsModule } from './modules/lessons/lessons.module';
 import { LibraryModule } from './modules/library/library.module';
 import { ModerationModule } from './modules/moderation/moderation.module';
 import { MediaModule } from './modules/media/media.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -39,6 +40,7 @@ import { PrismaModule } from './prisma/prisma.module';
     LibraryModule,
     ModerationModule,
     MediaModule,
+    NotificationsModule,
     QuizzesModule,
     AssignmentsModule,
     ClassroomsModule,

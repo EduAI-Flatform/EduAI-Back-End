@@ -36,6 +36,8 @@ model User {
   certificates  Certificate[]
   courseReviews CourseReview[]
   auditLogs     AuditLog[]
+  notifications Notification[]
+  notificationPreferences NotificationPreference[]
 
   @@index([status])
   @@index([deletedAt])

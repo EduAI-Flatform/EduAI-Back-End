@@ -39,6 +39,31 @@ enum ModerationStatus {
   archived
 }
 
+enum NotificationChannel {
+  in_app
+  email
+
+  @@map("notification_channel")
+}
+
+enum NotificationCategory {
+  system
+  assignment
+  grade
+  classroom
+  certificate
+
+  @@map("notification_category")
+}
+
+enum NotificationDeliveryStatus {
+  pending
+  delivered
+  failed
+
+  @@map("notification_delivery_status")
+}
+
 enum LessonType {
   video
   pdf

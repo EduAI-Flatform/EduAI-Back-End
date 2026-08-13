@@ -51,6 +51,31 @@ enum ModerationStatus {
   archived
 }
 
+enum NotificationChannel {
+  in_app
+  email
+
+  @@map("notification_channel")
+}
+
+enum NotificationCategory {
+  system
+  assignment
+  grade
+  classroom
+  certificate
+
+  @@map("notification_category")
+}
+
+enum NotificationDeliveryStatus {
+  pending
+  delivered
+  failed
+
+  @@map("notification_delivery_status")
+}
+
 enum LessonType {
   video
   pdf
@@ -125,6 +150,8 @@ model User {
   certificates  Certificate[]
   courseReviews CourseReview[]
   auditLogs     AuditLog[]
+  notifications Notification[]
+  notificationPreferences NotificationPreference[]
 
   @@index([status])
   @@index([deletedAt])
@@ -734,6 +761,57 @@ enum CertificateStatus {
   revoked
 
   @@map("certificate_status")
+}
+
+model Notification {
+  id        String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String               @map("user_id") @db.Uuid
+  eventKey  String               @map("event_key")
+  type      String
+  category  NotificationCategory @default(system)
+  title     String
+  body      String
+  link      String?
+  isRead    Boolean              @default(false) @map("is_read")
+  readAt    DateTime?            @map("read_at")
+  createdAt DateTime             @default(now()) @map("created_at")
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries NotificationDelivery[]
+
+  @@unique([userId, eventKey])
+  @@index([userId, isRead, createdAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id        String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String               @map("user_id") @db.Uuid
+  channel   NotificationChannel
+  category  NotificationCategory
+  isEnabled Boolean              @map("is_enabled")
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channel, category])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+model NotificationDelivery {
+  id             String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  notificationId String                     @map("notification_id") @db.Uuid
+  channel        NotificationChannel
+  status         NotificationDeliveryStatus @default(pending)
+  attemptedAt    DateTime?                  @map("attempted_at")
+  deliveredAt    DateTime?                  @map("delivered_at")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  notification   Notification               @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, channel])
+  @@index([status, channel, createdAt])
+  @@map("notification_deliveries")
 }
 
 model AiConversation {
