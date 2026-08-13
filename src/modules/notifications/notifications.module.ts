@@ -11,6 +11,7 @@ import {
   ResendNotificationEmailProvider,
   resolveNotificationEmailProvider,
 } from './notification-email.provider';
+import { NotificationEmailDeliveryService } from './notification-email-delivery.service';
 import { NotificationsService } from './notifications.service';
 
 const notificationEmailProvider = {
@@ -29,6 +30,7 @@ const notificationEmailProvider = {
   controllers: [NotificationsController],
   providers: [
     NotificationsService,
+    NotificationEmailDeliveryService,
     DisabledNotificationEmailProvider,
     PreviewNotificationEmailProvider,
     ResendNotificationEmailProvider,

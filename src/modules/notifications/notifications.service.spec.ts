@@ -21,6 +21,7 @@ const notification = {
 };
 
 function createService(overrides: Record<string, unknown> = {}) {
+  const emailDeliveryService = { deliver: jest.fn().mockResolvedValue(true) };
   const prisma = {
     $transaction: jest.fn().mockResolvedValue([1, [notification]]),
     notification: {
@@ -40,8 +41,9 @@ function createService(overrides: Record<string, unknown> = {}) {
   };
 
   return {
+    emailDeliveryService,
     prisma,
-    service: new NotificationsService(prisma as never),
+    service: new NotificationsService(prisma as never, emailDeliveryService as never),
   };
 }
 
@@ -73,15 +75,53 @@ describe('NotificationsService.createForUser', () => {
           userId,
           eventKey: 'assignment:submission-id:graded',
           deliveries: {
-            create: expect.objectContaining({
-              channel: NotificationChannel.in_app,
-              status: 'delivered',
-            }),
+            create: expect.arrayContaining([
+              expect.objectContaining({
+                channel: NotificationChannel.in_app,
+                status: 'delivered',
+              }),
+            ]),
           },
         }),
         update: {},
       }),
     );
+  });
+
+  it('creates an email delivery only when the category is opted in', async () => {
+    const { emailDeliveryService, prisma, service } = createService({
+      notificationPreference: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ isEnabled: true }),
+      },
+    });
+
+    await service.createForUser({
+      userId,
+      eventKey: 'assignment:submission-id:graded',
+      type: 'assignment_graded',
+      category: NotificationCategory.assignment,
+      title: notification.title,
+      body: notification.body,
+    });
+
+    expect(prisma.notification.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          deliveries: {
+            create: expect.arrayContaining([
+              expect.objectContaining({
+                channel: NotificationChannel.email,
+                status: 'pending',
+              }),
+            ]),
+          },
+        }),
+      }),
+    );
+    expect(emailDeliveryService.deliver).toHaveBeenCalledWith(notificationId);
   });
 });
 

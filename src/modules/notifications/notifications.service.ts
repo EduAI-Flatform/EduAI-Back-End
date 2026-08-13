@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import {
   NotificationCategory,
   NotificationChannel,
@@ -6,6 +6,7 @@ import {
   Prisma,
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationEmailDeliveryService } from './notification-email-delivery.service';
 
 export { NotificationCategory, NotificationChannel };
 
@@ -74,16 +75,19 @@ const preferenceChannels = [
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    private readonly emailDeliveryService?: NotificationEmailDeliveryService,
+  ) {}
 
   async createForUser(input: CreateNotificationInput): Promise<NotificationResponse> {
-    const inAppEnabled = await this.isDeliveryEnabled(
-      input.userId,
-      NotificationChannel.in_app,
-      input.category,
-    );
+    const [inAppEnabled, emailEnabled] = await Promise.all([
+      this.isDeliveryEnabled(input.userId, NotificationChannel.in_app, input.category),
+      this.isDeliveryEnabled(input.userId, NotificationChannel.email, input.category),
+    ]);
 
-    return this.prisma.notification.upsert({
+    const notification = await this.prisma.notification.upsert({
       where: {
         userId_eventKey: {
           userId: input.userId,
@@ -98,14 +102,28 @@ export class NotificationsService {
         title: input.title,
         body: input.body,
         ...(input.link ? { link: input.link } : {}),
-        ...(inAppEnabled
+        ...((inAppEnabled || emailEnabled)
           ? {
               deliveries: {
-                create: {
-                  channel: NotificationChannel.in_app,
-                  status: NotificationDeliveryStatus.delivered,
-                  deliveredAt: new Date(),
-                },
+                create: [
+                  ...(inAppEnabled
+                    ? [
+                        {
+                          channel: NotificationChannel.in_app,
+                          status: NotificationDeliveryStatus.delivered,
+                          deliveredAt: new Date(),
+                        },
+                      ]
+                    : []),
+                  ...(emailEnabled
+                    ? [
+                        {
+                          channel: NotificationChannel.email,
+                          status: NotificationDeliveryStatus.pending,
+                        },
+                      ]
+                    : []),
+                ],
               },
             }
           : {}),
@@ -113,6 +131,12 @@ export class NotificationsService {
       update: {},
       select: notificationSelect,
     });
+
+    if (emailEnabled && this.emailDeliveryService) {
+      void this.emailDeliveryService.deliver(notification.id).catch(() => undefined);
+    }
+
+    return notification;
   }
 
   async listForUser(
