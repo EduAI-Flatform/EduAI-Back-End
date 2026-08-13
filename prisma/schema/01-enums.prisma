@@ -58,6 +58,7 @@ enum NotificationCategory {
 
 enum NotificationDeliveryStatus {
   pending
+  processing
   delivered
   failed
 

@@ -70,6 +70,7 @@ enum NotificationCategory {
 
 enum NotificationDeliveryStatus {
   pending
+  processing
   delivered
   failed
 
@@ -804,8 +805,10 @@ model NotificationDelivery {
   notificationId String                     @map("notification_id") @db.Uuid
   channel        NotificationChannel
   status         NotificationDeliveryStatus @default(pending)
+  attemptCount   Int                        @default(0) @map("attempt_count")
   attemptedAt    DateTime?                  @map("attempted_at")
   deliveredAt    DateTime?                  @map("delivered_at")
+  lastErrorCode  String?                    @map("last_error_code")
   createdAt      DateTime                   @default(now()) @map("created_at")
   notification   Notification               @relation(fields: [notificationId], references: [id], onDelete: Cascade)
 
