@@ -46,6 +46,10 @@ export class AppConfigService {
     return this.getConfigValue('ai');
   }
 
+  get email(): BackendConfig['email'] {
+    return this.getConfigValue('email');
+  }
+
   private getConfigValue<T extends keyof BackendConfig>(key: T): BackendConfig[T] {
     const value = this.configService.get<BackendConfig[T]>(key);
 

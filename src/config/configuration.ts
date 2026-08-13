@@ -49,6 +49,11 @@ export interface BackendConfig {
     timeoutMs: number;
     maxRetries: number;
   };
+  email: {
+    provider: ValidatedEnv['EMAIL_PROVIDER'];
+    from?: string;
+    resendApiKey?: string;
+  };
 }
 
 export default function configuration(): BackendConfig {
@@ -104,6 +109,11 @@ export default function configuration(): BackendConfig {
       provider: env.AI_PROVIDER,
       timeoutMs: env.AI_TIMEOUT_MS,
       maxRetries: env.AI_MAX_RETRIES,
+    },
+    email: {
+      provider: env.EMAIL_PROVIDER,
+      from: env.EMAIL_FROM,
+      resendApiKey: env.RESEND_API_KEY,
     },
   };
 }
