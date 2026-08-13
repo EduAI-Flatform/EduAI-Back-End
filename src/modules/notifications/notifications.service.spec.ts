@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import {
+  EmailPurpose,
   NotificationCategory,
   NotificationChannel,
   NotificationsService,
@@ -114,6 +115,48 @@ describe('NotificationsService.createForUser', () => {
             create: expect.arrayContaining([
               expect.objectContaining({
                 channel: NotificationChannel.email,
+                emailPurpose: EmailPurpose.optional,
+                status: 'pending',
+              }),
+            ]),
+          },
+        }),
+      }),
+    );
+    expect(emailDeliveryService.deliver).toHaveBeenCalledWith(notificationId);
+  });
+
+  it('creates transactional email delivery without consulting optional preferences', async () => {
+    const { emailDeliveryService, prisma, service } = createService();
+
+    await service.createForUser({
+      userId,
+      eventKey: 'account:email-verification:required',
+      type: 'email_verification_required',
+      emailPurpose: EmailPurpose.transactional,
+      category: NotificationCategory.system,
+      title: 'Verify your email',
+      body: 'Complete email verification to continue.',
+    });
+
+    expect(prisma.notificationPreference.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.notificationPreference.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userId_channel_category: expect.objectContaining({
+            channel: NotificationChannel.in_app,
+          }),
+        }),
+      }),
+    );
+    expect(prisma.notification.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          deliveries: {
+            create: expect.arrayContaining([
+              expect.objectContaining({
+                channel: NotificationChannel.email,
+                emailPurpose: EmailPurpose.transactional,
                 status: 'pending',
               }),
             ]),

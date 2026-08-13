@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { EmailPurpose } from '../../../generated/prisma/client';
 import { AppLoggerService } from '../../common/logging/app-logger.service';
 import { AppConfigService } from '../../config/app-config.service';
 
@@ -9,6 +10,7 @@ export type NotificationEmailDeliveryStatus = 'disabled' | 'previewed' | 'sent';
 export interface NotificationEmailMessage {
   category: string;
   html: string;
+  purpose: EmailPurpose;
   subject: string;
   text: string;
   to: string;
@@ -49,6 +51,7 @@ export class PreviewNotificationEmailProvider implements NotificationEmailProvid
   ): Promise<{ status: 'previewed' }> {
     this.logger.log('notification_email_preview', 'NotificationEmailProvider', {
       category: message.category,
+      purpose: message.purpose,
     });
     return { status: 'previewed' };
   }

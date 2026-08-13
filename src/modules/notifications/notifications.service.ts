@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import {
+  EmailPurpose,
   NotificationCategory,
   NotificationChannel,
   NotificationDeliveryStatus,
@@ -8,13 +9,14 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationEmailDeliveryService } from './notification-email-delivery.service';
 
-export { NotificationCategory, NotificationChannel };
+export { EmailPurpose, NotificationCategory, NotificationChannel };
 
 export interface CreateNotificationInput {
   userId: string;
   eventKey: string;
   type: string;
   category: NotificationCategory;
+  emailPurpose?: EmailPurpose;
   title: string;
   body: string;
   link?: string;
@@ -82,9 +84,12 @@ export class NotificationsService {
   ) {}
 
   async createForUser(input: CreateNotificationInput): Promise<NotificationResponse> {
+    const emailPurpose = input.emailPurpose ?? EmailPurpose.optional;
     const [inAppEnabled, emailEnabled] = await Promise.all([
       this.isDeliveryEnabled(input.userId, NotificationChannel.in_app, input.category),
-      this.isDeliveryEnabled(input.userId, NotificationChannel.email, input.category),
+      emailPurpose === EmailPurpose.transactional
+        ? Promise.resolve(true)
+        : this.isDeliveryEnabled(input.userId, NotificationChannel.email, input.category),
     ]);
 
     const notification = await this.prisma.notification.upsert({
@@ -119,6 +124,7 @@ export class NotificationsService {
                     ? [
                         {
                           channel: NotificationChannel.email,
+                          emailPurpose,
                           status: NotificationDeliveryStatus.pending,
                         },
                       ]

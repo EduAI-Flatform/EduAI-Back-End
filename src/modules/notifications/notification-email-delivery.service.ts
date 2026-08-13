@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  EmailPurpose,
   NotificationChannel,
   NotificationDeliveryStatus,
 } from '../../../generated/prisma/client';
@@ -48,6 +49,7 @@ export class NotificationEmailDeliveryService {
       },
       select: {
         id: true,
+        emailPurpose: true,
         notification: {
           select: {
             category: true,
@@ -73,7 +75,9 @@ export class NotificationEmailDeliveryService {
     }
 
     try {
-      const result = await this.provider.send(this.createMessage(delivery.notification));
+      const result = await this.provider.send(
+        this.createMessage(delivery.notification, delivery.emailPurpose),
+      );
       if (result.status === 'disabled') {
         await this.markFailed(delivery.id, 'provider_disabled');
         this.logger.warn('notification_email_provider_disabled', 'NotificationEmailDeliveryService', {
@@ -112,15 +116,21 @@ export class NotificationEmailDeliveryService {
     title: string;
     body: string;
     user: { email: string };
-  }): NotificationEmailMessage {
+  }, purpose: EmailPurpose | null): NotificationEmailMessage {
     const title = escapeHtml(notification.title);
     const body = escapeHtml(notification.body);
+    const emailPurpose = purpose ?? EmailPurpose.optional;
+    const subjectPrefix =
+      emailPurpose === EmailPurpose.transactional ? 'EduAI action required:' : 'EduAI:';
+    const heading =
+      emailPurpose === EmailPurpose.transactional ? 'Action required' : 'EduAI notification';
 
     return {
       category: notification.category,
-      subject: `EduAI: ${notification.title}`,
-      text: `${notification.title}\n\n${notification.body}`,
-      html: `<h1>${title}</h1><p>${body}</p>`,
+      purpose: emailPurpose,
+      subject: `${subjectPrefix} ${notification.title}`,
+      text: `${heading}\n\n${notification.title}\n\n${notification.body}`,
+      html: `<h1>${heading}</h1><h2>${title}</h2><p>${body}</p>`,
       to: notification.user.email,
     };
   }

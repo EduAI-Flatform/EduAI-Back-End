@@ -1,4 +1,5 @@
 import { AppLoggerService } from '../../common/logging/app-logger.service';
+import { EmailPurpose } from '../../../generated/prisma/client';
 import {
   DisabledNotificationEmailProvider,
   resolveNotificationEmailProvider,
@@ -16,6 +17,7 @@ describe('notification email providers', () => {
       provider.send({
         category: 'assignment',
         html: '<p>Due tomorrow</p>',
+        purpose: EmailPurpose.optional,
         subject: 'Assignment due',
         text: 'Due tomorrow',
         to: 'learner@example.test',
@@ -32,6 +34,7 @@ describe('notification email providers', () => {
       provider.send({
         category: 'certificate',
         html: '<p>Certificate ready</p>',
+        purpose: EmailPurpose.optional,
         subject: 'Certificate ready',
         text: 'Certificate ready',
         to: 'learner@example.test',
@@ -41,6 +44,7 @@ describe('notification email providers', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toContain('notification_email_preview');
     expect(entries[0]).toContain('certificate');
+    expect(entries[0]).toContain('optional');
     expect(entries[0]).not.toContain('learner@example.test');
     expect(entries[0]).not.toContain('Certificate ready');
   });
@@ -63,6 +67,7 @@ describe('notification email providers', () => {
       provider.send({
         category: 'grade',
         html: '<p>Grade published</p>',
+        purpose: EmailPurpose.optional,
         subject: 'Grade published',
         text: 'Grade published',
         to: 'learner@example.test',
@@ -102,6 +107,7 @@ describe('notification email providers', () => {
       provider.send({
         category: 'grade',
         html: '<p>Grade published</p>',
+        purpose: EmailPurpose.optional,
         subject: 'Grade published',
         text: 'Grade published',
         to: 'learner@example.test',

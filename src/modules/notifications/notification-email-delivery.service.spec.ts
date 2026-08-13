@@ -1,5 +1,9 @@
 import { AppLoggerService } from '../../common/logging/app-logger.service';
-import { NotificationChannel, NotificationDeliveryStatus } from '../../../generated/prisma/client';
+import {
+  EmailPurpose,
+  NotificationChannel,
+  NotificationDeliveryStatus,
+} from '../../../generated/prisma/client';
 import { NotificationEmailProvider } from './notification-email.provider';
 import { NotificationEmailDeliveryService } from './notification-email-delivery.service';
 
@@ -15,7 +19,11 @@ describe('NotificationEmailDeliveryService', () => {
     await expect(service.deliver(notificationId)).resolves.toBe(true);
 
     expect(provider.send).toHaveBeenCalledWith(
-      expect.objectContaining({ category: 'assignment', to: 'learner@example.test' }),
+      expect.objectContaining({
+        category: 'assignment',
+        purpose: EmailPurpose.optional,
+        to: 'learner@example.test',
+      }),
     );
     expect(prisma.notificationDelivery.update).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -54,6 +62,21 @@ describe('NotificationEmailDeliveryService', () => {
     expect(provider.send).not.toHaveBeenCalled();
     expect(prisma.notificationDelivery.findUnique).not.toHaveBeenCalled();
   });
+
+  it('preserves the transactional purpose in the provider message', async () => {
+    const { provider, prisma, service } = createService();
+    prisma.notificationDelivery.updateMany.mockResolvedValue({ count: 1 });
+    prisma.notificationDelivery.findUnique.mockResolvedValue({
+      ...deliveryFixture(),
+      emailPurpose: EmailPurpose.transactional,
+    });
+
+    await expect(service.deliver(notificationId)).resolves.toBe(true);
+
+    expect(provider.send).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: EmailPurpose.transactional }),
+    );
+  });
 });
 
 function createService() {
@@ -79,6 +102,7 @@ function createService() {
 function deliveryFixture() {
   return {
     id: deliveryId,
+    emailPurpose: EmailPurpose.optional,
     notification: {
       body: 'Assignment content',
       category: 'assignment',

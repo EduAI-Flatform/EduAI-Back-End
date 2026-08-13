@@ -77,6 +77,13 @@ enum NotificationDeliveryStatus {
   @@map("notification_delivery_status")
 }
 
+enum EmailPurpose {
+  transactional
+  optional
+
+  @@map("notification_email_purpose")
+}
+
 enum LessonType {
   video
   pdf
@@ -804,6 +811,7 @@ model NotificationDelivery {
   id             String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   notificationId String                     @map("notification_id") @db.Uuid
   channel        NotificationChannel
+  emailPurpose   EmailPurpose?              @map("email_purpose")
   status         NotificationDeliveryStatus @default(pending)
   attemptCount   Int                        @default(0) @map("attempt_count")
   attemptedAt    DateTime?                  @map("attempted_at")
