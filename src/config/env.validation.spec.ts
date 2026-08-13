@@ -158,4 +158,40 @@ describe('validateEnv', () => {
       'AI_MAX_RETRIES must be a non-negative integer',
     );
   });
+
+  it('defaults notification email delivery to disabled', () => {
+    const env = validateEnv({
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+      JWT_ACCESS_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+    });
+
+    expect(env.EMAIL_PROVIDER).toBe('disabled');
+  });
+
+  it('requires an environment-only sender and key when Resend delivery is enabled', () => {
+    const base = {
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+      JWT_ACCESS_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+      EMAIL_PROVIDER: 'resend',
+    };
+
+    expect(() => validateEnv(base)).toThrow('RESEND_API_KEY is required when EMAIL_PROVIDER=resend');
+    expect(() =>
+      validateEnv({ ...base, RESEND_API_KEY: 'test-key' }),
+    ).toThrow('EMAIL_FROM is required when EMAIL_PROVIDER=resend');
+  });
+
+  it('does not allow preview email delivery in production', () => {
+    expect(() =>
+      validateEnv({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+        JWT_ACCESS_SECRET: 'access-secret',
+        JWT_REFRESH_SECRET: 'refresh-secret',
+        EMAIL_PROVIDER: 'preview',
+      }),
+    ).toThrow('EMAIL_PROVIDER=preview is not allowed in production');
+  });
 });

@@ -1,5 +1,6 @@
 export type NodeEnvironment = 'development' | 'test' | 'production';
 export type AiProviderName = 'gemini' | 'openai' | 'mock';
+export type EmailProviderName = 'disabled' | 'preview' | 'resend';
 
 export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
@@ -31,6 +32,9 @@ export interface ValidatedEnv {
   AI_TIMEOUT_MS: number;
   AI_MAX_RETRIES: number;
   AI_PROVIDER: AiProviderName;
+  EMAIL_PROVIDER: EmailProviderName;
+  EMAIL_FROM?: string;
+  RESEND_API_KEY?: string;
 }
 
 export function loadBackendEnv(): ValidatedEnv {
@@ -63,6 +67,9 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   }
 
   const aiProvider = parseAiProvider(config.AI_PROVIDER);
+  const emailProvider = parseEmailProvider(config.EMAIL_PROVIDER);
+  const resendApiKey = optionalString(config.RESEND_API_KEY);
+  const emailFrom = optionalString(config.EMAIL_FROM);
   const aiApiKey = optionalString(config.AI_API_KEY);
   const aiModel = optionalString(config.AI_MODEL);
   const aiEmbeddingModel = optionalString(config.AI_EMBEDDING_MODEL);
@@ -125,10 +132,26 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
       2,
     ),
     AI_PROVIDER: aiProvider,
+    EMAIL_PROVIDER: emailProvider,
+    EMAIL_FROM: emailFrom,
+    RESEND_API_KEY: resendApiKey,
   };
 
   if (validated.NODE_ENV === 'production' && validated.AI_PROVIDER === 'mock') {
     throw new Error('AI_PROVIDER=mock is not allowed in production');
+  }
+
+  if (validated.NODE_ENV === 'production' && validated.EMAIL_PROVIDER === 'preview') {
+    throw new Error('EMAIL_PROVIDER=preview is not allowed in production');
+  }
+
+  if (validated.EMAIL_PROVIDER === 'resend') {
+    if (!validated.RESEND_API_KEY) {
+      throw new Error('RESEND_API_KEY is required when EMAIL_PROVIDER=resend');
+    }
+    if (!validated.EMAIL_FROM) {
+      throw new Error('EMAIL_FROM is required when EMAIL_PROVIDER=resend');
+    }
   }
 
   return validated;
@@ -169,6 +192,16 @@ function parseAiProvider(value: unknown): AiProviderName {
 
   if (provider !== 'gemini' && provider !== 'openai' && provider !== 'mock') {
     throw new Error('AI_PROVIDER must be gemini, openai, or mock');
+  }
+
+  return provider;
+}
+
+function parseEmailProvider(value: unknown): EmailProviderName {
+  const provider = optionalString(value) ?? 'disabled';
+
+  if (provider !== 'disabled' && provider !== 'preview' && provider !== 'resend') {
+    throw new Error('EMAIL_PROVIDER must be disabled, preview, or resend');
   }
 
   return provider;
