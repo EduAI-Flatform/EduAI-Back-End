@@ -23,6 +23,7 @@ const notification = {
 
 function createService(overrides: Record<string, unknown> = {}) {
   const emailDeliveryService = { deliver: jest.fn().mockResolvedValue(true) };
+  const notificationStreamService = { publish: jest.fn() };
   const prisma = {
     $transaction: jest.fn().mockResolvedValue([1, [notification]]),
     notification: {
@@ -43,14 +44,19 @@ function createService(overrides: Record<string, unknown> = {}) {
 
   return {
     emailDeliveryService,
+    notificationStreamService,
     prisma,
-    service: new NotificationsService(prisma as never, emailDeliveryService as never),
+    service: new NotificationsService(
+      prisma as never,
+      emailDeliveryService as never,
+      notificationStreamService as never,
+    ),
   };
 }
 
 describe('NotificationsService.createForUser', () => {
   it('deduplicates a recipient event key and creates only an in-app delivery', async () => {
-    const { prisma, service } = createService();
+    const { notificationStreamService, prisma, service } = createService();
 
     await expect(
       service.createForUser({
@@ -87,6 +93,7 @@ describe('NotificationsService.createForUser', () => {
         update: {},
       }),
     );
+    expect(notificationStreamService.publish).toHaveBeenCalledWith(userId, notification);
   });
 
   it('creates an email delivery only when the category is opted in', async () => {

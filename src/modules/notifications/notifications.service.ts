@@ -8,6 +8,7 @@ import {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationEmailDeliveryService } from './notification-email-delivery.service';
+import { NotificationStreamService } from './notification-stream.service';
 
 export { EmailPurpose, NotificationCategory, NotificationChannel };
 
@@ -81,6 +82,8 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     @Optional()
     private readonly emailDeliveryService?: NotificationEmailDeliveryService,
+    @Optional()
+    private readonly notificationStreamService?: NotificationStreamService,
   ) {}
 
   async createForUser(input: CreateNotificationInput): Promise<NotificationResponse> {
@@ -141,6 +144,8 @@ export class NotificationsService {
     if (emailEnabled && this.emailDeliveryService) {
       void this.emailDeliveryService.deliver(notification.id).catch(() => undefined);
     }
+
+    this.notificationStreamService?.publish(input.userId, notification);
 
     return notification;
   }
