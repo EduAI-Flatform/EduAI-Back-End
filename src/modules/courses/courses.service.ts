@@ -666,7 +666,7 @@ export class CoursesService {
     userId: string,
     lessonId: string,
   ): Promise<CourseProgressResponse> {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const lesson = await tx.lesson.findFirst({
         where: {
           id: lessonId,
@@ -719,8 +719,15 @@ export class CoursesService {
         lesson.courseId,
       );
 
-      return { ...progress, completed: completion.completed };
+      return {
+        progress: { ...progress, completed: completion.completed },
+        certificateIssued: completion.certificateIssued,
+      };
     });
+    if (result.certificateIssued) {
+      await this.courseCompletionService.publishCertificateIssued(result.certificateIssued);
+    }
+    return result.progress;
   }
 
   async getCourseProgress(

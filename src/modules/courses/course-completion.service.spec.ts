@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { NotificationCategory } from '../../../generated/prisma/client';
 import { CourseCompletionService } from './course-completion.service';
 
 interface CompletionCounts {
@@ -199,5 +200,52 @@ describe('CourseCompletionService', () => {
       'student-id',
       'course-id',
     );
+  });
+
+  it('publishes a certificate notification only for a newly issued certificate', async () => {
+    const { client } = createClient();
+    const issuedCertificate = { id: 'certificate-id', title: 'AI Foundations' };
+    const notifications = { createForUser: jest.fn().mockResolvedValue(undefined) };
+    const service = new CourseCompletionService(
+      {
+        issueForCompletion: jest.fn().mockResolvedValue({
+          certificate: issuedCertificate,
+          issued: true,
+        }),
+      } as never,
+      notifications as never,
+    );
+
+    const completion = await service.evaluateAndSync(
+      client as never,
+      'student-id',
+      'course-id',
+    );
+    await service.publishCertificateIssued(completion.certificateIssued);
+
+    expect(notifications.createForUser).toHaveBeenCalledWith({
+      userId: 'student-id',
+      eventKey: 'certificate-issued:certificate-id',
+      type: 'certificate.issued',
+      category: NotificationCategory.certificate,
+      title: 'Certificate issued',
+      body: 'Your certificate for AI Foundations is ready.',
+      link: '/dashboard/certificates',
+    });
+  });
+
+  it('does not reverse a committed completion when notification creation fails', async () => {
+    const notifications = {
+      createForUser: jest.fn().mockRejectedValue(new Error('notification unavailable')),
+    };
+    const service = new CourseCompletionService(certificateIssuer as never, notifications as never);
+
+    await expect(
+      service.publishCertificateIssued({
+        userId: 'student-id',
+        certificateId: 'certificate-id',
+        title: 'AI Foundations',
+      }),
+    ).resolves.toBeUndefined();
   });
 });

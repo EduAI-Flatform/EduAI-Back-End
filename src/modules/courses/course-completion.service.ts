@@ -1,10 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   AssignmentStatus,
+  NotificationCategory,
   Prisma,
   QuizStatus,
 } from '../../../generated/prisma/client';
 import { CertificatesService } from '../certificates/certificates.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type CompletionClient = Pick<
   Prisma.TransactionClient,
@@ -16,11 +18,21 @@ export interface CourseCompletionEvaluation {
   completedRequiredItems: number;
   totalRequiredItems: number;
   enrollmentUpdated: boolean;
+  certificateIssued?: CertificateIssuedNotification;
+}
+
+export interface CertificateIssuedNotification {
+  userId: string;
+  certificateId: string;
+  title: string;
 }
 
 @Injectable()
 export class CourseCompletionService {
-  constructor(private readonly certificatesService: CertificatesService) {}
+  constructor(
+    private readonly certificatesService: CertificatesService,
+    private readonly notificationsService?: NotificationsService,
+  ) {}
 
   async evaluateAndSync(
     client: CompletionClient,
@@ -102,12 +114,13 @@ export class CourseCompletionService {
       totalRequiredItems > 0 && completedRequiredItems === totalRequiredItems;
 
     if (enrollment.status === 'completed') {
-      await this.certificatesService.issueForCompletion(client, userId, courseId);
+      const issuance = await this.certificatesService.issueForCompletion(client, userId, courseId);
       return {
         completed: true,
         completedRequiredItems,
         totalRequiredItems,
         enrollmentUpdated: false,
+        ...this.toCertificateIssuedNotification(userId, issuance),
       };
     }
 
@@ -125,13 +138,48 @@ export class CourseCompletionService {
       data: { status: 'completed', completedAt: new Date() },
     });
 
-    await this.certificatesService.issueForCompletion(client, userId, courseId);
+    const issuance = await this.certificatesService.issueForCompletion(client, userId, courseId);
 
     return {
       completed: true,
       completedRequiredItems,
       totalRequiredItems,
       enrollmentUpdated: updated.count === 1,
+      ...this.toCertificateIssuedNotification(userId, issuance),
+    };
+  }
+
+  async publishCertificateIssued(
+    certificateIssued?: CertificateIssuedNotification,
+  ): Promise<void> {
+    if (!certificateIssued || !this.notificationsService) return;
+
+    try {
+      await this.notificationsService.createForUser({
+        userId: certificateIssued.userId,
+        eventKey: `certificate-issued:${certificateIssued.certificateId}`,
+        type: 'certificate.issued',
+        category: NotificationCategory.certificate,
+        title: 'Certificate issued',
+        body: `Your certificate for ${certificateIssued.title} is ready.`,
+        link: '/dashboard/certificates',
+      });
+    } catch {
+      // Completion and certificate issuance have already committed; notification delivery must not reverse them.
+    }
+  }
+
+  private toCertificateIssuedNotification(
+    userId: string,
+    issuance: Awaited<ReturnType<CertificatesService['issueForCompletion']>>,
+  ): { certificateIssued?: CertificateIssuedNotification } {
+    if (!issuance.issued) return {};
+    return {
+      certificateIssued: {
+        userId,
+        certificateId: issuance.certificate.id,
+        title: issuance.certificate.title,
+      },
     };
   }
 }

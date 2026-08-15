@@ -136,7 +136,7 @@ describe('CertificatesService.issueCertificate', () => {
 });
 
 describe('CertificatesService.issueForCompletion', () => {
-  it('uses the deterministic default template and returns the active certificate', async () => {
+  it('reports a newly issued certificate so the completion flow can notify after commit', async () => {
     const { prisma, service } = createService({
       course: { findUnique: jest.fn().mockResolvedValue({ id: courseId, title: 'AI Foundations' }) },
       certificateTemplate: { findFirst: jest.fn().mockResolvedValue({ id: templateId }) },
@@ -148,14 +148,17 @@ describe('CertificatesService.issueForCompletion', () => {
 
     await expect(
       service.issueForCompletion(prisma as never, userId, courseId),
-    ).resolves.toMatchObject({ id: certificate.id, status: 'active' });
+    ).resolves.toEqual({
+      certificate: expect.objectContaining({ id: certificate.id, status: 'active' }),
+      issued: true,
+    });
     expect(prisma.certificateTemplate.findFirst).toHaveBeenCalledWith({
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true },
     });
   });
 
-  it('is idempotent when an active certificate already exists', async () => {
+  it('does not report issuance when an active certificate already exists', async () => {
     const activeCertificate = { ...certificate, status: 'active' };
     const { prisma, service } = createService({
       certificate: {
@@ -166,7 +169,7 @@ describe('CertificatesService.issueForCompletion', () => {
 
     await expect(
       service.issueForCompletion(prisma as never, userId, courseId),
-    ).resolves.toEqual(activeCertificate);
+    ).resolves.toEqual({ certificate: activeCertificate, issued: false });
     expect(prisma.certificate.create).not.toHaveBeenCalled();
   });
 });

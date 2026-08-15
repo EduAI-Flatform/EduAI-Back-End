@@ -386,7 +386,7 @@ export class QuizzesService {
       questionId,
       answer,
     })) as Prisma.InputJsonArray;
-    const attempt = await this.prisma.$transaction(async (tx) => {
+    const transactionResult = await this.prisma.$transaction(async (tx) => {
       if (quiz.maxAttempts !== null && quiz.maxAttempts !== undefined) {
         // Serializes limit checks for this quiz before counting and inserting.
         // The parameterized row lock also prevents concurrent final submissions
@@ -414,16 +414,21 @@ export class QuizzesService {
         },
         select: attemptResponseSelect,
       });
-      await this.courseCompletionService.evaluateAndSync(
+      const completion = await this.courseCompletionService.evaluateAndSync(
         tx,
         userId,
         quiz.courseId,
       );
-      return created;
+      return { attempt: created, certificateIssued: completion.certificateIssued };
     });
+    if (transactionResult.certificateIssued) {
+      await this.courseCompletionService.publishCertificateIssued(
+        transactionResult.certificateIssued,
+      );
+    }
 
     return {
-      ...attempt,
+      ...transactionResult.attempt,
       scorePercent: this.roundScore(scorePercent),
       ...(quiz.showCorrectAnswers ? { answers: answerResults } : {}),
     };

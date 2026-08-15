@@ -307,7 +307,7 @@ export class AssignmentsService {
       : undefined;
 
     try {
-      const submission = await this.prisma.$transaction(async (tx) => {
+      const transactionResult = await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw(
           Prisma.sql`SELECT "id" FROM "assignments" WHERE "id" = ${assignmentId} FOR UPDATE`,
         );
@@ -338,14 +338,19 @@ export class AssignmentsService {
           },
           select: submissionResponseSelect,
         });
-        await this.courseCompletionService.evaluateAndSync(
+        const completion = await this.courseCompletionService.evaluateAndSync(
           tx,
           userId,
           assignment.courseId,
         );
-        return created;
+        return { submission: created, certificateIssued: completion.certificateIssued };
       });
-      return this.toSubmissionResponse(submission);
+      if (transactionResult.certificateIssued) {
+        await this.courseCompletionService.publishCertificateIssued(
+          transactionResult.certificateIssued,
+        );
+      }
+      return this.toSubmissionResponse(transactionResult.submission);
     } catch (error) {
       throw error;
     }

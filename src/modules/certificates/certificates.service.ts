@@ -53,6 +53,11 @@ export type CertificateResponse = Prisma.CertificateGetPayload<{
   select: typeof certificateResponseSelect;
 }>;
 
+export interface CertificateCompletionIssuance {
+  certificate: CertificateResponse;
+  issued: boolean;
+}
+
 export interface CertificateVerificationResponse {
   certificateCode: string;
   title: string;
@@ -150,9 +155,9 @@ export class CertificatesService {
     client: CertificateClient,
     userId: string,
     courseId: string,
-  ): Promise<CertificateResponse> {
+  ): Promise<CertificateCompletionIssuance> {
     const existing = await this.findActive(client, userId, courseId);
-    if (existing) return existing;
+    if (existing) return { certificate: existing, issued: false };
     const [course, template] = await Promise.all([
       client.course.findUnique({ where: { id: courseId }, select: { id: true, title: true } }),
       client.certificateTemplate.findFirst({
@@ -162,7 +167,10 @@ export class CertificatesService {
     ]);
     if (!course) throw new NotFoundException('Course not found');
     if (!template) throw new NotFoundException('Certificate template not found');
-    return this.createCertificate(client, userId, course, template.id);
+    return {
+      certificate: await this.createCertificate(client, userId, course, template.id),
+      issued: true,
+    };
   }
 
   async revokeCertificate(

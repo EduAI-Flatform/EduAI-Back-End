@@ -138,7 +138,7 @@ export class LearningPathService {
       throw new ForbiddenException('Student role required');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const lesson = await tx.lesson.findFirst({
         where: { id: lessonId, deletedAt: null, course: { deletedAt: null } },
         select: {
@@ -194,13 +194,17 @@ export class LearningPathService {
       });
 
       const path = await this.getLearningPathForUser(tx, user.id, lesson.courseId);
-      await this.courseCompletionService.evaluateAndSync(
+      const completion = await this.courseCompletionService.evaluateAndSync(
         tx,
         user.id,
         lesson.courseId,
       );
-      return path;
+      return { path, certificateIssued: completion.certificateIssued };
     });
+    if (result.certificateIssued) {
+      await this.courseCompletionService.publishCertificateIssued(result.certificateIssued);
+    }
+    return result.path;
   }
 
   async getLessonProgress(

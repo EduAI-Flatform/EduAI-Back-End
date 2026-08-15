@@ -94,7 +94,12 @@ function createService(storage?: { upload: jest.Mock; createDownloadUrl?: jest.M
     record: jest.fn().mockResolvedValue(undefined),
   };
   const completionService = {
-    evaluateAndSync: jest.fn().mockResolvedValue(undefined),
+    evaluateAndSync: jest.fn().mockResolvedValue({
+      completed: false,
+      completedRequiredItems: 0,
+      totalRequiredItems: 1,
+      enrollmentUpdated: false,
+    }),
   };
   return {
     auditService,
