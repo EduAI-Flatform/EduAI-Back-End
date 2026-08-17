@@ -88,7 +88,7 @@ export class ProfileController {
   updateLearningProfile(
     @CurrentUser('id') userId: string,
     @Body() input: UpdateLearningProfileDto,
-  ): Promise<LearningProfileResponse> {
+  ): Promise<LearningProfileResponse | null> {
     return this.profileService.updateLearningProfile(userId, input);
   }
 

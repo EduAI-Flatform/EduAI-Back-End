@@ -56,6 +56,7 @@ describe('ProfileService', () => {
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       learningProfile: {
+        delete: jest.fn().mockResolvedValue(learningProfile),
         findUnique: jest.fn().mockResolvedValue(learningProfile),
         findUniqueOrThrow: jest.fn().mockResolvedValue(learningProfile),
         upsert: jest.fn().mockResolvedValue(learningProfile),
@@ -370,6 +371,22 @@ describe('ProfileService', () => {
     })).rejects.toBeInstanceOf(BadRequestException);
 
     expect((prisma as unknown as { $transaction: jest.Mock }).$transaction).not.toHaveBeenCalled();
+  });
+
+  it('deletes an explicitly cleared learning profile for clean onboarding', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.updateLearningProfile('user-id', {
+      learningGoal: null,
+      currentLevel: null,
+      weeklyAvailabilityHours: null,
+      skillGaps: [],
+    })).resolves.toBeNull();
+
+    expect(prisma.learningProfile.delete).toHaveBeenCalledWith({
+      where: { id: 'learning-profile-id' },
+    });
+    expect(prisma.learningProfile.upsert).not.toHaveBeenCalled();
   });
 
   it('removes a newly uploaded avatar when the database update fails', async () => {

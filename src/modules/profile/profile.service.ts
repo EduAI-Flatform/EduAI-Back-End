@@ -249,12 +249,28 @@ export class ProfileService {
   async updateLearningProfile(
     userId: string,
     input: UpdateLearningProfileDto,
-  ): Promise<LearningProfileResponse> {
+  ): Promise<LearningProfileResponse | null> {
     this.assertUniqueSkillGapNames(input.skillGaps);
     const { skillGaps, ...profileInput } = input;
     const profileData = this.removeUndefinedFields(profileInput);
 
     return this.prisma.$transaction(async (tx) => {
+      const isExplicitlyEmpty =
+        profileInput.learningGoal === null &&
+        profileInput.currentLevel === null &&
+        profileInput.weeklyAvailabilityHours === null &&
+        skillGaps?.length === 0;
+
+      if (isExplicitlyEmpty) {
+        const existingProfile = await tx.learningProfile.findUnique({
+          where: { userId },
+        });
+        if (existingProfile) {
+          await tx.learningProfile.delete({ where: { id: existingProfile.id } });
+        }
+        return null;
+      }
+
       const profile = await tx.learningProfile.upsert({
         where: { userId },
         create: { userId, ...profileData },

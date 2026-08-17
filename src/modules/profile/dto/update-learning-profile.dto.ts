@@ -12,7 +12,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export const LEARNING_LEVELS = ['beginner', 'intermediate', 'advanced'] as const;
 type LearningLevel = (typeof LEARNING_LEVELS)[number];
@@ -24,7 +24,7 @@ function normalizeOptionalString(value: unknown): unknown {
 }
 
 export class LearningSkillGapDto {
-  @ApiPropertyOptional({ example: 'Machine Learning' })
+  @ApiProperty({ example: 'Machine Learning' })
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsString()
   @MinLength(1)
@@ -36,7 +36,7 @@ export class LearningSkillGapDto {
   @IsIn(LEARNING_LEVELS)
   currentLevel?: LearningLevel | null;
 
-  @ApiPropertyOptional({ enum: LEARNING_LEVELS })
+  @ApiProperty({ enum: LEARNING_LEVELS })
   @IsIn(LEARNING_LEVELS)
   targetLevel!: LearningLevel;
 }
