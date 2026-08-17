@@ -14,6 +14,22 @@ model AiConversation {
   @@map("ai_conversations")
 }
 
+model AiLearningPath {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  version    Int
+  inputJson  Json     @map("input_json")
+  outputJson Json     @map("output_json")
+  provider   String
+  model      String
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, version])
+  @@index([userId, createdAt])
+  @@map("ai_learning_paths")
+}
+
 model AiMessage {
   id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   conversationId String         @map("conversation_id") @db.Uuid

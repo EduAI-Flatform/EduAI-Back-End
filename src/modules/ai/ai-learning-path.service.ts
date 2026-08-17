@@ -1,0 +1,47 @@
+import { BadGatewayException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { CourseStatus, CourseVisibility, Prisma, RoleName } from '../../../generated/prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { AI_PROVIDER, AiProvider } from './ai-provider';
+import { AiRateLimitService } from './ai-rate-limit.service';
+
+export interface LearningPathMilestone { courseId: string; reason: string; priority: number; }
+export interface LearningPathOutput { schemaVersion: 'v1'; milestones: LearningPathMilestone[]; }
+
+@Injectable()
+export class AiLearningPathService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rateLimit: AiRateLimitService,
+    @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
+  ) {}
+
+  async regenerate(user: AuthenticatedUser): Promise<{ id: string; version: number; path: LearningPathOutput }> {
+    if (!user.roles.includes(RoleName.student)) throw new ForbiddenException('Student role required');
+    await this.rateLimit.assertLearningPathAllowed(user.id);
+    const [profile, courses, latest] = await Promise.all([
+      this.prisma.learningProfile.findUnique({ where: { userId: user.id }, select: { learningGoal: true, currentLevel: true, weeklyAvailabilityHours: true, skillGaps: { select: { name: true, currentLevel: true, targetLevel: true } } } }),
+      this.prisma.course.findMany({
+        where: { status: CourseStatus.published, deletedAt: null, OR: [{ visibility: CourseVisibility.public }, { enrollments: { some: { userId: user.id, status: { in: ['active', 'completed'] } } } }] },
+        select: { id: true, title: true, description: true, level: true, enrollments: { where: { userId: user.id }, select: { status: true } }, progress: { where: { userId: user.id }, select: { progressPercent: true } } },
+        take: 30,
+      }),
+      this.prisma.aiLearningPath.findFirst({ where: { userId: user.id }, orderBy: { version: 'desc' }, select: { version: true } }),
+    ]);
+    const input = { profile, courses: courses.map((course) => ({ id: course.id, title: course.title, description: course.description, level: course.level, enrolled: course.enrollments.length > 0, progressPercent: course.progress[0]?.progressPercent ?? 0 })) };
+    const completion = await this.aiProvider.complete({ json: true, responseSchema: this.schema(), messages: [{ role: 'system', content: 'Return only valid JSON. Recommend only supplied course IDs and do not invent course content.' }, { role: 'user', content: `Create a short learner path from this safe JSON:\n${JSON.stringify(input)}` }] });
+    const path = this.validate(completion.content, new Set(courses.map((course) => course.id)));
+    const created = await this.prisma.aiLearningPath.create({ data: { userId: user.id, version: (latest?.version ?? 0) + 1, inputJson: input as Prisma.InputJsonValue, outputJson: path as unknown as Prisma.InputJsonValue, provider: this.aiProvider.getModel() === 'mock' ? 'mock' : 'configured', model: this.aiProvider.getModel() }, select: { id: true, version: true } });
+    return { ...created, path };
+  }
+
+  private validate(raw: string | null, courseIds: Set<string>): LearningPathOutput {
+    try {
+      const parsed = JSON.parse((raw ?? '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')) as LearningPathOutput;
+      if (parsed?.schemaVersion !== 'v1' || !Array.isArray(parsed.milestones) || parsed.milestones.length > 6 || parsed.milestones.some((item) => !item || !courseIds.has(item.courseId) || !Number.isInteger(item.priority) || item.priority < 1 || typeof item.reason !== 'string' || !item.reason.trim())) throw new Error();
+      return { schemaVersion: 'v1', milestones: parsed.milestones.map((item) => ({ courseId: item.courseId, priority: item.priority, reason: item.reason.trim() })) };
+    } catch { throw new BadGatewayException('AI provider returned invalid learning path content'); }
+  }
+
+  private schema(): Record<string, unknown> { return { type: 'object', properties: { schemaVersion: { const: 'v1' }, milestones: { type: 'array', maxItems: 6, items: { type: 'object', properties: { courseId: { type: 'string' }, reason: { type: 'string' }, priority: { type: 'integer', minimum: 1 } }, required: ['courseId', 'reason', 'priority'] } } }, required: ['schemaVersion', 'milestones'] }; }
+}

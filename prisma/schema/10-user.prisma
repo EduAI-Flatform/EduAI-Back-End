@@ -32,6 +32,7 @@ model User {
   communityComments CommunityComment[] @relation("CommunityCommentAuthor")
   communityReactions CommunityReaction[]
   aiConversations AiConversation[]
+  aiLearningPaths AiLearningPath[]
   aiGeneratedQuizzes AiGeneratedQuiz[]
   aiFlashcards AiFlashcard[]
   certificates  Certificate[]

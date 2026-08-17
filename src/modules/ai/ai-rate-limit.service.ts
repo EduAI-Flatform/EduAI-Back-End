@@ -24,6 +24,10 @@ export class AiRateLimitService {
     return this.assertAllowed(userId, 'flashcards');
   }
 
+  async assertLearningPathAllowed(userId: string): Promise<void> {
+    return this.assertAllowed(userId, 'learning-path');
+  }
+
   private async assertAllowed(userId: string, operation: string): Promise<void> {
     const key = `ai:${operation}:${userId}:${new Date().toISOString().slice(0, 10)}`;
     const redis = this.redisConfig.getClient();

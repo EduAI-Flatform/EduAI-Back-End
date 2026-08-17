@@ -15,6 +15,7 @@ import { OpenAiService } from './openai.service';
 import { GeminiService } from './gemini.service';
 import { AI_PROVIDER, AiProvider } from './ai-provider';
 import { MockAiProviderService } from './mock-ai-provider.service';
+import { AiLearningPathService } from './ai-learning-path.service';
 
 const aiProvider = {
   provide: AI_PROVIDER,
@@ -42,6 +43,7 @@ const aiProvider = {
     AiSummaryService,
     AiGenerationService,
     AiSourcesService,
+    AiLearningPathService,
     OpenAiService,
     GeminiService,
     MockAiProviderService,

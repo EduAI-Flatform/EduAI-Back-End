@@ -154,6 +154,7 @@ model User {
   communityComments CommunityComment[] @relation("CommunityCommentAuthor")
   communityReactions CommunityReaction[]
   aiConversations AiConversation[]
+  aiLearningPaths AiLearningPath[]
   aiGeneratedQuizzes AiGeneratedQuiz[]
   aiFlashcards AiFlashcard[]
   certificates  Certificate[]
@@ -868,6 +869,22 @@ model AiConversation {
   @@index([userId])
   @@index([contextType, contextId])
   @@map("ai_conversations")
+}
+
+model AiLearningPath {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  version    Int
+  inputJson  Json     @map("input_json")
+  outputJson Json     @map("output_json")
+  provider   String
+  model      String
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, version])
+  @@index([userId, createdAt])
+  @@map("ai_learning_paths")
 }
 
 model AiMessage {

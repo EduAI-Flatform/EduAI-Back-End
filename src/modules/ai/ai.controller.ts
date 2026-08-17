@@ -20,6 +20,8 @@ import { CreateAiGenerationDto } from './dto/create-ai-generation.dto';
 import { AiSourcesService } from './ai-sources.service';
 import { ListAiSourcesQueryDto } from './dto/list-ai-sources-query.dto';
 import { AiSourceResponseDto } from './dto/ai-source-response.dto';
+import { AiLearningPathService } from './ai-learning-path.service';
+import { AiLearningPathResponseDto } from './dto/ai-learning-path-response.dto';
 
 @ApiTags('AI')
 @Controller('ai')
@@ -29,6 +31,7 @@ export class AiController {
     private readonly aiSummaryService: AiSummaryService,
     private readonly aiGenerationService: AiGenerationService,
     private readonly aiSourcesService: AiSourcesService,
+    private readonly aiLearningPathService: AiLearningPathService,
   ) {}
 
   @Get('sources')
@@ -45,6 +48,14 @@ export class AiController {
     @Query() query: ListAiSourcesQueryDto,
   ) {
     return this.aiSourcesService.listSources(user, query);
+  }
+
+  @Post('learning-paths/regenerate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'Versioned AI learning path generated successfully.', type: AiLearningPathResponseDto })
+  regenerateLearningPath(@CurrentUser() user: AuthenticatedUser) {
+    return this.aiLearningPathService.regenerate(user);
   }
 
   @Post('chat')
