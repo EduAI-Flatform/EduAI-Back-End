@@ -9,6 +9,7 @@ describe('AiController', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const user = { id: 'user-id', roles: [] };
     const input = { message: 'Hello AI' };
@@ -25,6 +26,7 @@ describe('AiController', () => {
     const controller = new AiController(
       chat as never,
       summary as never,
+      {} as never,
       {} as never,
       {} as never,
     );
@@ -52,6 +54,7 @@ describe('AiController', () => {
       {} as never,
       {} as never,
       sources as never,
+      {} as never,
     );
     const user = { id: 'user-id', roles: [] };
     const query = { sourceType: 'lesson' as const };
@@ -66,5 +69,14 @@ describe('AiController', () => {
         AiController.prototype.listSources,
       ),
     ).toBeDefined();
+  });
+
+  it('delegates learning-path regeneration and protects it with JWT authentication', async () => {
+    const learningPath = { regenerate: jest.fn().mockResolvedValue({ id: 'path-id', version: 1 }) };
+    const controller = new AiController({} as never, {} as never, {} as never, {} as never, learningPath as never);
+    const user = { id: 'user-id', roles: [] };
+    await expect(controller.regenerateLearningPath(user)).resolves.toEqual({ id: 'path-id', version: 1 });
+    expect(learningPath.regenerate).toHaveBeenCalledWith(user);
+    expect(Reflect.getMetadata(GUARDS_METADATA, AiController.prototype.regenerateLearningPath)).toBeDefined();
   });
 });
