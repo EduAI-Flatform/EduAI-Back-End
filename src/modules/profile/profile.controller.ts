@@ -33,6 +33,7 @@ import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdateLearningProfileDto } from './dto/update-learning-profile.dto';
 import { ProfileService } from './profile.service';
 import {
   AvatarUploadResponse,
@@ -43,6 +44,7 @@ import {
   PortfolioResponse,
 } from './types/portfolio-response.types';
 import { ProfileResponse } from './types/profile-response.types';
+import { LearningProfileResponse } from './types/learning-profile-response.types';
 import { DeleteSkillResponse, SkillResponse } from './types/skill-response.types';
 
 @ApiTags('Profile')
@@ -70,6 +72,24 @@ export class ProfileController {
     @Body() input: UpdateProfileDto,
   ): Promise<ProfileResponse> {
     return this.profileService.updateCurrentProfile(userId, input);
+  }
+
+  @Get('learning-profile')
+  @ApiOkResponse({ description: 'Current learner profile returned successfully.' })
+  getLearningProfile(
+    @CurrentUser('id') userId: string,
+  ): Promise<LearningProfileResponse | null> {
+    return this.profileService.getLearningProfile(userId);
+  }
+
+  @Put('learning-profile')
+  @ApiOkResponse({ description: 'Current learner profile updated successfully.' })
+  @ApiBadRequestResponse({ description: 'Invalid learner profile payload.' })
+  updateLearningProfile(
+    @CurrentUser('id') userId: string,
+    @Body() input: UpdateLearningProfileDto,
+  ): Promise<LearningProfileResponse> {
+    return this.profileService.updateLearningProfile(userId, input);
   }
 
   @Post('avatar')

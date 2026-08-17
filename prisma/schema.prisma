@@ -137,6 +137,7 @@ model User {
   roles         UserRole[]
   refreshTokens RefreshToken[]
   profile       UserProfile?
+  learningProfile LearningProfile?
   skills        UserSkill[]
   portfolios    Portfolio[]
   courses       Course[]
@@ -254,6 +255,34 @@ model Portfolio {
   @@index([userId])
   @@index([deletedAt])
   @@map("portfolios")
+}
+
+model LearningProfile {
+  id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                  String             @unique @map("user_id") @db.Uuid
+  learningGoal            String?            @map("learning_goal")
+  currentLevel            String?            @map("current_level")
+  weeklyAvailabilityHours Int?               @map("weekly_availability_hours")
+  createdAt               DateTime           @default(now()) @map("created_at")
+  updatedAt               DateTime           @updatedAt @map("updated_at")
+  user                    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillGaps               LearningSkillGap[]
+
+  @@map("learning_profiles")
+}
+
+model LearningSkillGap {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId    String          @map("profile_id") @db.Uuid
+  name         String
+  currentLevel String?         @map("current_level")
+  targetLevel  String          @map("target_level")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  profile      LearningProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+  @@map("learning_skill_gaps")
 }
 
 model Course {

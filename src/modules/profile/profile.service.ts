@@ -5,6 +5,7 @@ import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdateLearningProfileDto } from './dto/update-learning-profile.dto';
 import {
   AvatarUploadResponse,
   UploadedAvatarFile,
@@ -14,6 +15,7 @@ import {
   PortfolioResponse,
 } from './types/portfolio-response.types';
 import { ProfileResponse } from './types/profile-response.types';
+import { LearningProfileResponse } from './types/learning-profile-response.types';
 import { DeleteSkillResponse, SkillResponse } from './types/skill-response.types';
 
 @Injectable()
@@ -237,6 +239,44 @@ export class ProfileService {
     };
   }
 
+  async getLearningProfile(userId: string): Promise<LearningProfileResponse | null> {
+    return this.prisma.learningProfile.findUnique({
+      where: { userId },
+      include: { skillGaps: { orderBy: { createdAt: 'asc' } } },
+    });
+  }
+
+  async updateLearningProfile(
+    userId: string,
+    input: UpdateLearningProfileDto,
+  ): Promise<LearningProfileResponse> {
+    this.assertUniqueSkillGapNames(input.skillGaps);
+    const { skillGaps, ...profileInput } = input;
+    const profileData = this.removeUndefinedFields(profileInput);
+
+    return this.prisma.$transaction(async (tx) => {
+      const profile = await tx.learningProfile.upsert({
+        where: { userId },
+        create: { userId, ...profileData },
+        update: profileData,
+      });
+
+      if (skillGaps !== undefined) {
+        await tx.learningSkillGap.deleteMany({ where: { profileId: profile.id } });
+        if (skillGaps.length > 0) {
+          await tx.learningSkillGap.createMany({
+            data: skillGaps.map((skillGap) => ({ profileId: profile.id, ...skillGap })),
+          });
+        }
+      }
+
+      return tx.learningProfile.findUniqueOrThrow({
+        where: { id: profile.id },
+        include: { skillGaps: { orderBy: { createdAt: 'asc' } } },
+      });
+    });
+  }
+
   private async deleteBestEffort(storageKey: string): Promise<void> {
     try {
       await this.avatarStorage.delete(storageKey);
@@ -256,5 +296,17 @@ export class ProfileService {
     return Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined),
     ) as T;
+  }
+
+  private assertUniqueSkillGapNames(skillGaps: UpdateLearningProfileDto['skillGaps']): void {
+    if (!skillGaps) return;
+    const names = new Set<string>();
+    for (const skillGap of skillGaps) {
+      const normalizedName = skillGap.name.trim().toLocaleLowerCase();
+      if (names.has(normalizedName)) {
+        throw new BadRequestException('Learning skill gaps must have unique names');
+      }
+      names.add(normalizedName);
+    }
   }
 }

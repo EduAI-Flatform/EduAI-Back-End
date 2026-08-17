@@ -25,6 +25,11 @@ describe('ProfileService', () => {
     createdAt: new Date('2026-06-15T00:00:00.000Z'),
     updatedAt: new Date('2026-06-15T00:00:00.000Z'),
   };
+  const learningProfile = {
+    id: 'learning-profile-id', userId: 'user-id', learningGoal: null,
+    currentLevel: null, weeklyAvailabilityHours: null,
+    createdAt: new Date(), updatedAt: new Date(), skillGaps: [],
+  };
   const portfolio = {
     id: 'portfolio-id',
     userId: 'user-id',
@@ -50,6 +55,15 @@ describe('ProfileService', () => {
         findMany: jest.fn().mockResolvedValue([skill]),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      learningProfile: {
+        findUnique: jest.fn().mockResolvedValue(learningProfile),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(learningProfile),
+        upsert: jest.fn().mockResolvedValue(learningProfile),
+      },
+      learningSkillGap: {
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       portfolio: {
         create: jest.fn().mockResolvedValue(portfolio),
         findFirst: jest.fn().mockResolvedValue({ imageStorageKey: null }),
@@ -64,6 +78,9 @@ describe('ProfileService', () => {
         }),
       },
     };
+    (prisma as unknown as { $transaction: jest.Mock }).$transaction = jest.fn(
+      async (callback) => callback(prisma),
+    );
     const avatarStorage = {
       delete: jest.fn().mockResolvedValue(undefined),
       uploadAvatar: jest.fn().mockResolvedValue({
@@ -322,6 +339,37 @@ describe('ProfileService', () => {
         avatarUrl: true,
       },
     });
+  });
+
+  it('updates only the authenticated learning profile and replaces submitted skill gaps', async () => {
+    const { prisma, service } = createService();
+
+    await service.updateLearningProfile('user-id', {
+      learningGoal: 'Build practical AI skills',
+      currentLevel: 'beginner',
+      weeklyAvailabilityHours: 6,
+      skillGaps: [{ name: 'Machine Learning', currentLevel: 'beginner', targetLevel: 'advanced' }],
+    });
+
+    expect(prisma.learningProfile.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-id' } }),
+    );
+    expect(prisma.learningSkillGap.deleteMany).toHaveBeenCalledWith({
+      where: { profileId: 'learning-profile-id' },
+    });
+  });
+
+  it('rejects duplicate learning skill gap names before persistence', async () => {
+    const { prisma, service } = createService();
+
+    await expect(service.updateLearningProfile('user-id', {
+      skillGaps: [
+        { name: 'Machine Learning', targetLevel: 'advanced' },
+        { name: ' machine learning ', targetLevel: 'intermediate' },
+      ],
+    })).rejects.toBeInstanceOf(BadRequestException);
+
+    expect((prisma as unknown as { $transaction: jest.Mock }).$transaction).not.toHaveBeenCalled();
   });
 
   it('removes a newly uploaded avatar when the database update fails', async () => {

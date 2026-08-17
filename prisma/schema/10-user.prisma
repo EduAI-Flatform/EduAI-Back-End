@@ -15,6 +15,7 @@ model User {
   roles         UserRole[]
   refreshTokens RefreshToken[]
   profile       UserProfile?
+  learningProfile LearningProfile?
   skills        UserSkill[]
   portfolios    Portfolio[]
   courses       Course[]
