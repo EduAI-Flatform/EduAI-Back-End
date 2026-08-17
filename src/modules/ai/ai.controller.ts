@@ -3,6 +3,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiTags,
@@ -10,6 +11,8 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { AiConversationService } from './ai-conversation.service';
 import { AiSummaryService } from './ai-summary.service';
@@ -22,6 +25,8 @@ import { ListAiSourcesQueryDto } from './dto/list-ai-sources-query.dto';
 import { AiSourceResponseDto } from './dto/ai-source-response.dto';
 import { AiLearningPathService } from './ai-learning-path.service';
 import { AiLearningPathResponseDto } from './dto/ai-learning-path-response.dto';
+import { AiEmbeddingService } from './ai-embedding.service';
+import { RoleName } from '../../../generated/prisma/client';
 
 @ApiTags('AI')
 @Controller('ai')
@@ -32,6 +37,7 @@ export class AiController {
     private readonly aiGenerationService: AiGenerationService,
     private readonly aiSourcesService: AiSourcesService,
     private readonly aiLearningPathService: AiLearningPathService,
+    private readonly aiEmbeddingService: AiEmbeddingService,
   ) {}
 
   @Get('sources')
@@ -56,6 +62,17 @@ export class AiController {
   @ApiCreatedResponse({ description: 'Versioned AI learning path generated successfully.', type: AiLearningPathResponseDto })
   regenerateLearningPath(@CurrentUser() user: AuthenticatedUser) {
     return this.aiLearningPathService.regenerate(user);
+  }
+
+  @Post('embeddings/rebuild')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.platform_admin)
+  @ApiBearerAuth()
+  @ApiCreatedResponse({ description: 'All active AI source embeddings rebuilt successfully.' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required.' })
+  @ApiForbiddenResponse({ description: 'Platform administrator role required.' })
+  rebuildEmbeddings(@CurrentUser() user: AuthenticatedUser) {
+    return this.aiEmbeddingService.rebuildAll(user);
   }
 
   @Post('chat')

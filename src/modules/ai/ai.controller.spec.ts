@@ -1,4 +1,6 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { RoleName } from '../../../generated/prisma/client';
+import { ROLES_KEY } from '../auth/roles.decorator';
 import { AiController } from './ai.controller';
 
 describe('AiController', () => {
@@ -6,6 +8,7 @@ describe('AiController', () => {
     const service = { createChat: jest.fn().mockResolvedValue({ conversationId: 'conversation-id' }) };
     const controller = new AiController(
       service as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -26,6 +29,7 @@ describe('AiController', () => {
     const controller = new AiController(
       chat as never,
       summary as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -55,6 +59,7 @@ describe('AiController', () => {
       {} as never,
       sources as never,
       {} as never,
+      {} as never,
     );
     const user = { id: 'user-id', roles: [] };
     const query = { sourceType: 'lesson' as const };
@@ -73,10 +78,21 @@ describe('AiController', () => {
 
   it('delegates learning-path regeneration and protects it with JWT authentication', async () => {
     const learningPath = { regenerate: jest.fn().mockResolvedValue({ id: 'path-id', version: 1 }) };
-    const controller = new AiController({} as never, {} as never, {} as never, {} as never, learningPath as never);
+    const controller = new AiController({} as never, {} as never, {} as never, {} as never, learningPath as never, {} as never);
     const user = { id: 'user-id', roles: [] };
     await expect(controller.regenerateLearningPath(user)).resolves.toEqual({ id: 'path-id', version: 1 });
     expect(learningPath.regenerate).toHaveBeenCalledWith(user);
     expect(Reflect.getMetadata(GUARDS_METADATA, AiController.prototype.regenerateLearningPath)).toBeDefined();
+  });
+
+  it('delegates embedding rebuilds only to platform administrators', async () => {
+    const embeddings = { rebuildAll: jest.fn().mockResolvedValue({ lessons: 1, libraryResources: 1, chunkCount: 2 }) };
+    const controller = new AiController({} as never, {} as never, {} as never, {} as never, {} as never, embeddings as never);
+    const user = { id: 'admin-id', roles: [RoleName.platform_admin] };
+
+    await expect(controller.rebuildEmbeddings(user)).resolves.toEqual({ lessons: 1, libraryResources: 1, chunkCount: 2 });
+    expect(embeddings.rebuildAll).toHaveBeenCalledWith(user);
+    expect(Reflect.getMetadata(GUARDS_METADATA, AiController.prototype.rebuildEmbeddings)).toBeDefined();
+    expect(Reflect.getMetadata(ROLES_KEY, AiController.prototype.rebuildEmbeddings)).toEqual([RoleName.platform_admin]);
   });
 });

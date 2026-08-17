@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -15,6 +16,12 @@ type EmbeddingSourceType = 'lesson' | 'library_resource';
 export interface EmbeddingJobResult {
   sourceType: EmbeddingSourceType;
   sourceId: string;
+  chunkCount: number;
+}
+
+export interface EmbeddingRebuildResult {
+  lessons: number;
+  libraryResources: number;
   chunkCount: number;
 }
 
@@ -97,6 +104,48 @@ export class AiEmbeddingService {
     );
   }
 
+  async rebuildAll(user: AuthenticatedUser): Promise<EmbeddingRebuildResult> {
+    if (!this.isAdmin(user)) {
+      throw new ForbiddenException('Platform administrator role required');
+    }
+
+    const [lessons, resources] = await Promise.all([
+      this.prisma.lesson.findMany({
+        where: { deletedAt: null, course: { deletedAt: null } },
+        select: {
+          id: true,
+          title: true,
+          content: true,
+          course: { select: { id: true } },
+        },
+      }),
+      this.prisma.libraryResource.findMany({
+        where: { deletedAt: null },
+        select: { id: true, title: true, description: true },
+      }),
+    ]);
+
+    let chunkCount = 0;
+    for (const lesson of lessons) {
+      chunkCount += await this.replaceSource(
+        'lesson',
+        lesson.id,
+        `${lesson.title} ${lesson.content ?? ''}`,
+        { courseId: lesson.course.id },
+      );
+    }
+    for (const resource of resources) {
+      chunkCount += await this.replaceSource(
+        'library_resource',
+        resource.id,
+        `${resource.title} ${resource.description ?? ''}`,
+        {},
+      );
+    }
+
+    return { lessons: lessons.length, libraryResources: resources.length, chunkCount };
+  }
+
   private async embedSource(
     sourceType: EmbeddingSourceType,
     sourceId: string,
@@ -135,6 +184,44 @@ export class AiEmbeddingService {
     }
 
     return { sourceType, sourceId, chunkCount: chunks.length };
+  }
+
+  private async replaceSource(
+    sourceType: EmbeddingSourceType,
+    sourceId: string,
+    sourceText: string,
+    metadata: Omit<EmbeddingMetadata, 'sourceType' | 'sourceId'>,
+  ): Promise<number> {
+    const chunks = chunkText(sourceText);
+    if (chunks.length === 0) return 0;
+
+    const embeddings = await this.aiProvider.embed(chunks.map(({ text }) => text));
+    if (
+      embeddings.length !== chunks.length ||
+      embeddings.some(
+        (embedding) =>
+          !Array.isArray(embedding) || embedding.some((value) => !Number.isFinite(value)),
+      )
+    ) {
+      throw new BadGatewayException('Embedding provider returned invalid data');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(
+        Prisma.sql`DELETE FROM "ai_embeddings" WHERE "source_type" = ${sourceType} AND "source_id" = ${sourceId}::uuid`,
+      );
+      for (const [index, chunk] of chunks.entries()) {
+        await tx.$executeRaw(
+          Prisma.sql`
+            INSERT INTO "ai_embeddings"
+              ("source_type", "source_id", "chunk_text", "embedding", "metadata_json")
+            VALUES
+              (${sourceType}, ${sourceId}::uuid, ${chunk.text}, ${JSON.stringify(embeddings[index])}::vector, ${JSON.stringify({ sourceType, sourceId, chunkIndex: String(chunk.index), ...metadata })}::jsonb)
+          `,
+        );
+      }
+    });
+    return chunks.length;
   }
 
   private canManageContent(user: AuthenticatedUser): boolean {
