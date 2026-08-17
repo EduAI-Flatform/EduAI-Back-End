@@ -15,6 +15,7 @@ describe('AiRetrievalService', () => {
         chunk_text: 'Gradient descent updates weights.',
         distance: 0.2,
         metadata_json: { courseId: 'course-id' },
+        course_id: 'course-id',
       },
     ]);
     const embed = jest.fn().mockResolvedValue([[0.1, 0.2]]);
@@ -33,17 +34,23 @@ describe('AiRetrievalService', () => {
         title: 'Gradient descent',
         chunkText: 'Gradient descent updates weights.',
         similarity: 0.8,
+        courseId: 'course-id',
+        citationPath: '/learning/course-id',
         metadata: { courseId: 'course-id' },
       },
     ]);
     expect(embed).toHaveBeenCalledWith('explain gradient descent');
     expect(queryRaw).toHaveBeenCalledTimes(1);
-    const query = queryRaw.mock.calls[0][0] as { strings: string[] };
+    const query = queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] };
     const sql = query.strings.join(' ');
     expect(sql).toContain('l.is_preview = TRUE');
     expect(sql).toContain("en.status IN ('active', 'completed')");
     expect(sql).toContain("c.moderation_status = 'clear'");
     expect(sql).toContain("r.moderation_status = 'clear'");
+    expect(sql).toContain('c.id =  ::uuid');
+    expect(sql).toContain('AND  ::uuid IS NULL');
+    expect(sql).toContain('::uuid IS NULL');
+    expect(query.values).toContain(null);
   });
 
   it('returns no sources for blank queries without calling providers', async () => {
@@ -53,6 +60,19 @@ describe('AiRetrievalService', () => {
     );
 
     await expect(service.retrieve(student, '   ')).resolves.toEqual([]);
+  });
+
+  it('binds a course context when one is selected', async () => {
+    const queryRaw = jest.fn().mockResolvedValue([]);
+    const service = new AiRetrievalService(
+      { $queryRaw: queryRaw } as never,
+      { embed: jest.fn().mockResolvedValue([[0.1]]) } as never,
+    );
+
+    await service.retrieve(student, 'course question', { courseId: 'course-id' });
+
+    const query = queryRaw.mock.calls[0][0] as { values: unknown[] };
+    expect(query.values).toContain('course-id');
   });
 
   it('rejects unsafe top-k values', async () => {

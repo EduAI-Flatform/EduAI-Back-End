@@ -1,6 +1,6 @@
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 function trimString(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
@@ -22,8 +22,7 @@ export class CreateAiChatDto {
   @ApiPropertyOptional({ example: 'lesson' })
   @Transform(({ value }) => trimString(value))
   @IsOptional()
-  @IsString()
-  @MaxLength(50)
+  @IsIn(['course'])
   contextType?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })

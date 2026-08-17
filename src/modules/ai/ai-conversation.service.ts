@@ -1,10 +1,17 @@
 import {
+  BadRequestException,
   BadGatewayException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '../../../generated/prisma/client';
+import {
+  CourseStatus,
+  CourseVisibility,
+  ModerationStatus,
+  Prisma,
+  RoleName,
+} from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateAiChatDto } from './dto/create-ai-chat.dto';
@@ -30,6 +37,7 @@ export interface AiChatResponse {
   conversationId: string;
   message: AiMessageResponse;
   sources: AiRetrievalSource[];
+  grounding: 'sourced' | 'general';
 }
 
 @Injectable()
@@ -45,11 +53,12 @@ export class AiConversationService {
     user: AuthenticatedUser,
     input: CreateAiChatDto,
   ): Promise<AiChatResponse> {
+    await this.assertValidContext(user, input);
     await this.rateLimit.assertChatAllowed(user.id);
 
     const conversationId = await this.prisma.$transaction(async (tx) => {
       const conversationId = input.conversationId
-        ? await this.assertConversationOwnership(tx, input.conversationId, user.id)
+        ? await this.assertConversationOwnership(tx, input.conversationId, user.id, input)
         : await this.createConversation(tx, user.id, input);
 
       await tx.aiMessage.create({
@@ -60,7 +69,9 @@ export class AiConversationService {
       return conversationId;
     });
 
-    const sources = await this.retrieval.retrieve(user, input.message);
+    const sources = input.contextType === 'course' && input.contextId
+      ? await this.retrieval.retrieve(user, input.message, { courseId: input.contextId })
+      : await this.retrieval.retrieve(user, input.message);
     const completion = await this.aiProvider.complete({
       messages: [
         { role: 'system', content: AI_TUTOR_SYSTEM_PROMPT },
@@ -81,21 +92,31 @@ export class AiConversationService {
       select: aiMessageResponseSelect,
     });
 
-    return { conversationId, message, sources };
+    return { conversationId, message, sources, grounding: sources.length ? 'sourced' : 'general' };
   }
 
   private async assertConversationOwnership(
     tx: Prisma.TransactionClient,
     conversationId: string,
     userId: string,
+    input: CreateAiChatDto,
   ): Promise<string> {
     const conversation = await tx.aiConversation.findFirst({
       where: { id: conversationId, userId },
-      select: { id: true },
+      select: { id: true, contextType: true, contextId: true },
     });
 
     if (!conversation) {
       throw new NotFoundException('AI conversation not found');
+    }
+
+    const requestedContextType = input.contextType ?? null;
+    const requestedContextId = input.contextId ?? null;
+    if (
+      conversation.contextType !== requestedContextType ||
+      conversation.contextId !== requestedContextId
+    ) {
+      throw new BadRequestException('AI conversation context cannot be changed');
     }
 
     return conversation.id;
@@ -117,5 +138,42 @@ export class AiConversationService {
     });
 
     return conversation.id;
+  }
+
+  private async assertValidContext(
+    user: AuthenticatedUser,
+    input: CreateAiChatDto,
+  ): Promise<void> {
+    if (!input.contextType && !input.contextId) return;
+
+    if (input.contextType !== 'course' || !input.contextId) {
+      throw new BadRequestException('AI course context requires both contextType and contextId');
+    }
+
+    if (user.roles.includes(RoleName.platform_admin)) return;
+
+    const course = await this.prisma.course.findFirst({
+      where: {
+        id: input.contextId,
+        deletedAt: null,
+        OR: [
+          { instructorId: user.id },
+          {
+            status: CourseStatus.published,
+            visibility: CourseVisibility.public,
+            moderationStatus: ModerationStatus.clear,
+            lessons: { some: { deletedAt: null, isPreview: true } },
+          },
+          {
+            enrollments: {
+              some: { userId: user.id, status: { in: ['active', 'completed'] } },
+            },
+          },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (!course) throw new NotFoundException('AI course context not found');
   }
 }

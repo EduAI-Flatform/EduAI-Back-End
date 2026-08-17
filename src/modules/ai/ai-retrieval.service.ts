@@ -11,6 +11,7 @@ export type RetrievalSourceType = 'lesson' | 'library_resource';
 
 export interface AiRetrievalOptions {
   topK?: number;
+  courseId?: string;
 }
 
 export interface AiRetrievalSource {
@@ -20,6 +21,8 @@ export interface AiRetrievalSource {
   title: string;
   chunkText: string;
   similarity: number;
+  courseId: string | null;
+  citationPath: string;
   metadata: Record<string, unknown>;
 }
 
@@ -31,6 +34,7 @@ interface RetrievalRow {
   chunk_text: string;
   distance: number;
   metadata_json: unknown;
+  course_id: string | null;
 }
 
 @Injectable()
@@ -49,6 +53,7 @@ export class AiRetrievalService {
     if (!normalizedQuery) return [];
 
     const topK = this.normalizeTopK(options.topK);
+    const courseId = options.courseId ?? null;
     const [embedding] = await this.aiProvider.embed(normalizedQuery);
 
     if (!Array.isArray(embedding) || embedding.some((value) => !Number.isFinite(value))) {
@@ -64,6 +69,7 @@ export class AiRetrievalService {
           e.source_type,
           e.source_id,
           l.title,
+          l.course_id,
           e.chunk_text,
           e.embedding <=> ${vector}::vector AS distance,
           e.metadata_json
@@ -74,6 +80,7 @@ export class AiRetrievalService {
           AND e.embedding IS NOT NULL
           AND l.deleted_at IS NULL
           AND c.deleted_at IS NULL
+          AND (${courseId}::uuid IS NULL OR c.id = ${courseId}::uuid)
           AND (
             ${isAdmin}
             OR (
@@ -96,6 +103,7 @@ export class AiRetrievalService {
           e.source_type,
           e.source_id,
           r.title,
+          NULL::uuid AS course_id,
           e.chunk_text,
           e.embedding <=> ${vector}::vector AS distance,
           e.metadata_json
@@ -104,6 +112,7 @@ export class AiRetrievalService {
         WHERE e.source_type = 'library_resource'
           AND e.embedding IS NOT NULL
           AND r.deleted_at IS NULL
+          AND ${courseId}::uuid IS NULL
           AND (
             ${isAdmin}
             OR r.owner_id = ${user.id}::uuid
@@ -121,6 +130,10 @@ export class AiRetrievalService {
       title: row.title,
       chunkText: row.chunk_text,
       similarity: 1 - Number(row.distance),
+      courseId: row.course_id,
+      citationPath: row.source_type === 'lesson' && row.course_id
+        ? `/learning/${row.course_id}`
+        : '/library',
       metadata: this.toMetadata(row.metadata_json),
     }));
   }
