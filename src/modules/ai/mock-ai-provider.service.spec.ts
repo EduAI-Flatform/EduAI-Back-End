@@ -52,6 +52,27 @@ describe('MockAiProviderService', () => {
     expect(JSON.parse(flashcards.content ?? '{}').items).toHaveLength(2);
   });
 
+  it('returns a schema-valid learning path limited to supplied course IDs', async () => {
+    const response = await provider.complete({
+      json: true,
+      messages: [
+        {
+          role: 'user',
+          content:
+            'Create a short learner path from this safe JSON:\n{"courses":[{"id":"course-a"},{"id":"course-b"}]}',
+        },
+      ],
+    });
+
+    expect(JSON.parse(response.content ?? '{}')).toEqual({
+      schemaVersion: 'v1',
+      milestones: [
+        { courseId: 'course-a', priority: 1, reason: expect.any(String) },
+        { courseId: 'course-b', priority: 2, reason: expect.any(String) },
+      ],
+    });
+  });
+
   it('returns stable 1536-dimensional embeddings', async () => {
     const first = await provider.embed(['EduAI', 'PostgreSQL']);
     const second = await provider.embed(['EduAI', 'PostgreSQL']);

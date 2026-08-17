@@ -43,6 +43,19 @@ export class MockAiProviderService implements AiProvider {
   private generateStructuredContent(prompt: string): string {
     const count = this.extractCount(prompt);
 
+    if (/learner path/i.test(prompt)) {
+      const courseIds = this.extractLearningPathCourseIds(prompt);
+
+      return JSON.stringify({
+        schemaVersion: 'v1',
+        milestones: courseIds.slice(0, 6).map((courseId, index) => ({
+          courseId,
+          priority: index + 1,
+          reason: `Bước học thử nghiệm ${index + 1} dựa trên khóa học có thể truy cập.`,
+        })),
+      });
+    }
+
     if (/multiple-choice|question/i.test(prompt)) {
       return JSON.stringify({
         items: Array.from({ length: count }, (_, index) => {
@@ -87,6 +100,26 @@ export class MockAiProviderService implements AiProvider {
   private extractCount(prompt: string): number {
     const parsed = Number(prompt.match(/exactly\s+(\d+)\s+items/i)?.[1] ?? 5);
     return Number.isInteger(parsed) ? Math.min(20, Math.max(1, parsed)) : 5;
+  }
+
+  private extractLearningPathCourseIds(prompt: string): string[] {
+    const jsonStart = prompt.indexOf('{');
+    if (jsonStart < 0) return [];
+
+    try {
+      const input = JSON.parse(prompt.slice(jsonStart)) as {
+        courses?: Array<{ id?: unknown }>;
+      };
+      return Array.from(
+        new Set(
+          input.courses
+            ?.map((course) => course.id)
+            .filter((id): id is string => typeof id === 'string') ?? [],
+        ),
+      );
+    } catch {
+      return [];
+    }
   }
 
   private createEmbedding(value: string): number[] {

@@ -1,5 +1,12 @@
 import { BadGatewayException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { CourseStatus, CourseVisibility, Prisma, RoleName } from '../../../generated/prisma/client';
+import {
+  AssignmentStatus,
+  CourseStatus,
+  CourseVisibility,
+  Prisma,
+  QuizStatus,
+  RoleName,
+} from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { AI_PROVIDER, AiProvider } from './ai-provider';
@@ -23,12 +30,61 @@ export class AiLearningPathService {
       this.prisma.learningProfile.findUnique({ where: { userId: user.id }, select: { learningGoal: true, currentLevel: true, weeklyAvailabilityHours: true, skillGaps: { select: { name: true, currentLevel: true, targetLevel: true } } } }),
       this.prisma.course.findMany({
         where: { status: CourseStatus.published, deletedAt: null, OR: [{ visibility: CourseVisibility.public }, { enrollments: { some: { userId: user.id, status: { in: ['active', 'completed'] } } } }] },
-        select: { id: true, title: true, description: true, level: true, enrollments: { where: { userId: user.id }, select: { status: true } }, progress: { where: { userId: user.id }, select: { progressPercent: true } } },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          level: true,
+          enrollments: { where: { userId: user.id }, select: { status: true } },
+          progress: { where: { userId: user.id }, select: { progressPercent: true } },
+          quizzes: {
+            where: { status: QuizStatus.published, deletedAt: null },
+            select: {
+              _count: { select: { attempts: { where: { userId: user.id } } } },
+              attempts: {
+                where: { userId: user.id, passed: true },
+                select: { id: true },
+                take: 1,
+              },
+            },
+          },
+          assignments: {
+            where: { status: AssignmentStatus.published, deletedAt: null },
+            select: {
+              _count: { select: { submissions: { where: { userId: user.id } } } },
+              submissions: {
+                where: { userId: user.id, status: 'graded' },
+                select: { id: true },
+                take: 1,
+              },
+            },
+          },
+        },
         take: 30,
       }),
       this.prisma.aiLearningPath.findFirst({ where: { userId: user.id }, orderBy: { version: 'desc' }, select: { version: true } }),
     ]);
-    const input = { profile, courses: courses.map((course) => ({ id: course.id, title: course.title, description: course.description, level: course.level, enrolled: course.enrollments.length > 0, progressPercent: course.progress[0]?.progressPercent ?? 0 })) };
+    const input = {
+      profile,
+      courses: courses.map((course) => ({
+        id: course.id,
+        title: course.title,
+        description: course.description,
+        level: course.level,
+        enrolled: course.enrollments.length > 0,
+        progressPercent: course.progress[0]?.progressPercent ?? 0,
+        quizSummary: {
+          published: course.quizzes.length,
+          attempted: course.quizzes.filter((quiz) => quiz._count.attempts > 0).length,
+          passed: course.quizzes.filter((quiz) => quiz.attempts.length > 0).length,
+        },
+        assignmentSummary: {
+          published: course.assignments.length,
+          submitted: course.assignments.filter((assignment) => assignment._count.submissions > 0).length,
+          graded: course.assignments.filter((assignment) => assignment.submissions.length > 0).length,
+        },
+      })),
+    };
     const completion = await this.aiProvider.complete({ json: true, responseSchema: this.schema(), messages: [{ role: 'system', content: 'Return only valid JSON. Recommend only supplied course IDs and do not invent course content.' }, { role: 'user', content: `Create a short learner path from this safe JSON:\n${JSON.stringify(input)}` }] });
     const path = this.validate(completion.content, new Set(courses.map((course) => course.id)));
     const created = await this.prisma.aiLearningPath.create({ data: { userId: user.id, version: (latest?.version ?? 0) + 1, inputJson: input as Prisma.InputJsonValue, outputJson: path as unknown as Prisma.InputJsonValue, provider: this.aiProvider.getModel() === 'mock' ? 'mock' : 'configured', model: this.aiProvider.getModel() }, select: { id: true, version: true } });
