@@ -141,8 +141,8 @@ jobs:
 
           exec 9>/tmp/eduai-backend-deploy.lock
 
-          flock -n 9 || {
-            echo "Another backend deployment is running."
+          flock -w 120 9 || {
+            echo "Another backend deployment remained active after 120 seconds."
             exit 1
           }
 
