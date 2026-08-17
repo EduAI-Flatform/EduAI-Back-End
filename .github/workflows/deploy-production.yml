@@ -220,6 +220,21 @@ jobs:
             exit 1
           fi
 
+          echo "Verifying notification email configuration..."
+          node -e '
+            require("dotenv").config({ quiet: true });
+            const provider = process.env.EMAIL_PROVIDER;
+            const senderConfigured = Boolean(process.env.EMAIL_FROM?.trim());
+            const apiKeyConfigured = Boolean(process.env.RESEND_API_KEY?.trim());
+            console.log(`notificationEmailProvider: ${provider === "resend" ? "resend" : "invalid"}`);
+            console.log(`notificationEmailSenderConfigured: ${senderConfigured}`);
+            console.log(`notificationEmailApiKeyConfigured: ${apiKeyConfigured}`);
+            if (provider !== "resend" || !senderConfigured || !apiKeyConfigured) {
+              console.error("ERROR: production notification email configuration is incomplete");
+              process.exit(1);
+            }
+          '
+
           echo "Installing dependencies..."
           npm ci
 
