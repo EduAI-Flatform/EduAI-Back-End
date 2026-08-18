@@ -45,6 +45,7 @@ import {
   assertDemoFixtureContract,
   verifyDemoData,
 } from './demo-contract';
+import { seedFinalDemoData } from './final-demo-seed';
 
 function addMilliseconds(date: Date, milliseconds: number): Date {
   return new Date(date.getTime() + milliseconds);
@@ -582,6 +583,8 @@ export async function seedDemoData(
       update: data,
     });
   }
+
+  await seedFinalDemoData(prisma);
 
   const verification = await verifyDemoData(prisma);
   process.stdout.write(
