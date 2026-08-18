@@ -12,6 +12,14 @@ export const AuditAction = {
   CommunityPostRemoved: 'COMMUNITY_POST_REMOVED',
   CommunityCommentRemoved: 'COMMUNITY_COMMENT_REMOVED',
   ContentModerationChanged: 'CONTENT_MODERATION_CHANGED',
+  VoucherCreated: 'VOUCHER_CREATED',
+  VoucherUpdated: 'VOUCHER_UPDATED',
+  VoucherRedeemed: 'VOUCHER_REDEEMED',
+  ScholarshipCreated: 'SCHOLARSHIP_CREATED',
+  ScholarshipUpdated: 'SCHOLARSHIP_UPDATED',
+  ScholarshipApplied: 'SCHOLARSHIP_APPLIED',
+  TmiRewardCreated: 'TMI_REWARD_CREATED',
+  TmiRewardUpdated: 'TMI_REWARD_UPDATED',
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];

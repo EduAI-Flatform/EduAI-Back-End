@@ -15,6 +15,11 @@ import {
   demoEnrollments,
 } from './demo-fixtures';
 import { PASSWORD_HASH_ROUNDS } from '../src/modules/auth/password.service';
+import {
+  assertMinimalFixtureEnvironment,
+  MINIMAL_FIXTURE_IDS,
+  minimalCourseFixtures,
+} from './minimal-course-fixtures';
 
 describe('demo data contract', () => {
   it('contains the exact fixture counts and globally unique UUID v4 IDs', () => {
@@ -189,5 +194,64 @@ describe('course catalog migration contract', () => {
       'CREATE UNIQUE INDEX "course_reviews_course_id_user_id_key"',
     );
     expect(migration).toContain('ON "course_reviews"("course_id", "user_id")');
+  });
+});
+
+describe('Sprint 21 minimal fixture design contract', () => {
+  it('keeps test-support fixtures separate from the final demo dataset', () => {
+    const contract = readFileSync(
+      resolve(
+        __dirname,
+        '..',
+        '..',
+        'EduAI_Docs',
+        'docs',
+        'tasks_2.0',
+        'sprint-21',
+        'SPR21-006-minimal-fixture-contract.md',
+      ),
+      'utf8',
+    );
+
+    expect(contract).toContain('A_MINIMAL_TEST_FIXTURE');
+    expect(contract).toContain('TEST_SUPPORT');
+    const normalizedContract = contract.toLowerCase();
+    expect(normalizedContract).toContain('free');
+    expect(normalizedContract).toContain('paid');
+    expect(normalizedContract).toContain('promotion-ready');
+    expect(normalizedContract).toContain('unpublished');
+    expect(contract).toContain('Final Demo Course Dataset');
+    expect(normalizedContract).toContain('must not');
+    expect(normalizedContract).toContain('no migration');
+  });
+
+  it('defines deterministic free, paid, and promotion-ready fixture projections', () => {
+    expect(minimalCourseFixtures).toHaveLength(4);
+    expect(new Set(MINIMAL_FIXTURE_IDS.courses).size).toBe(4);
+    expect(minimalCourseFixtures.map(({ priceAmountMinor }) => priceAmountMinor)).toEqual([
+      1499000,
+      0,
+      999000,
+      1999000,
+    ]);
+    expect(minimalCourseFixtures[2].promotion).toEqual(
+      expect.objectContaining({ originalAmountMinor: 1499000 }),
+    );
+    expect(minimalCourseFixtures[3]).toMatchObject({
+      status: 'draft',
+      visibility: 'private',
+    });
+  });
+
+  it('requires an explicit non-production guard for fixture writes', () => {
+    expect(() =>
+      assertMinimalFixtureEnvironment({ NODE_ENV: 'production', MINIMAL_FIXTURES_ENABLED: 'true' }),
+    ).toThrow('disabled when NODE_ENV=production');
+    expect(() =>
+      assertMinimalFixtureEnvironment({ NODE_ENV: 'development' }),
+    ).toThrow('MINIMAL_FIXTURES_ENABLED=true');
+    expect(() =>
+      assertMinimalFixtureEnvironment({ NODE_ENV: 'development', MINIMAL_FIXTURES_ENABLED: 'true' }),
+    ).not.toThrow();
   });
 });

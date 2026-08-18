@@ -1,0 +1,102 @@
+model ScholarshipCampaign {
+  id              String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title           String
+  description     String?
+  status          ScholarshipStatus          @default(draft)
+  applicationMode ScholarshipApplicationMode @map("application_mode")
+  benefitKind     ScholarshipBenefitKind     @map("benefit_kind")
+  benefitValue    Int                        @map("benefit_value")
+  currency        String?                    @db.VarChar(3)
+  startsAt        DateTime                   @map("starts_at")
+  endsAt          DateTime                   @map("ends_at")
+  quota           Int?
+  awardedCount    Int                        @default(0) @map("awarded_count")
+  createdById     String                     @map("created_by_id") @db.Uuid
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+  createdBy       User                       @relation("ScholarshipCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  courseScopes    ScholarshipCourse[]
+  categoryScopes  ScholarshipCategory[]
+  eligibleUsers   ScholarshipUser[]
+  applications    ScholarshipApplication[]
+  awards          ScholarshipAward[]
+
+  @@index([status, startsAt, endsAt])
+  @@index([createdById])
+  @@map("scholarship_campaigns")
+}
+
+model ScholarshipCourse {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  courseId      String              @map("course_id") @db.Uuid
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+  course        Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([scholarshipId, courseId])
+  @@index([courseId])
+  @@map("scholarship_courses")
+}
+
+model ScholarshipCategory {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  categorySlug  String              @map("category_slug")
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+
+  @@unique([scholarshipId, categorySlug])
+  @@index([categorySlug])
+  @@map("scholarship_categories")
+}
+
+model ScholarshipUser {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  userId        String              @map("user_id") @db.Uuid
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([scholarshipId, userId])
+  @@index([userId])
+  @@map("scholarship_users")
+}
+
+model ScholarshipApplication {
+  id            String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String                       @map("scholarship_id") @db.Uuid
+  userId        String                       @map("user_id") @db.Uuid
+  courseId      String                       @map("course_id") @db.Uuid
+  status        ScholarshipApplicationStatus @default(pending)
+  decisionReason String?                     @map("decision_reason")
+  appliedAt     DateTime                     @default(now()) @map("applied_at")
+  updatedAt     DateTime                     @updatedAt @map("updated_at")
+  scholarship   ScholarshipCampaign           @relation(fields: [scholarshipId], references: [id], onDelete: Restrict)
+  user          User                          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  course        Course                        @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  award         ScholarshipAward?
+
+  @@unique([scholarshipId, userId, courseId])
+  @@index([userId, status])
+  @@index([courseId, status])
+  @@map("scholarship_applications")
+}
+
+model ScholarshipAward {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  applicationId String              @unique @map("application_id") @db.Uuid
+  userId        String              @map("user_id") @db.Uuid
+  courseId      String              @map("course_id") @db.Uuid
+  benefitKind   ScholarshipBenefitKind @map("benefit_kind")
+  benefitValue  Int                 @map("benefit_value")
+  currency      String?             @db.VarChar(3)
+  awardedAt     DateTime            @default(now()) @map("awarded_at")
+  revokedAt     DateTime?           @map("revoked_at")
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Restrict)
+  application   ScholarshipApplication @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, courseId])
+  @@index([scholarshipId, awardedAt])
+  @@map("scholarship_awards")
+}

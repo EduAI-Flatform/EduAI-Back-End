@@ -38,6 +38,14 @@ model User {
   certificates  Certificate[]
   courseReviews CourseReview[]
   auditLogs     AuditLog[]
+  createdVouchers Voucher[] @relation("VoucherCreator")
+  eligibleVouchers VoucherUser[]
+  voucherRedemptions VoucherRedemption[]
+  createdScholarships ScholarshipCampaign[] @relation("ScholarshipCreator")
+  scholarshipEligibleCampaigns ScholarshipUser[]
+  scholarshipApplications ScholarshipApplication[]
+  scholarshipAwards ScholarshipAward[]
+  createdTmiRewards TmiReward[] @relation("TmiRewardCreator")
   notifications Notification[]
   notificationPreferences NotificationPreference[]
 

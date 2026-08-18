@@ -107,3 +107,52 @@ enum ClassroomSessionStatus {
   ended
   cancelled
 }
+
+enum VoucherStatus {
+  draft
+  active
+  disabled
+}
+
+enum VoucherKind {
+  percentage
+  fixed
+}
+
+enum ScholarshipStatus {
+  draft
+  active
+  paused
+  closed
+}
+
+enum ScholarshipApplicationMode {
+  application
+  automatic
+}
+
+enum ScholarshipBenefitKind {
+  course_access
+  percentage_discount
+  fixed_credit
+}
+
+enum ScholarshipApplicationStatus {
+  pending
+  awarded
+  rejected
+  revoked
+}
+
+enum TmiRewardKind {
+  course_access
+  voucher
+  gift
+}
+
+enum TmiRewardStatus {
+  draft
+  active
+  disabled
+  expired
+}

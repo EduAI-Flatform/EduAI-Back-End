@@ -114,6 +114,17 @@ export class CreateCourseDto {
   @MaxLength(50)
   badge?: string | null;
 
+  @ApiPropertyOptional({ example: 'ai-foundations', nullable: true })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  categorySlug?: string | null;
+
   @ApiPropertyOptional({
     example: 1499000,
     minimum: 0,

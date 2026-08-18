@@ -536,6 +536,38 @@ describe('CoursesService', () => {
     expect(prisma.course.create).not.toHaveBeenCalled();
   });
 
+  it('rejects negative prices before reaching Prisma', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.createCourse(instructor, {
+        title: 'AI Foundations',
+        level: CourseLevel.beginner,
+        priceAmountMinor: -1,
+        priceCurrency: 'VND',
+      }),
+    ).rejects.toEqual(
+      new BadRequestException('priceAmountMinor must be a non-negative integer'),
+    );
+    expect(prisma.course.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed currency codes before reaching Prisma', async () => {
+    const { prisma, service } = createService();
+
+    await expect(
+      service.createCourse(instructor, {
+        title: 'AI Foundations',
+        level: CourseLevel.beginner,
+        priceAmountMinor: 1499000,
+        priceCurrency: 'dong',
+      }),
+    ).rejects.toEqual(
+      new BadRequestException('priceCurrency must be a three-letter ISO 4217 code'),
+    );
+    expect(prisma.course.create).not.toHaveBeenCalled();
+  });
+
   it('generates a unique Vietnamese slug when the client omits it', async () => {
     const { prisma, service } = createService();
     prisma.course.findUnique

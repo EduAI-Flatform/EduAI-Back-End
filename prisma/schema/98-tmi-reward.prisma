@@ -1,0 +1,21 @@
+model TmiReward {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title            String
+  description      String?
+  kind             TmiRewardKind
+  cost             Int
+  status           TmiRewardStatus @default(draft)
+  quota            Int?
+  redeemedCount   Int             @default(0) @map("redeemed_count")
+  startsAt         DateTime        @map("starts_at")
+  endsAt           DateTime        @map("ends_at")
+  inventoryMetadata Json?          @map("inventory_metadata")
+  createdById      String          @map("created_by_id") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  createdBy        User            @relation("TmiRewardCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([status, startsAt, endsAt])
+  @@index([createdById])
+  @@map("tmi_rewards")
+}

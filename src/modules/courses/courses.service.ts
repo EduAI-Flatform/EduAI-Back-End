@@ -35,6 +35,7 @@ const courseResponseSelect = {
   description: true,
   thumbnailUrl: true,
   badge: true,
+  categorySlug: true,
   featuredRank: true,
   priceAmountMinor: true,
   priceCurrency: true,
@@ -410,6 +411,7 @@ export class CoursesService {
             thumbnailUrl,
             thumbnailStorageKey: storedThumbnail?.key,
             badge: input.badge,
+            categorySlug: input.categorySlug,
             priceAmountMinor: input.priceAmountMinor,
             priceCurrency: input.priceCurrency,
             level: input.level,
@@ -473,6 +475,7 @@ export class CoursesService {
       thumbnailStorageKey:
         storedThumbnail?.key ?? (input.thumbnailUrl === null ? null : undefined),
       badge: input.badge,
+      categorySlug: input.categorySlug,
       priceAmountMinor: input.priceAmountMinor,
       priceCurrency: input.priceCurrency,
       level: input.level,
@@ -837,6 +840,7 @@ export class CoursesService {
       description: course.description,
       thumbnailUrl: course.thumbnailUrl,
       badge: course.badge,
+      categorySlug: course.categorySlug,
       featuredRank: course.featuredRank,
       price:
         course.priceAmountMinor !== null && course.priceCurrency !== null
@@ -1047,6 +1051,18 @@ export class CoursesService {
     if (hasAmount !== hasCurrency) {
       throw new BadRequestException(
         'priceAmountMinor and priceCurrency must be provided together',
+      );
+    }
+
+    if (hasAmount && (!Number.isInteger(priceAmountMinor) || priceAmountMinor < 0)) {
+      throw new BadRequestException(
+        'priceAmountMinor must be a non-negative integer',
+      );
+    }
+
+    if (hasCurrency && !/^[A-Z]{3}$/.test(priceCurrency!)) {
+      throw new BadRequestException(
+        'priceCurrency must be a three-letter ISO 4217 code',
       );
     }
   }

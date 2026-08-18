@@ -20,6 +20,9 @@ import { MediaModule } from './modules/media/media.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { QuizzesModule } from './modules/quizzes/quizzes.module';
+import { VouchersModule } from './modules/vouchers/vouchers.module';
+import { ScholarshipsModule } from './modules/scholarships/scholarships.module';
+import { TmiModule } from './modules/tmi/tmi.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -46,6 +49,9 @@ import { PrismaModule } from './prisma/prisma.module';
     ClassroomsModule,
     CommunityModule,
     AiModule,
+    VouchersModule,
+    ScholarshipsModule,
+    TmiModule,
   ],
 })
 export class AppModule {}

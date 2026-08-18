@@ -7,6 +7,7 @@ model Course {
   thumbnailUrl String?            @map("thumbnail_url")
   thumbnailStorageKey String?     @map("thumbnail_storage_key")
   badge        String?
+  categorySlug String?            @map("category_slug")
   featuredRank Int?               @map("featured_rank")
   priceAmountMinor Int?           @map("price_amount_minor")
   priceCurrency String?           @map("price_currency") @db.VarChar(3)
@@ -28,11 +29,16 @@ model Course {
   classroomSessions ClassroomSession[]
   certificates Certificate[]
   reviews      CourseReview[]
+  voucherScopes VoucherCourse[]
+  voucherRedemptions VoucherRedemption[]
+  scholarshipScopes ScholarshipCourse[]
+  scholarshipApplications ScholarshipApplication[]
 
   @@index([instructorId])
   @@index([status])
   @@index([moderationStatus, updatedAt])
   @@index([featuredRank])
+  @@index([categorySlug])
   @@index([deletedAt])
   @@map("courses")
 }

@@ -120,6 +120,55 @@ enum ClassroomSessionStatus {
   cancelled
 }
 
+enum VoucherStatus {
+  draft
+  active
+  disabled
+}
+
+enum VoucherKind {
+  percentage
+  fixed
+}
+
+enum ScholarshipStatus {
+  draft
+  active
+  paused
+  closed
+}
+
+enum ScholarshipApplicationMode {
+  application
+  automatic
+}
+
+enum ScholarshipBenefitKind {
+  course_access
+  percentage_discount
+  fixed_credit
+}
+
+enum ScholarshipApplicationStatus {
+  pending
+  awarded
+  rejected
+  revoked
+}
+
+enum TmiRewardKind {
+  course_access
+  voucher
+  gift
+}
+
+enum TmiRewardStatus {
+  draft
+  active
+  disabled
+  expired
+}
+
 model User {
   id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email         String             @unique
@@ -160,6 +209,14 @@ model User {
   certificates  Certificate[]
   courseReviews CourseReview[]
   auditLogs     AuditLog[]
+  createdVouchers Voucher[] @relation("VoucherCreator")
+  eligibleVouchers VoucherUser[]
+  voucherRedemptions VoucherRedemption[]
+  createdScholarships ScholarshipCampaign[] @relation("ScholarshipCreator")
+  scholarshipEligibleCampaigns ScholarshipUser[]
+  scholarshipApplications ScholarshipApplication[]
+  scholarshipAwards ScholarshipAward[]
+  createdTmiRewards TmiReward[] @relation("TmiRewardCreator")
   notifications Notification[]
   notificationPreferences NotificationPreference[]
 
@@ -295,6 +352,7 @@ model Course {
   thumbnailUrl String?            @map("thumbnail_url")
   thumbnailStorageKey String?     @map("thumbnail_storage_key")
   badge        String?
+  categorySlug String?            @map("category_slug")
   featuredRank Int?               @map("featured_rank")
   priceAmountMinor Int?           @map("price_amount_minor")
   priceCurrency String?           @map("price_currency") @db.VarChar(3)
@@ -316,11 +374,16 @@ model Course {
   classroomSessions ClassroomSession[]
   certificates Certificate[]
   reviews      CourseReview[]
+  voucherScopes VoucherCourse[]
+  voucherRedemptions VoucherRedemption[]
+  scholarshipScopes ScholarshipCourse[]
+  scholarshipApplications ScholarshipApplication[]
 
   @@index([instructorId])
   @@index([status])
   @@index([moderationStatus, updatedAt])
   @@index([featuredRank])
+  @@index([categorySlug])
   @@index([deletedAt])
   @@map("courses")
 }
@@ -958,4 +1021,213 @@ model AuditLog {
   @@index([actorId, occurredAt])
   @@index([targetType, targetId, occurredAt])
   @@map("audit_logs")
+}
+
+model Voucher {
+  id                       String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                     String        @unique
+  status                   VoucherStatus @default(draft)
+  kind                     VoucherKind
+  value                    Int
+  currency                 String        @db.VarChar(3)
+  startsAt                 DateTime      @map("starts_at")
+  endsAt                   DateTime      @map("ends_at")
+  minimumCoursePriceMinor  Int?          @map("minimum_course_price_minor")
+  maximumDiscountMinor     Int?          @map("maximum_discount_minor")
+  usageLimit               Int?          @map("usage_limit")
+  redeemedCount            Int           @default(0) @map("redeemed_count")
+  perUserLimit             Int?          @map("per_user_limit")
+  createdById              String        @map("created_by_id") @db.Uuid
+  createdAt                DateTime      @default(now()) @map("created_at")
+  updatedAt                DateTime      @updatedAt @map("updated_at")
+  createdBy                User          @relation("VoucherCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  courseScopes             VoucherCourse[]
+  categoryScopes           VoucherCategory[]
+  eligibleUsers            VoucherUser[]
+  redemptions              VoucherRedemption[]
+
+  @@index([status, startsAt, endsAt])
+  @@index([createdById])
+  @@map("vouchers")
+}
+
+model VoucherCourse {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  voucherId String  @map("voucher_id") @db.Uuid
+  courseId  String  @map("course_id") @db.Uuid
+  voucher   Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  course    Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([voucherId, courseId])
+  @@index([courseId])
+  @@map("voucher_courses")
+}
+
+model VoucherCategory {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  voucherId    String  @map("voucher_id") @db.Uuid
+  categorySlug String  @map("category_slug")
+  voucher      Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@unique([voucherId, categorySlug])
+  @@index([categorySlug])
+  @@map("voucher_categories")
+}
+
+model VoucherUser {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  voucherId String  @map("voucher_id") @db.Uuid
+  userId    String  @map("user_id") @db.Uuid
+  voucher   Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([voucherId, userId])
+  @@index([userId])
+  @@map("voucher_users")
+}
+
+model VoucherRedemption {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  voucherId            String   @map("voucher_id") @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  courseId             String   @map("course_id") @db.Uuid
+  redemptionKey        String   @map("redemption_key")
+  originalAmountMinor  Int      @map("original_amount_minor")
+  discountAmountMinor  Int      @map("discount_amount_minor")
+  finalAmountMinor     Int      @map("final_amount_minor")
+  currency             String   @db.VarChar(3)
+  createdAt            DateTime @default(now()) @map("created_at")
+  voucher              Voucher  @relation(fields: [voucherId], references: [id], onDelete: Restrict)
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  course               Course   @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  @@unique([voucherId, userId, redemptionKey])
+  @@index([userId, createdAt])
+  @@index([courseId, createdAt])
+  @@map("voucher_redemptions")
+}
+
+model ScholarshipCampaign {
+  id              String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title           String
+  description     String?
+  status          ScholarshipStatus          @default(draft)
+  applicationMode ScholarshipApplicationMode @map("application_mode")
+  benefitKind     ScholarshipBenefitKind     @map("benefit_kind")
+  benefitValue    Int                        @map("benefit_value")
+  currency        String?                    @db.VarChar(3)
+  startsAt        DateTime                   @map("starts_at")
+  endsAt          DateTime                   @map("ends_at")
+  quota           Int?
+  awardedCount    Int                        @default(0) @map("awarded_count")
+  createdById     String                     @map("created_by_id") @db.Uuid
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+  createdBy       User                       @relation("ScholarshipCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  courseScopes    ScholarshipCourse[]
+  categoryScopes  ScholarshipCategory[]
+  eligibleUsers   ScholarshipUser[]
+  applications    ScholarshipApplication[]
+  awards          ScholarshipAward[]
+
+  @@index([status, startsAt, endsAt])
+  @@index([createdById])
+  @@map("scholarship_campaigns")
+}
+
+model ScholarshipCourse {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  courseId      String              @map("course_id") @db.Uuid
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+  course        Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([scholarshipId, courseId])
+  @@index([courseId])
+  @@map("scholarship_courses")
+}
+
+model ScholarshipCategory {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  categorySlug  String              @map("category_slug")
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+
+  @@unique([scholarshipId, categorySlug])
+  @@index([categorySlug])
+  @@map("scholarship_categories")
+}
+
+model ScholarshipUser {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  userId        String              @map("user_id") @db.Uuid
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Cascade)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([scholarshipId, userId])
+  @@index([userId])
+  @@map("scholarship_users")
+}
+
+model ScholarshipApplication {
+  id            String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String                       @map("scholarship_id") @db.Uuid
+  userId        String                       @map("user_id") @db.Uuid
+  courseId      String                       @map("course_id") @db.Uuid
+  status        ScholarshipApplicationStatus @default(pending)
+  decisionReason String?                     @map("decision_reason")
+  appliedAt     DateTime                     @default(now()) @map("applied_at")
+  updatedAt     DateTime                     @updatedAt @map("updated_at")
+  scholarship   ScholarshipCampaign           @relation(fields: [scholarshipId], references: [id], onDelete: Restrict)
+  user          User                          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  course        Course                        @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  award         ScholarshipAward?
+
+  @@unique([scholarshipId, userId, courseId])
+  @@index([userId, status])
+  @@index([courseId, status])
+  @@map("scholarship_applications")
+}
+
+model ScholarshipAward {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scholarshipId String              @map("scholarship_id") @db.Uuid
+  applicationId String              @unique @map("application_id") @db.Uuid
+  userId        String              @map("user_id") @db.Uuid
+  courseId      String              @map("course_id") @db.Uuid
+  benefitKind   ScholarshipBenefitKind @map("benefit_kind")
+  benefitValue  Int                 @map("benefit_value")
+  currency      String?             @db.VarChar(3)
+  awardedAt     DateTime            @default(now()) @map("awarded_at")
+  revokedAt     DateTime?           @map("revoked_at")
+  scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Restrict)
+  application   ScholarshipApplication @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, courseId])
+  @@index([scholarshipId, awardedAt])
+  @@map("scholarship_awards")
+}
+
+model TmiReward {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title            String
+  description      String?
+  kind             TmiRewardKind
+  cost             Int
+  status           TmiRewardStatus @default(draft)
+  quota            Int?
+  redeemedCount   Int             @default(0) @map("redeemed_count")
+  startsAt         DateTime        @map("starts_at")
+  endsAt           DateTime        @map("ends_at")
+  inventoryMetadata Json?          @map("inventory_metadata")
+  createdById      String          @map("created_by_id") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  createdBy        User            @relation("TmiRewardCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([status, startsAt, endsAt])
+  @@index([createdById])
+  @@map("tmi_rewards")
 }
