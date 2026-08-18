@@ -34,6 +34,7 @@ function createHarness() {
       }),
     },
     tmiLedgerEntry: {
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([{ kind: 'earn', amount: 100, adjustmentDirection: null }]),
       create: jest.fn().mockResolvedValue({ id: 'ledger-1' }),
     },
@@ -114,6 +115,33 @@ describe('TmiRedemptionService', () => {
     tx.tmiRedemption.findUnique.mockResolvedValue({ id: 'redemption-1', rewardId: 'other-reward', userId, idempotencyKey: 'request-001', cost: 40, createdAt: now });
 
     await expect(service.redeem(userId, rewardId, { idempotencyKey: 'request-001' })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('uses the server reward cost even when an untrusted client adds a cost field', async () => {
+    const { service, tx } = createHarness();
+
+    await service.redeem(userId, rewardId, { idempotencyKey: 'request-003', cost: 1 } as never);
+
+    expect(tx.tmiRedemption.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ cost: 40 }),
+    }));
+    expect(tx.tmiLedgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ amount: 40 }),
+    }));
+  });
+
+  it('rejects an administrative debit that would make the server-derived balance negative', async () => {
+    const { service, tx } = createHarness();
+    tx.tmiLedgerEntry.findMany.mockResolvedValue([{ kind: 'earn', amount: 5, adjustmentDirection: null }]);
+
+    await expect(service.adjustBalance('admin-1', {
+      userId,
+      amount: 10,
+      direction: 'debit',
+      adjustmentKey: 'negative-check-001',
+      reason: 'Invariant test',
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.tmiLedgerEntry.create).not.toHaveBeenCalled();
   });
 
   it.each([

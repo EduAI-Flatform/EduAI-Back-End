@@ -1,6 +1,17 @@
 import { TmiRedemptionController } from './tmi-redemption.controller';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { RoleName } from '../../../generated/prisma/client';
+import { ROLES_KEY } from '../auth/roles.decorator';
 
 describe('TmiRedemptionController', () => {
+  it('keeps learner redemption and admin mutations separated by role metadata', () => {
+    const prototype = TmiRedemptionController.prototype;
+    expect(Reflect.getMetadata(ROLES_KEY, prototype.redeem)).toEqual([RoleName.student]);
+    expect(Reflect.getMetadata(ROLES_KEY, prototype.refund)).toEqual([RoleName.platform_admin]);
+    expect(Reflect.getMetadata(ROLES_KEY, prototype.adjustBalance)).toEqual([RoleName.platform_admin]);
+    expect(Reflect.getMetadata(GUARDS_METADATA, prototype.redeem)).toHaveLength(2);
+    expect(Reflect.getMetadata(GUARDS_METADATA, prototype.refund)).toHaveLength(2);
+  });
   it('binds redemption to the authenticated student and reward', async () => {
     const service = { redeem: jest.fn().mockResolvedValue({ id: 'redemption-1' }) };
     const controller = new TmiRedemptionController(service as never);
