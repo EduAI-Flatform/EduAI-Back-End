@@ -17,10 +17,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdjustTmiBalanceDto } from './dto/adjust-tmi-balance.dto';
 import { RedeemTmiRewardDto } from './dto/redeem-tmi-reward.dto';
 import { RefundTmiRedemptionDto } from './dto/refund-tmi-redemption.dto';
+import type { TmiRewardResponse } from './tmi-reward.service';
 
 const rewardRuntimeSelect = {
   id: true,
   title: true,
+  description: true,
   kind: true,
   cost: true,
   status: true,
@@ -29,7 +31,11 @@ const rewardRuntimeSelect = {
   startsAt: true,
   endsAt: true,
   inventoryMetadata: true,
+  createdAt: true,
+  updatedAt: true,
 } satisfies Prisma.TmiRewardSelect;
+
+const learnerRewardSelect = rewardRuntimeSelect;
 
 const redemptionSelect = {
   id: true,
@@ -61,6 +67,22 @@ export interface TmiBalanceAdjustmentResponse {
   idempotent: boolean;
 }
 
+export interface TmiWalletResponse {
+  current: number;
+  earned: number;
+  spent: number;
+  expired: number;
+}
+
+export interface TmiLedgerHistoryItem {
+  id: string;
+  kind: TmiLedgerKind;
+  amount: number;
+  adjustmentDirection: TmiAdjustmentDirection | null;
+  sourceType: string;
+  occurredAt: Date;
+}
+
 type LedgerBalanceEntry = Pick<Prisma.TmiLedgerEntryGetPayload<{
   select: { kind: true; amount: true; adjustmentDirection: true };
 }>, 'kind' | 'amount' | 'adjustmentDirection'>;
@@ -71,6 +93,26 @@ export class TmiRedemptionService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
+
+  async listAvailableRewards(query: { page: number; pageSize: number }): Promise<{ items: Omit<TmiRewardResponse, 'createdById'>[]; page: number; pageSize: number; total: number; totalPages: number }> {
+    const now = new Date();
+    const items = await this.prisma.tmiReward.findMany({ where: { status: TmiRewardStatus.active, startsAt: { lte: now }, endsAt: { gt: now } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: learnerRewardSelect });
+    const available = items.filter((item) => item.quota === null || item.redeemedCount < item.quota);
+    const total = available.length;
+    const offset = (query.page - 1) * query.pageSize;
+    return { items: available.slice(offset, offset + query.pageSize).map((item) => this.toLearnerResponse(item)), page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) };
+  }
+
+  async wallet(userId: string): Promise<TmiWalletResponse> {
+    await this.assertUserExists(this.prisma, userId);
+    const entries = await this.prisma.tmiLedgerEntry.findMany({ where: { userId }, select: { kind: true, amount: true, adjustmentDirection: true } });
+    return this.summarizeWallet(entries);
+  }
+
+  async history(userId: string): Promise<TmiLedgerHistoryItem[]> {
+    await this.assertUserExists(this.prisma, userId);
+    return this.prisma.tmiLedgerEntry.findMany({ where: { userId }, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: 100, select: { id: true, kind: true, amount: true, adjustmentDirection: true, sourceType: true, occurredAt: true } });
+  }
 
   async redeem(
     userId: string,
@@ -221,6 +263,11 @@ export class TmiRedemptionService {
     if (rows.length === 0) throw new NotFoundException('TMI user not found');
   }
 
+  private async assertUserExists(client: PrismaService, userId: string): Promise<void> {
+    const user = await client.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) throw new NotFoundException('TMI user not found');
+  }
+
   private async lockReward(tx: Prisma.TransactionClient, rewardId: string): Promise<RewardRuntime> {
     await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM "tmi_rewards" WHERE id = ${rewardId} FOR UPDATE`;
     const reward = await tx.tmiReward.findUnique({ where: { id: rewardId }, select: rewardRuntimeSelect });
@@ -240,11 +287,18 @@ export class TmiRedemptionService {
       where: { userId },
       select: { kind: true, amount: true, adjustmentDirection: true },
     });
-    return entries.reduce((balance: number, entry: LedgerBalanceEntry) => {
-      if (!Number.isInteger(entry.amount) || entry.amount <= 0) return balance;
-      if (entry.kind === TmiLedgerKind.earn || entry.kind === TmiLedgerKind.refund || (entry.kind === TmiLedgerKind.adjustment && entry.adjustmentDirection === TmiAdjustmentDirection.credit)) return balance + entry.amount;
-      return balance - entry.amount;
-    }, 0);
+    return this.summarizeWallet(entries).current;
+  }
+
+  private summarizeWallet(entries: LedgerBalanceEntry[]): TmiWalletResponse {
+    let earned = 0; let spent = 0; let expired = 0;
+    for (const entry of entries) {
+      if (!Number.isInteger(entry.amount) || entry.amount <= 0) continue;
+      if (entry.kind === TmiLedgerKind.earn || entry.kind === TmiLedgerKind.refund || (entry.kind === TmiLedgerKind.adjustment && entry.adjustmentDirection === TmiAdjustmentDirection.credit)) earned += entry.amount;
+      if (entry.kind === TmiLedgerKind.redeem || (entry.kind === TmiLedgerKind.adjustment && entry.adjustmentDirection === TmiAdjustmentDirection.debit)) spent += entry.amount;
+      if (entry.kind === TmiLedgerKind.expiry) { spent += entry.amount; expired += entry.amount; }
+    }
+    return { current: Math.max(0, earned - spent), earned, spent, expired };
   }
 
   private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
@@ -260,6 +314,24 @@ export class TmiRedemptionService {
 
   private toRedemptionResponse(record: RedemptionRecord, idempotent: boolean): TmiRedemptionResponse {
     return { ...record, idempotent };
+  }
+
+  private toLearnerResponse(record: RewardRuntime): Omit<TmiRewardResponse, 'createdById'> {
+    return {
+      id: record.id,
+      title: record.title,
+      description: record.description,
+      kind: record.kind,
+      cost: record.cost,
+      status: record.status,
+      quota: record.quota,
+      redeemedCount: record.redeemedCount,
+      startsAt: record.startsAt,
+      endsAt: record.endsAt,
+      inventoryMetadata: record.inventoryMetadata as Record<string, unknown> | null,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
   }
 
   private toJsonInput(value: Prisma.JsonValue | null): Prisma.InputJsonValue | typeof Prisma.JsonNull {
