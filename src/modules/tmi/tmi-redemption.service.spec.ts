@@ -51,6 +51,40 @@ function createHarness() {
 }
 
 describe('TmiRedemptionService', () => {
+  it('returns paginated sanitized redemption history for administrators', async () => {
+    const { service, prisma } = createHarness();
+    (prisma as any).tmiRedemption = {
+      count: jest.fn().mockResolvedValue(1),
+      findMany: jest.fn().mockResolvedValue([{ id: 'redemption-1', userId, rewardId, cost: 40, createdAt: now, reward: { title: 'Course reward', kind: TmiRewardKind.course_access } }]),
+    };
+
+    await expect(service.listAdminRedemptions({ page: 1, pageSize: 20 })).resolves.toEqual({
+      items: [{ id: 'redemption-1', userId, rewardId, cost: 40, createdAt: now, reward: { title: 'Course reward', kind: TmiRewardKind.course_access } }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    });
+    expect((prisma as any).tmiRedemption.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 0, take: 20 }));
+  });
+
+  it('returns paginated sanitized ledger history without metadata or actor secrets', async () => {
+    const { service, prisma } = createHarness();
+    (prisma as any).tmiLedgerEntry = {
+      count: jest.fn().mockResolvedValue(1),
+      findMany: jest.fn().mockResolvedValue([{ id: 'ledger-1', userId, kind: 'earn', amount: 100, adjustmentDirection: null, sourceType: 'course_completion', occurredAt: now }]),
+    };
+
+    await expect(service.listAdminLedger({ page: 1, pageSize: 20 })).resolves.toEqual({
+      items: [{ id: 'ledger-1', userId, kind: 'earn', amount: 100, adjustmentDirection: null, sourceType: 'course_completion', occurredAt: now }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    });
+    expect((prisma as any).tmiLedgerEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 0, take: 20 }));
+  });
+
   it('creates one entitlement and debit ledger entry atomically', async () => {
     const { service, tx, audit } = createHarness();
 

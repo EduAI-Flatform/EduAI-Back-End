@@ -23,4 +23,18 @@ describe('TmiRedemptionController', () => {
     expect(service.refund).toHaveBeenCalledWith('admin-1', 'redemption-1', { reason: 'support correction' });
     expect(service.adjustBalance).toHaveBeenCalledWith('admin-1', expect.objectContaining({ userId: 'student-1' }));
   });
+
+  it('binds administrative history reads to the guarded controller contract', async () => {
+    const service = {
+      listAdminRedemptions: jest.fn().mockResolvedValue({ items: [] }),
+      listAdminLedger: jest.fn().mockResolvedValue({ items: [] }),
+    };
+    const controller = new TmiRedemptionController(service as never);
+
+    await controller.listAdminRedemptions({ page: 1, pageSize: 20 });
+    await controller.listAdminLedger({ page: 1, pageSize: 20 });
+
+    expect(service.listAdminRedemptions).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
+    expect(service.listAdminLedger).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
+  });
 });

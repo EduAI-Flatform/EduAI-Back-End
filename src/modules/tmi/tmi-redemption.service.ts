@@ -46,8 +46,29 @@ const redemptionSelect = {
   createdAt: true,
 } satisfies Prisma.TmiRedemptionSelect;
 
+const adminRedemptionSelect = {
+  id: true,
+  userId: true,
+  rewardId: true,
+  cost: true,
+  createdAt: true,
+  reward: { select: { title: true, kind: true } },
+} satisfies Prisma.TmiRedemptionSelect;
+
+const adminLedgerSelect = {
+  id: true,
+  userId: true,
+  kind: true,
+  amount: true,
+  adjustmentDirection: true,
+  sourceType: true,
+  occurredAt: true,
+} satisfies Prisma.TmiLedgerEntrySelect;
+
 type RewardRuntime = Prisma.TmiRewardGetPayload<{ select: typeof rewardRuntimeSelect }>;
 type RedemptionRecord = Prisma.TmiRedemptionGetPayload<{ select: typeof redemptionSelect }>;
+type AdminRedemptionRecord = Prisma.TmiRedemptionGetPayload<{ select: typeof adminRedemptionSelect }>;
+type AdminLedgerRecord = Prisma.TmiLedgerEntryGetPayload<{ select: typeof adminLedgerSelect }>;
 
 export interface TmiRedemptionResponse extends RedemptionRecord {
   idempotent: boolean;
@@ -83,6 +104,23 @@ export interface TmiLedgerHistoryItem {
   occurredAt: Date;
 }
 
+export interface TmiAdminRedemptionItem extends AdminRedemptionRecord {}
+export interface TmiAdminLedgerItem extends AdminLedgerRecord {}
+export interface TmiAdminRedemptionPage {
+  items: TmiAdminRedemptionItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+export interface TmiAdminLedgerPage {
+  items: TmiAdminLedgerItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 type LedgerBalanceEntry = Pick<Prisma.TmiLedgerEntryGetPayload<{
   select: { kind: true; amount: true; adjustmentDirection: true };
 }>, 'kind' | 'amount' | 'adjustmentDirection'>;
@@ -112,6 +150,27 @@ export class TmiRedemptionService {
   async history(userId: string): Promise<TmiLedgerHistoryItem[]> {
     await this.assertUserExists(this.prisma, userId);
     return this.prisma.tmiLedgerEntry.findMany({ where: { userId }, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: 100, select: { id: true, kind: true, amount: true, adjustmentDirection: true, sourceType: true, occurredAt: true } });
+  }
+
+  async listAdminRedemptions(query: { page: number; pageSize: number; userId?: string; rewardId?: string }): Promise<TmiAdminRedemptionPage> {
+    const where: Prisma.TmiRedemptionWhereInput = {
+      ...(query.userId ? { userId: query.userId } : {}),
+      ...(query.rewardId ? { rewardId: query.rewardId } : {}),
+    };
+    const [total, items] = await Promise.all([
+      this.prisma.tmiRedemption.count({ where }),
+      this.prisma.tmiRedemption.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: adminRedemptionSelect }),
+    ]);
+    return { items, page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) };
+  }
+
+  async listAdminLedger(query: { page: number; pageSize: number; userId?: string }): Promise<TmiAdminLedgerPage> {
+    const where: Prisma.TmiLedgerEntryWhereInput = query.userId ? { userId: query.userId } : {};
+    const [total, items] = await Promise.all([
+      this.prisma.tmiLedgerEntry.count({ where }),
+      this.prisma.tmiLedgerEntry.findMany({ where, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: adminLedgerSelect }),
+    ]);
+    return { items, page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) };
   }
 
   async redeem(
