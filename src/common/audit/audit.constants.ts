@@ -20,6 +20,9 @@ export const AuditAction = {
   ScholarshipApplied: 'SCHOLARSHIP_APPLIED',
   TmiRewardCreated: 'TMI_REWARD_CREATED',
   TmiRewardUpdated: 'TMI_REWARD_UPDATED',
+  TmiRewardRedeemed: 'TMI_REWARD_REDEEMED',
+  TmiRewardRefunded: 'TMI_REWARD_REFUNDED',
+  TmiBalanceAdjusted: 'TMI_BALANCE_ADJUSTED',
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];

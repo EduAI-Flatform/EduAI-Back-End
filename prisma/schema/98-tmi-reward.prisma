@@ -14,6 +14,7 @@ model TmiReward {
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   createdBy        User            @relation("TmiRewardCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  redemptions      TmiRedemption[]
 
   @@index([status, startsAt, endsAt])
   @@index([createdById])

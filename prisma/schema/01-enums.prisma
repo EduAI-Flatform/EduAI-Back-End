@@ -156,3 +156,27 @@ enum TmiRewardStatus {
   disabled
   expired
 }
+
+enum TmiLedgerKind {
+  earn
+  redeem
+  refund
+  adjustment
+  expiry
+
+  @@map("tmi_ledger_kind")
+}
+
+enum TmiAdjustmentDirection {
+  credit
+  debit
+
+  @@map("tmi_adjustment_direction")
+}
+
+enum TmiEntitlementStatus {
+  active
+  revoked
+
+  @@map("tmi_entitlement_status")
+}
