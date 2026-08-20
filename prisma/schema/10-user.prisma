@@ -57,6 +57,9 @@ model User {
   jobApplicationChanges JobApplicationStatusHistory[] @relation("JobApplicationStatusActor")
   mentorProfile MentorProfile? @relation("MentorOwner")
   approvedMentorProfiles MentorProfile[] @relation("MentorApprover")
+  mentorBookings MentorBooking[] @relation("MentorBookingStudent")
+  mentorBookingChanges MentorBookingStatusHistory[] @relation("MentorBookingStatusActor")
+  mentorBookingRequests MentorBooking[] @relation("MentorBookingRequester")
 
   @@index([status])
   @@index([deletedAt])

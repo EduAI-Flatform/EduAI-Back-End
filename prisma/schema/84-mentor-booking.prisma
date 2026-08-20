@@ -1,0 +1,52 @@
+model MentorBooking {
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mentorProfileId       String              @map("mentor_profile_id") @db.Uuid
+  studentId             String              @map("student_id") @db.Uuid
+  topic                 String
+  scheduledStart        DateTime            @map("scheduled_start")
+  scheduledEnd          DateTime            @map("scheduled_end")
+  status                MentorBookingStatus @default(requested)
+  pendingRequestedById  String              @map("pending_requested_by_id") @db.Uuid
+  cancellationReason    String?             @map("cancellation_reason")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  mentorProfile         MentorProfile       @relation(fields: [mentorProfileId], references: [id], onDelete: Restrict)
+  student               User                @relation("MentorBookingStudent", fields: [studentId], references: [id], onDelete: Restrict)
+  pendingRequestedBy    User                @relation("MentorBookingRequester", fields: [pendingRequestedById], references: [id], onDelete: Restrict)
+  history               MentorBookingStatusHistory[]
+
+  @@index([mentorProfileId, status, scheduledStart])
+  @@index([studentId, status, scheduledStart])
+  @@index([scheduledStart, scheduledEnd])
+  @@map("mentor_bookings")
+}
+
+model MentorBookingStatusHistory {
+  id                     String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId              String               @map("booking_id") @db.Uuid
+  fromStatus             MentorBookingStatus? @map("from_status")
+  toStatus               MentorBookingStatus  @map("to_status")
+  changedById            String               @map("changed_by_id") @db.Uuid
+  previousScheduledStart DateTime?             @map("previous_scheduled_start")
+  previousScheduledEnd   DateTime?             @map("previous_scheduled_end")
+  scheduledStart         DateTime              @map("scheduled_start")
+  scheduledEnd           DateTime              @map("scheduled_end")
+  reason                 String?
+  createdAt              DateTime              @default(now()) @map("created_at")
+  booking                MentorBooking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedBy              User                 @relation("MentorBookingStatusActor", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([bookingId, createdAt])
+  @@map("mentor_booking_status_history")
+}
+
+enum MentorBookingStatus {
+  requested
+  accepted
+  reschedule_requested
+  rejected
+  cancelled
+  completed
+
+  @@map("mentor_booking_status")
+}

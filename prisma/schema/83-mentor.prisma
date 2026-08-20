@@ -14,6 +14,7 @@ model MentorProfile {
   approvedBy   User?                @relation("MentorApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   expertise    MentorExpertise[]
   availability MentorAvailability[]
+  bookings     MentorBooking[]
 
   @@index([status, isActive])
   @@index([timezone])
