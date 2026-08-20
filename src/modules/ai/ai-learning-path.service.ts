@@ -99,5 +99,5 @@ export class AiLearningPathService {
     } catch { throw new BadGatewayException('AI provider returned invalid learning path content'); }
   }
 
-  private schema(): Record<string, unknown> { return { type: 'object', properties: { schemaVersion: { const: 'v1' }, milestones: { type: 'array', maxItems: 6, items: { type: 'object', properties: { courseId: { type: 'string' }, reason: { type: 'string' }, priority: { type: 'integer', minimum: 1 } }, required: ['courseId', 'reason', 'priority'] } } }, required: ['schemaVersion', 'milestones'] }; }
+  private schema(): Record<string, unknown> { return { type: 'object', properties: { schemaVersion: { type: 'string', enum: ['v1'] }, milestones: { type: 'array', maxItems: 6, items: { type: 'object', properties: { courseId: { type: 'string' }, reason: { type: 'string' }, priority: { type: 'integer', minimum: 1 } }, required: ['courseId', 'reason', 'priority'] } } }, required: ['schemaVersion', 'milestones'] }; }
 }

@@ -59,6 +59,21 @@ describe('AiLearningPathService', () => {
     expect(prompt).not.toContain('content');
   });
 
+  it('uses only Gemini-supported structured-output schema keywords', async () => {
+    const { service, provider } = createService();
+
+    await service.regenerate(student);
+
+    const responseSchema = provider.complete.mock.calls[0][0].responseSchema as {
+      properties: { schemaVersion: Record<string, unknown> };
+    };
+    expect(responseSchema.properties.schemaVersion).toEqual({
+      type: 'string',
+      enum: ['v1'],
+    });
+    expect(JSON.stringify(responseSchema)).not.toContain('"const"');
+  });
+
   it('rejects provider paths that reference inaccessible courses before persistence', async () => {
     const { service, prisma } = createService(JSON.stringify({ schemaVersion: 'v1', milestones: [{ courseId: 'private-course', reason: 'No', priority: 1 }] }));
     await expect(service.regenerate(student)).rejects.toBeInstanceOf(BadGatewayException);
