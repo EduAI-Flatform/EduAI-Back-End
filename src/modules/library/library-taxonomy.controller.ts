@@ -20,6 +20,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
+import { Public } from '../../common/security/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -39,6 +40,7 @@ export class LibraryTaxonomyController {
   constructor(private readonly service: LibraryTaxonomyService) {}
 
   @Get('categories')
+  @Public()
   @ApiOkResponse({ description: 'Library categories returned successfully.' })
   listCategories() {
     return this.service.listCategories();
@@ -87,6 +89,7 @@ export class LibraryTaxonomyController {
   }
 
   @Get('tags')
+  @Public()
   @ApiOkResponse({ description: 'Library tags returned successfully.' })
   listTags() {
     return this.service.listTags();

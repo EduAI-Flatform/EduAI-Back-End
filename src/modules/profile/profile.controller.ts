@@ -24,6 +24,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { UploadRateLimit } from '../../common/security/rate-limit.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   MAX_AVATAR_FILE_SIZE_BYTES,
@@ -113,6 +114,7 @@ export class ProfileController {
   }
 
   @Post('avatar')
+  @UploadRateLimit()
   @UseInterceptors(
     FileInterceptor('file', {
       limits: {
@@ -181,6 +183,7 @@ export class ProfileController {
   }
 
   @Post('portfolio')
+  @UploadRateLimit()
   @UseInterceptors(
     FileInterceptor('image', { limits: { fileSize: MAX_PORTFOLIO_IMAGE_SIZE_BYTES } }),
   )
@@ -197,6 +200,7 @@ export class ProfileController {
   }
 
   @Put('portfolio/:id')
+  @UploadRateLimit()
   @UseInterceptors(
     FileInterceptor('image', { limits: { fileSize: MAX_PORTFOLIO_IMAGE_SIZE_BYTES } }),
   )

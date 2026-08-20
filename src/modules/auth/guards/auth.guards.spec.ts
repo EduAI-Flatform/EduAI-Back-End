@@ -60,10 +60,15 @@ describe('JwtAuthGuard', () => {
       },
     } as unknown as PrismaService;
 
+    const reflector = {
+      getAllAndOverride: jest.fn().mockReturnValue(false),
+    } as unknown as Reflector;
+
     return {
-      guard: new JwtAuthGuard(jwtService, appConfig, prisma),
+      guard: new JwtAuthGuard(jwtService, appConfig, prisma, reflector),
       jwtService,
       prisma,
+      reflector,
     };
   }
 
@@ -96,6 +101,25 @@ describe('JwtAuthGuard', () => {
       email: 'admin@example.com',
       roles: [RoleName.platform_admin],
     });
+  });
+
+  it('does not repeat token and database work for stacked global and route guards', async () => {
+    const { guard, jwtService, prisma } = createGuard();
+    const context = createHttpContext({ authorization: 'Bearer access-token' });
+
+    await guard.canActivate(context);
+    await guard.canActivate(context);
+
+    expect(jwtService.verifyAsync).toHaveBeenCalledTimes(1);
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows explicitly public routes without reading a token', async () => {
+    const { guard, jwtService, reflector } = createGuard();
+    jest.mocked(reflector.getAllAndOverride).mockReturnValue(true);
+
+    await expect(guard.canActivate(createHttpContext())).resolves.toBe(true);
+    expect(jwtService.verifyAsync).not.toHaveBeenCalled();
   });
 
   it('rejects a suspended user even when the access token is still valid', async () => {
@@ -166,8 +190,12 @@ describe('OptionalJwtAuthGuard', () => {
       },
     } as unknown as PrismaService;
 
+    const reflector = {
+      getAllAndOverride: jest.fn().mockReturnValue(true),
+    } as unknown as Reflector;
+
     return {
-      guard: new OptionalJwtAuthGuard(jwtService, appConfig, prisma),
+      guard: new OptionalJwtAuthGuard(jwtService, appConfig, prisma, reflector),
       jwtService,
     };
   }

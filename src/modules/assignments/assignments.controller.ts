@@ -24,6 +24,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
+import { UploadRateLimit } from '../../common/security/rate-limit.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -125,6 +126,7 @@ export class AssignmentsController {
   }
 
   @Post('assignments/:id/submissions')
+  @UploadRateLimit()
   @Roles(RoleName.student)
   @UseInterceptors(
     FileInterceptor('file', {

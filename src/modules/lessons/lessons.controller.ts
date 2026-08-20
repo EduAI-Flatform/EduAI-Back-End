@@ -26,6 +26,11 @@ import {
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { RoleName } from '../../../generated/prisma/client';
+import { Public } from '../../common/security/public.decorator';
+import {
+  UploadAuthorizationRateLimit,
+  UploadRateLimit,
+} from '../../common/security/rate-limit.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
@@ -61,6 +66,7 @@ export class LessonsController {
   ) {}
 
   @Get('courses/:courseId/lessons')
+  @Public()
   @ApiOkResponse({ description: 'Published course lessons returned successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid course id.' })
   @ApiNotFoundResponse({ description: 'Published public course not found.' })
@@ -71,6 +77,7 @@ export class LessonsController {
   }
 
   @Get('lessons/:id')
+  @Public()
   @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({
@@ -142,6 +149,7 @@ export class LessonsController {
   }
 
   @Post('courses/:courseId/lesson-media/video-upload-url')
+  @UploadAuthorizationRateLimit()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @ApiBearerAuth()
@@ -179,6 +187,7 @@ export class LessonsController {
   }
 
   @Post('courses/:courseId/lesson-media/documents')
+  @UploadRateLimit()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @UseInterceptors(

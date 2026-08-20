@@ -27,6 +27,7 @@ import { AiLearningPathService } from './ai-learning-path.service';
 import { AiLearningPathResponseDto, CurrentAiLearningPathResponseDto } from './dto/ai-learning-path-response.dto';
 import { AiEmbeddingService } from './ai-embedding.service';
 import { RoleName } from '../../../generated/prisma/client';
+import { RateLimit } from '../../common/security/rate-limit.decorator';
 
 @ApiTags('AI')
 @Controller('ai')
@@ -73,6 +74,7 @@ export class AiController {
   }
 
   @Post('embeddings/rebuild')
+  @RateLimit({ identity: 'user', limit: 2, name: 'ai-embedding-rebuild', windowSeconds: 3600 })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.platform_admin)
   @ApiBearerAuth()

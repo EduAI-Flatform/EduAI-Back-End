@@ -23,7 +23,8 @@
     "start": "node dist/src/main",
     "start:dev": "nest start --watch",
     "test": "jest",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "security:audit-endpoints": "node scripts/audit-endpoint-security.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1087.0",

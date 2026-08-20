@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { AppConfigModule } from './config/app-config.module';
 import { RedisModule } from './config/redis.module';
 import { LoggingModule } from './common/logging/logging.module';
@@ -26,6 +27,8 @@ import { TmiModule } from './modules/tmi/tmi.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { MentorsModule } from './modules/mentors/mentors.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+import { AbuseRateLimitGuard } from './common/security/abuse-rate-limit.guard';
 
 @Module({
   imports: [
@@ -56,6 +59,10 @@ import { PrismaModule } from './prisma/prisma.module';
     TmiModule,
     JobsModule,
     MentorsModule,
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: AbuseRateLimitGuard },
   ],
 })
 export class AppModule {}

@@ -25,6 +25,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
+import { UploadRateLimit } from '../../common/security/rate-limit.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -84,6 +85,7 @@ export class LibraryResourceController {
   }
 
   @Post()
+  @UploadRateLimit()
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_LIBRARY_FILE_SIZE_BYTES } }),

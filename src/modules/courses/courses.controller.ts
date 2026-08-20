@@ -26,6 +26,8 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
+import { Public } from '../../common/security/public.decorator';
+import { UploadRateLimit } from '../../common/security/rate-limit.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
@@ -92,6 +94,7 @@ export class CoursesController {
   ) {}
 
   @Get('courses')
+  @Public()
   @ApiOkResponse({
     description: 'Published public courses returned successfully.',
     type: CourseCatalogResponseDto,
@@ -102,6 +105,7 @@ export class CoursesController {
   }
 
   @Get('courses/:id')
+  @Public()
   @UseGuards(OptionalJwtAuthGuard)
   @ApiOkResponse({
     description: 'Visible course returned successfully.',
@@ -134,6 +138,7 @@ export class CoursesController {
   }
 
   @Post('courses')
+  @UploadRateLimit()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @UseInterceptors(
@@ -164,6 +169,7 @@ export class CoursesController {
   }
 
   @Put('courses/:id')
+  @UploadRateLimit()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor, RoleName.platform_admin)
   @UseInterceptors(

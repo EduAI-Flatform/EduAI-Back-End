@@ -10,6 +10,8 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
+import { Public } from '../../common/security/public.decorator';
+import { PublicVerificationRateLimit } from '../../common/security/rate-limit.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -79,6 +81,8 @@ export class CertificatesController {
   }
 
   @Get('certificates/verify/:code')
+  @Public()
+  @PublicVerificationRateLimit()
   @ApiOkResponse({
     description: 'Public certificate verification returned successfully.',
     type: CertificateVerificationDto,

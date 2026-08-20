@@ -8,6 +8,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
+import { Public } from '../../common/security/public.decorator';
+import {
+  LoginRateLimit,
+  RateLimit,
+  FirebaseAuthRateLimit,
+} from '../../common/security/rate-limit.decorator';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
@@ -29,6 +35,8 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
+  @Public()
+  @LoginRateLimit()
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ description: 'User authenticated successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid login payload.' })
@@ -41,6 +49,8 @@ export class AuthController {
   }
 
   @Post('firebase')
+  @Public()
+  @FirebaseAuthRateLimit()
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ description: 'Firebase user authenticated successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid Firebase login payload.' })
@@ -57,6 +67,8 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Public()
+  @RateLimit({ identity: 'ip', limit: 30, name: 'auth-refresh', windowSeconds: 900 })
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ description: 'Refresh token rotated successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid refresh payload.' })
@@ -66,6 +78,8 @@ export class AuthController {
   }
 
   @Post('logout')
+  @Public()
+  @RateLimit({ identity: 'ip', limit: 30, name: 'auth-logout', windowSeconds: 900 })
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ description: 'Refresh token invalidated successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid logout payload.' })

@@ -1,12 +1,17 @@
 import { HttpException, HttpStatus, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { RedisConfigService } from '../../config/redis-config.service';
+import { AppConfigService } from '../../config/app-config.service';
 
 const DAILY_LIMIT = 30;
-const localUsage = new Map<string, number>();
-
 @Injectable()
 export class AiRateLimitService {
-  constructor(private readonly redisConfig: RedisConfigService) {}
+  private readonly localUsage = new Map<string, number>();
+
+  constructor(
+    private readonly redisConfig: RedisConfigService,
+    private readonly appConfig: AppConfigService,
+  ) {}
 
   async assertChatAllowed(userId: string): Promise<void> {
     return this.assertAllowed(userId, 'chat');
@@ -29,12 +34,16 @@ export class AiRateLimitService {
   }
 
   private async assertAllowed(userId: string, operation: string): Promise<void> {
-    const key = `ai:${operation}:${userId}:${new Date().toISOString().slice(0, 10)}`;
+    const userHash = createHash('sha256').update(userId).digest('hex');
+    const key = `ai:${operation}:${userHash}:${new Date().toISOString().slice(0, 10)}`;
     const redis = this.redisConfig.getClient();
 
     if (!redis) {
-      const nextUsage = (localUsage.get(key) ?? 0) + 1;
-      localUsage.set(key, nextUsage);
+      if (this.appConfig.app.nodeEnv === 'production') {
+        throw new ServiceUnavailableException('AI quota service is unavailable');
+      }
+      const nextUsage = (this.localUsage.get(key) ?? 0) + 1;
+      this.localUsage.set(key, nextUsage);
       if (nextUsage > DAILY_LIMIT) {
         throw new HttpException('Daily AI chat limit reached', HttpStatus.TOO_MANY_REQUESTS);
       }
@@ -42,14 +51,16 @@ export class AiRateLimitService {
     }
 
     try {
-      const usage = await redis.incr(key);
-      if (usage === 1) {
-        const secondsUntilReset = Math.max(
-          1,
-          Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1000),
-        );
-        await redis.expire(key, secondsUntilReset);
-      }
+      const secondsUntilReset = Math.max(
+        1,
+        Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1000),
+      );
+      const usage = Number(await redis.eval(
+        "local current = redis.call('INCR', KEYS[1]); if current == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end; return current",
+        1,
+        key,
+        secondsUntilReset,
+      ));
       if (usage > DAILY_LIMIT) {
         throw new HttpException('Daily AI chat limit reached', HttpStatus.TOO_MANY_REQUESTS);
       }

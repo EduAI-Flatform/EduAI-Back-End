@@ -21,6 +21,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { Public } from '../../common/security/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
@@ -36,6 +37,7 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Get('posts')
+  @Public()
   @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({
@@ -49,6 +51,7 @@ export class CommunityController {
   }
 
   @Get('posts/:id')
+  @Public()
   @UseGuards(OptionalJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({
@@ -109,6 +112,7 @@ export class CommunityController {
   }
 
   @Get('posts/:postId/comments')
+  @Public()
   @ApiOkResponse({ description: 'Active comments and replies returned successfully.' })
   @ApiBadRequestResponse({ description: 'Invalid post id.' })
   @ApiNotFoundResponse({ description: 'Community post not found.' })

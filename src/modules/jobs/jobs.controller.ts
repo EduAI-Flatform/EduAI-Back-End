@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
+import { Public } from '../../common/security/public.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -15,10 +16,10 @@ import { JobPage, JobResponse, JobsService, PublicJobDetail, PublicJobListItem }
 export class JobsController {
   constructor(private readonly jobs: JobsService) {}
 
-  @Get('jobs') @ApiOkResponse({ description: 'Paginated active published jobs returned.' })
+  @Get('jobs') @Public() @ApiOkResponse({ description: 'Paginated active published jobs returned.' })
   listPublic(@Query() query: ListJobsQueryDto): Promise<JobPage<PublicJobListItem>> { return this.jobs.listPublic(query); }
 
-  @Get('jobs/:id') @ApiOkResponse({ description: 'Active published job detail returned.' }) @ApiNotFoundResponse({ description: 'Job not found.' })
+  @Get('jobs/:id') @Public() @ApiOkResponse({ description: 'Active published job detail returned.' }) @ApiNotFoundResponse({ description: 'Job not found.' })
   getPublic(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string): Promise<PublicJobDetail> { return this.jobs.getPublic(id); }
 
   @Get('admin/jobs') @UseGuards(JwtAuthGuard, RolesGuard) @Roles(RoleName.platform_admin) @ApiBearerAuth() @ApiForbiddenResponse({ description: 'Platform administrator role required.' })

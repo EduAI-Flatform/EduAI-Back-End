@@ -1,4 +1,5 @@
 import { INestApplication, RequestMethod, ValidationPipe } from '@nestjs/common';
+import type { NextFunction, Request, Response } from 'express';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { AppLoggerService } from './common/logging/app-logger.service';
@@ -10,6 +11,10 @@ export function configureApp(
   logger: AppLoggerService,
   legacyPublicMediaBaseUrl?: string,
 ): void {
+  if (nodeEnv === 'production') {
+    app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  }
+
   const configuredOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((o) =>
     o.trim(),
   ).filter(Boolean) ?? [];
@@ -24,6 +29,17 @@ export function configureApp(
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  app.use((_request: Request, response: Response, next: NextFunction) => {
+    response.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data: https:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+    );
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    next();
   });
 
   app.setGlobalPrefix('api/v1', {
