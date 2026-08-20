@@ -7,6 +7,8 @@ import { JobsService } from './jobs.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { JobApplicationsController } from './job-applications.controller';
 import { JobApplicationsService } from './job-applications.service';
+import { JobMatchingController } from './job-matching.controller';
+import { JobMatchingService } from './job-matching.service';
 
-@Module({ imports: [PrismaModule, AuthModule, AuditModule, NotificationsModule], controllers: [JobsController, JobApplicationsController], providers: [JobsService, JobApplicationsService], exports: [JobsService, JobApplicationsService] })
+@Module({ imports: [PrismaModule, AuthModule, AuditModule, NotificationsModule], controllers: [JobsController, JobApplicationsController, JobMatchingController], providers: [JobsService, JobApplicationsService, JobMatchingService], exports: [JobsService, JobApplicationsService] })
 export class JobsModule {}
