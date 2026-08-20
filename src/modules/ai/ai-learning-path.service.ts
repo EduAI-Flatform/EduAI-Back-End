@@ -1,8 +1,9 @@
-import { BadGatewayException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { BadGatewayException, ForbiddenException, Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
 import {
   AssignmentStatus,
   CourseStatus,
   CourseVisibility,
+  ModerationStatus,
   Prisma,
   QuizStatus,
   RoleName,
@@ -14,6 +15,25 @@ import { AiRateLimitService } from './ai-rate-limit.service';
 
 export interface LearningPathMilestone { courseId: string; reason: string; priority: number; }
 export interface LearningPathOutput { schemaVersion: 'v1'; milestones: LearningPathMilestone[]; }
+export interface LearningPathCourseSummary {
+  id: string;
+  title: string;
+  slug: string;
+  thumbnailUrl: string | null;
+  level: string;
+  progressPercent: number;
+  enrollmentStatus: string | null;
+}
+export interface CurrentLearningPathMilestone extends LearningPathMilestone {
+  available: boolean;
+  course: LearningPathCourseSummary | null;
+}
+export interface CurrentLearningPathResponse {
+  id: string;
+  version: number;
+  createdAt: Date;
+  path: { schemaVersion: 'v1'; milestones: CurrentLearningPathMilestone[] };
+}
 
 @Injectable()
 export class AiLearningPathService {
@@ -23,13 +43,77 @@ export class AiLearningPathService {
     @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
   ) {}
 
+  async getCurrent(user: AuthenticatedUser): Promise<CurrentLearningPathResponse | null> {
+    if (!user.roles.includes(RoleName.student)) throw new ForbiddenException('Student role required');
+    const latest = await this.prisma.aiLearningPath.findFirst({
+      where: { userId: user.id },
+      orderBy: { version: 'desc' },
+      select: { id: true, version: true, outputJson: true, createdAt: true },
+    });
+    if (!latest) return null;
+
+    const path = this.parseStoredPath(latest.outputJson);
+    const courseIds = [...new Set(path.milestones.map((milestone) => milestone.courseId))];
+    const courses = await this.prisma.course.findMany({
+      where: {
+        id: { in: courseIds },
+        status: CourseStatus.published,
+        moderationStatus: ModerationStatus.clear,
+        deletedAt: null,
+        OR: [
+          { visibility: CourseVisibility.public },
+          { enrollments: { some: { userId: user.id, status: { in: ['active', 'completed'] } } } },
+        ],
+      },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        thumbnailUrl: true,
+        level: true,
+        enrollments: { where: { userId: user.id }, select: { status: true }, take: 1 },
+        progress: { where: { userId: user.id }, select: { progressPercent: true }, take: 1 },
+      },
+    });
+    const coursesById = new Map(courses.map((course) => [course.id, course]));
+
+    return {
+      id: latest.id,
+      version: latest.version,
+      createdAt: latest.createdAt,
+      path: {
+        schemaVersion: 'v1',
+        milestones: [...path.milestones]
+          .sort((left, right) => left.priority - right.priority)
+          .map((milestone) => {
+            const course = coursesById.get(milestone.courseId);
+            return {
+              ...milestone,
+              available: Boolean(course),
+              course: course
+                ? {
+                    id: course.id,
+                    title: course.title,
+                    slug: course.slug,
+                    thumbnailUrl: course.thumbnailUrl,
+                    level: course.level,
+                    progressPercent: course.progress[0]?.progressPercent ?? 0,
+                    enrollmentStatus: course.enrollments[0]?.status ?? null,
+                  }
+                : null,
+            };
+          }),
+      },
+    };
+  }
+
   async regenerate(user: AuthenticatedUser): Promise<{ id: string; version: number; path: LearningPathOutput }> {
     if (!user.roles.includes(RoleName.student)) throw new ForbiddenException('Student role required');
     await this.rateLimit.assertLearningPathAllowed(user.id);
     const [profile, courses, latest] = await Promise.all([
       this.prisma.learningProfile.findUnique({ where: { userId: user.id }, select: { learningGoal: true, currentLevel: true, weeklyAvailabilityHours: true, skillGaps: { select: { name: true, currentLevel: true, targetLevel: true } } } }),
       this.prisma.course.findMany({
-        where: { status: CourseStatus.published, deletedAt: null, OR: [{ visibility: CourseVisibility.public }, { enrollments: { some: { userId: user.id, status: { in: ['active', 'completed'] } } } }] },
+        where: { status: CourseStatus.published, moderationStatus: ModerationStatus.clear, deletedAt: null, OR: [{ visibility: CourseVisibility.public }, { enrollments: { some: { userId: user.id, status: { in: ['active', 'completed'] } } } }] },
         select: {
           id: true,
           title: true,
@@ -97,6 +181,37 @@ export class AiLearningPathService {
       if (parsed?.schemaVersion !== 'v1' || !Array.isArray(parsed.milestones) || parsed.milestones.length > 6 || parsed.milestones.some((item) => !item || !courseIds.has(item.courseId) || !Number.isInteger(item.priority) || item.priority < 1 || typeof item.reason !== 'string' || !item.reason.trim())) throw new Error();
       return { schemaVersion: 'v1', milestones: parsed.milestones.map((item) => ({ courseId: item.courseId, priority: item.priority, reason: item.reason.trim() })) };
     } catch { throw new BadGatewayException('AI provider returned invalid learning path content'); }
+  }
+
+  private parseStoredPath(value: Prisma.JsonValue): LearningPathOutput {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new InternalServerErrorException('Stored learning path is invalid');
+    }
+    const candidate = value as unknown as LearningPathOutput;
+    if (
+      candidate.schemaVersion !== 'v1' ||
+      !Array.isArray(candidate.milestones) ||
+      candidate.milestones.length > 6 ||
+      candidate.milestones.some((milestone) =>
+        !milestone ||
+        typeof milestone.courseId !== 'string' ||
+        !milestone.courseId ||
+        !Number.isInteger(milestone.priority) ||
+        milestone.priority < 1 ||
+        typeof milestone.reason !== 'string' ||
+        !milestone.reason.trim()
+      )
+    ) {
+      throw new InternalServerErrorException('Stored learning path is invalid');
+    }
+    return {
+      schemaVersion: 'v1',
+      milestones: candidate.milestones.map((milestone) => ({
+        courseId: milestone.courseId,
+        priority: milestone.priority,
+        reason: milestone.reason.trim(),
+      })),
+    };
   }
 
   private schema(): Record<string, unknown> { return { type: 'object', properties: { schemaVersion: { type: 'string', enum: ['v1'] }, milestones: { type: 'array', maxItems: 6, items: { type: 'object', properties: { courseId: { type: 'string' }, reason: { type: 'string' }, priority: { type: 'integer', minimum: 1 } }, required: ['courseId', 'reason', 'priority'] } } }, required: ['schemaVersion', 'milestones'] }; }

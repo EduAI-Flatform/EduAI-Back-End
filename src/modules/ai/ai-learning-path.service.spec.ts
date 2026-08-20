@@ -12,7 +12,9 @@ function createService(content = JSON.stringify({ schemaVersion: 'v1', milestone
         {
           id: 'course-1',
           title: 'Public course',
+          slug: 'public-course',
           description: 'Safe metadata',
+          thumbnailUrl: null,
           level: 'beginner',
           enrollments: [],
           progress: [],
@@ -78,5 +80,72 @@ describe('AiLearningPathService', () => {
     const { service, prisma } = createService(JSON.stringify({ schemaVersion: 'v1', milestones: [{ courseId: 'private-course', reason: 'No', priority: 1 }] }));
     await expect(service.regenerate(student)).rejects.toBeInstanceOf(BadGatewayException);
     expect(prisma.aiLearningPath.create).not.toHaveBeenCalled();
+  });
+
+  it('returns the latest learner-owned path with accessible course progress', async () => {
+    const { service, prisma } = createService();
+    prisma.aiLearningPath.findFirst.mockResolvedValue({
+      id: 'path-1',
+      version: 3,
+      outputJson: {
+        schemaVersion: 'v1',
+        milestones: [
+          { courseId: 'course-1', reason: 'Build foundations', priority: 1 },
+          { courseId: 'unavailable-course', reason: 'Continue later', priority: 2 },
+        ],
+      },
+      createdAt: new Date('2026-08-20T00:00:00.000Z'),
+    });
+
+    await expect(service.getCurrent(student)).resolves.toEqual({
+      id: 'path-1',
+      version: 3,
+      createdAt: new Date('2026-08-20T00:00:00.000Z'),
+      path: {
+        schemaVersion: 'v1',
+        milestones: [
+          {
+            courseId: 'course-1',
+            reason: 'Build foundations',
+            priority: 1,
+            available: true,
+            course: {
+              id: 'course-1',
+              title: 'Public course',
+              slug: 'public-course',
+              thumbnailUrl: null,
+              level: 'beginner',
+              progressPercent: 0,
+              enrollmentStatus: null,
+            },
+          },
+          {
+            courseId: 'unavailable-course',
+            reason: 'Continue later',
+            priority: 2,
+            available: false,
+            course: null,
+          },
+        ],
+      },
+    });
+    expect(prisma.aiLearningPath.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId: 'student-id' },
+      orderBy: { version: 'desc' },
+    }));
+    expect(prisma.course.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: { in: ['course-1', 'unavailable-course'] },
+        moderationStatus: 'clear',
+      }),
+    }));
+  });
+
+  it('returns null when the learner has not generated a path', async () => {
+    const { service, prisma } = createService();
+    prisma.aiLearningPath.findFirst.mockResolvedValue(null);
+
+    await expect(service.getCurrent(student)).resolves.toBeNull();
+    expect(prisma.course.findMany).not.toHaveBeenCalled();
   });
 });

@@ -85,6 +85,16 @@ describe('AiController', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, AiController.prototype.regenerateLearningPath)).toBeDefined();
   });
 
+  it('delegates current learning-path reads and protects them with JWT authentication', async () => {
+    const learningPath = { getCurrent: jest.fn().mockResolvedValue({ id: 'path-id', version: 1 }) };
+    const controller = new AiController({} as never, {} as never, {} as never, {} as never, learningPath as never, {} as never);
+    const user = { id: 'user-id', roles: [] };
+
+    await expect(controller.getCurrentLearningPath(user)).resolves.toEqual({ id: 'path-id', version: 1 });
+    expect(learningPath.getCurrent).toHaveBeenCalledWith(user);
+    expect(Reflect.getMetadata(GUARDS_METADATA, AiController.prototype.getCurrentLearningPath)).toBeDefined();
+  });
+
   it('delegates embedding rebuilds only to platform administrators', async () => {
     const embeddings = { rebuildAll: jest.fn().mockResolvedValue({ lessons: 1, libraryResources: 1, chunkCount: 2 }) };
     const controller = new AiController({} as never, {} as never, {} as never, {} as never, {} as never, embeddings as never);
