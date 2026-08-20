@@ -1,4 +1,4 @@
-import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { GUARDS_METADATA, HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { RoleName } from '../../../generated/prisma/client';
 import { ROLES_KEY } from '../auth/roles.decorator';
 import { MentorSessionsController } from './mentor-sessions.controller';
@@ -19,6 +19,8 @@ describe('MentorSessionsController', () => {
     const roles = [RoleName.student, RoleName.instructor, RoleName.platform_admin];
     expect(Reflect.getMetadata(ROLES_KEY, MentorSessionsController.prototype.join)).toEqual(roles);
     expect(Reflect.getMetadata(ROLES_KEY, MentorSessionsController.prototype.leave)).toEqual(roles);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, MentorSessionsController.prototype.join)).toBe(200);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, MentorSessionsController.prototype.leave)).toBe(200);
     expect(Reflect.getMetadata(GUARDS_METADATA, MentorSessionsController)).toHaveLength(2);
   });
 });

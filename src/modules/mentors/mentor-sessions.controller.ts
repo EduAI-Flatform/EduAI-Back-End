@@ -1,4 +1,4 @@
-import { Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Controller, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -18,6 +18,7 @@ export class MentorSessionsController {
   constructor(private readonly sessions: MentorSessionsService) {}
 
   @Post('join')
+  @HttpCode(HttpStatus.OK)
   @Roles(...SESSION_ROLES)
   @ApiOkResponse({ description: 'Authorized participant room URL and canonical join timestamp returned.' })
   @ApiNotFoundResponse({ description: 'Accepted participant-visible mentor booking not found.' })
@@ -26,6 +27,7 @@ export class MentorSessionsController {
   }
 
   @Post('leave')
+  @HttpCode(HttpStatus.OK)
   @Roles(...SESSION_ROLES)
   @ApiOkResponse({ description: 'Authorized participant leave timestamp recorded idempotently.' })
   @ApiNotFoundResponse({ description: 'Participant-visible mentor session attendance not found.' })
