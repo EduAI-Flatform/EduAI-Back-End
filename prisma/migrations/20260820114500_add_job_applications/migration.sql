@@ -1,0 +1,16 @@
+CREATE TYPE "job_application_status" AS ENUM ('submitted', 'reviewing', 'shortlisted', 'accepted', 'rejected', 'withdrawn');
+CREATE TABLE "saved_jobs" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "user_id" UUID NOT NULL, "job_id" UUID NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "saved_jobs_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "job_applications" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "user_id" UUID NOT NULL, "job_id" UUID NOT NULL, "cover_letter" TEXT, "status" "job_application_status" NOT NULL DEFAULT 'submitted', "submitted_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "withdrawn_at" TIMESTAMP(3), "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "job_applications_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "job_application_status_history" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "application_id" UUID NOT NULL, "from_status" "job_application_status", "to_status" "job_application_status" NOT NULL, "changed_by_id" UUID NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "job_application_status_history_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "saved_jobs_user_id_job_id_key" ON "saved_jobs"("user_id", "job_id");
+CREATE INDEX "saved_jobs_job_id_idx" ON "saved_jobs"("job_id");
+CREATE UNIQUE INDEX "job_applications_user_id_job_id_key" ON "job_applications"("user_id", "job_id");
+CREATE INDEX "job_applications_job_id_status_idx" ON "job_applications"("job_id", "status");
+CREATE INDEX "job_applications_user_id_submitted_at_idx" ON "job_applications"("user_id", "submitted_at");
+CREATE INDEX "job_application_status_history_application_id_created_at_idx" ON "job_application_status_history"("application_id", "created_at");
+ALTER TABLE "saved_jobs" ADD CONSTRAINT "saved_jobs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "saved_jobs" ADD CONSTRAINT "saved_jobs_job_id_fkey" FOREIGN KEY ("job_id") REFERENCES "job_opportunities"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "job_applications" ADD CONSTRAINT "job_applications_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "job_applications" ADD CONSTRAINT "job_applications_job_id_fkey" FOREIGN KEY ("job_id") REFERENCES "job_opportunities"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "job_application_status_history" ADD CONSTRAINT "job_application_status_history_application_id_fkey" FOREIGN KEY ("application_id") REFERENCES "job_applications"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "job_application_status_history" ADD CONSTRAINT "job_application_status_history_changed_by_id_fkey" FOREIGN KEY ("changed_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

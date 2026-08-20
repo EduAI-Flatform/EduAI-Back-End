@@ -52,6 +52,9 @@ model User {
   notifications Notification[]
   notificationPreferences NotificationPreference[]
   createdJobs JobOpportunity[] @relation("JobOpportunityCreator")
+  savedJobs SavedJob[]
+  jobApplications JobApplication[] @relation("JobApplicationApplicant")
+  jobApplicationChanges JobApplicationStatusHistory[] @relation("JobApplicationStatusActor")
 
   @@index([status])
   @@index([deletedAt])

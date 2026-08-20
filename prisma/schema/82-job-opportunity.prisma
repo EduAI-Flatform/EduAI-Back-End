@@ -19,6 +19,8 @@ model JobOpportunity {
   deletedAt      DateTime?          @map("deleted_at")
   createdBy      User               @relation("JobOpportunityCreator", fields: [createdById], references: [id], onDelete: Restrict)
   requiredSkills JobRequiredSkill[]
+  savedBy        SavedJob[]
+  applications   JobApplication[]
 
   @@index([status, closesAt])
   @@index([companyName])
@@ -63,4 +65,61 @@ enum JobEmploymentType {
   contract
 
   @@map("job_employment_type")
+}
+
+model SavedJob {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  jobId     String         @map("job_id") @db.Uuid
+  createdAt DateTime       @default(now()) @map("created_at")
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job       JobOpportunity @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+  @@index([jobId])
+  @@map("saved_jobs")
+}
+
+model JobApplication {
+  id          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String                 @map("user_id") @db.Uuid
+  jobId       String                 @map("job_id") @db.Uuid
+  coverLetter String?                @map("cover_letter")
+  status      JobApplicationStatus   @default(submitted)
+  submittedAt DateTime               @default(now()) @map("submitted_at")
+  withdrawnAt DateTime?              @map("withdrawn_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  user        User                   @relation("JobApplicationApplicant", fields: [userId], references: [id], onDelete: Restrict)
+  job         JobOpportunity         @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  history     JobApplicationStatusHistory[]
+
+  @@unique([userId, jobId])
+  @@index([jobId, status])
+  @@index([userId, submittedAt])
+  @@map("job_applications")
+}
+
+model JobApplicationStatusHistory {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String                @map("application_id") @db.Uuid
+  fromStatus    JobApplicationStatus? @map("from_status")
+  toStatus      JobApplicationStatus  @map("to_status")
+  changedById   String                @map("changed_by_id") @db.Uuid
+  createdAt     DateTime              @default(now()) @map("created_at")
+  application   JobApplication        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  changedBy     User                  @relation("JobApplicationStatusActor", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([applicationId, createdAt])
+  @@map("job_application_status_history")
+}
+
+enum JobApplicationStatus {
+  submitted
+  reviewing
+  shortlisted
+  accepted
+  rejected
+  withdrawn
+
+  @@map("job_application_status")
 }
