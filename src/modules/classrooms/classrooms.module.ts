@@ -8,6 +8,6 @@ import { JitsiRoomService } from './jitsi-room.service';
   imports: [AuthModule],
   controllers: [ClassroomsController],
   providers: [ClassroomsService, JitsiRoomService],
-  exports: [ClassroomsService],
+  exports: [ClassroomsService, JitsiRoomService],
 })
 export class ClassroomsModule {}

@@ -255,6 +255,7 @@ model User {
   mentorBookings MentorBooking[] @relation("MentorBookingStudent")
   mentorBookingChanges MentorBookingStatusHistory[] @relation("MentorBookingStatusActor")
   mentorBookingRequests MentorBooking[] @relation("MentorBookingRequester")
+  mentorSessionAttendance MentorSessionAttendance[] @relation("MentorSessionAttendanceUser")
 
   @@index([status])
   @@index([deletedAt])
@@ -1104,6 +1105,7 @@ model MentorBooking {
   student               User                @relation("MentorBookingStudent", fields: [studentId], references: [id], onDelete: Restrict)
   pendingRequestedBy    User                @relation("MentorBookingRequester", fields: [pendingRequestedById], references: [id], onDelete: Restrict)
   history               MentorBookingStatusHistory[]
+  session               MentorSession?
 
   @@index([mentorProfileId, status, scheduledStart])
   @@index([studentId, status, scheduledStart])
@@ -1139,6 +1141,36 @@ enum MentorBookingStatus {
   completed
 
   @@map("mentor_booking_status")
+}
+
+model MentorSession {
+  id         String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId  String                    @unique @map("booking_id") @db.Uuid
+  provider   String                    @default("jitsi")
+  roomName   String                    @unique @map("room_name")
+  createdAt  DateTime                  @default(now()) @map("created_at")
+  updatedAt  DateTime                  @updatedAt @map("updated_at")
+  booking    MentorBooking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  attendance MentorSessionAttendance[]
+
+  @@map("mentor_sessions")
+}
+
+model MentorSessionAttendance {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId       String        @map("session_id") @db.Uuid
+  userId          String        @map("user_id") @db.Uuid
+  joinedAt        DateTime      @default(now()) @map("joined_at")
+  leftAt          DateTime?     @map("left_at")
+  durationSeconds Int?          @map("duration_seconds")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  session         MentorSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user            User          @relation("MentorSessionAttendanceUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+  @@index([userId])
+  @@map("mentor_session_attendance")
 }
 
 model Notification {

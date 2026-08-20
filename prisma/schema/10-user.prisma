@@ -60,6 +60,7 @@ model User {
   mentorBookings MentorBooking[] @relation("MentorBookingStudent")
   mentorBookingChanges MentorBookingStatusHistory[] @relation("MentorBookingStatusActor")
   mentorBookingRequests MentorBooking[] @relation("MentorBookingRequester")
+  mentorSessionAttendance MentorSessionAttendance[] @relation("MentorSessionAttendanceUser")
 
   @@index([status])
   @@index([deletedAt])
