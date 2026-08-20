@@ -16,6 +16,7 @@ describe('AiRetrievalService', () => {
         distance: 0.2,
         metadata_json: { courseId: 'course-id' },
         course_id: 'course-id',
+        citation_path: '/courses/course-id',
       },
     ]);
     const embed = jest.fn().mockResolvedValue([[0.1, 0.2]]);
@@ -35,7 +36,7 @@ describe('AiRetrievalService', () => {
         chunkText: 'Gradient descent updates weights.',
         similarity: 0.8,
         courseId: 'course-id',
-        citationPath: '/learning/course-id',
+        citationPath: '/courses/course-id',
         metadata: { courseId: 'course-id' },
       },
     ]);
@@ -44,6 +45,8 @@ describe('AiRetrievalService', () => {
     const query = queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] };
     const sql = query.strings.join(' ');
     expect(sql).toContain('l.is_preview = TRUE');
+    expect(sql).toContain("'/learning/' || c.id::text");
+    expect(sql).toContain("'/courses/' || c.id::text");
     expect(sql).toContain("en.status IN ('active', 'completed')");
     expect(sql).toContain("c.moderation_status = 'clear'");
     expect(sql).toContain("r.moderation_status = 'clear'");

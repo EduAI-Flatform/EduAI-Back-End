@@ -35,6 +35,7 @@ interface RetrievalRow {
   distance: number;
   metadata_json: unknown;
   course_id: string | null;
+  citation_path: string;
 }
 
 @Injectable()
@@ -62,6 +63,7 @@ export class AiRetrievalService {
 
     const vector = JSON.stringify(embedding);
     const isAdmin = user.roles.includes(RoleName.platform_admin);
+    const isStudent = user.roles.includes(RoleName.student);
     const rows = await this.prisma.$queryRaw<RetrievalRow[]>(Prisma.sql`
       SELECT * FROM (
         SELECT
@@ -70,6 +72,15 @@ export class AiRetrievalService {
           e.source_id,
           l.title,
           l.course_id,
+          CASE
+            WHEN ${isStudent} AND EXISTS (
+              SELECT 1 FROM "enrollments" citation_enrollment
+              WHERE citation_enrollment.course_id = c.id
+                AND citation_enrollment.user_id = ${user.id}::uuid
+                AND citation_enrollment.status IN ('active', 'completed')
+            ) THEN '/learning/' || c.id::text
+            ELSE '/courses/' || c.id::text
+          END AS citation_path,
           e.chunk_text,
           e.embedding <=> ${vector}::vector AS distance,
           e.metadata_json
@@ -104,6 +115,7 @@ export class AiRetrievalService {
           e.source_id,
           r.title,
           NULL::uuid AS course_id,
+          '/library'::text AS citation_path,
           e.chunk_text,
           e.embedding <=> ${vector}::vector AS distance,
           e.metadata_json
@@ -131,9 +143,7 @@ export class AiRetrievalService {
       chunkText: row.chunk_text,
       similarity: 1 - Number(row.distance),
       courseId: row.course_id,
-      citationPath: row.source_type === 'lesson' && row.course_id
-        ? `/learning/${row.course_id}`
-        : '/library',
+      citationPath: row.citation_path,
       metadata: this.toMetadata(row.metadata_json),
     }));
   }
