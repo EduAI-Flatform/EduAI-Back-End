@@ -49,6 +49,6 @@ const aiProvider = {
     MockAiProviderService,
     aiProvider,
   ],
-  exports: [AiConversationService, AiRetrievalService, AI_PROVIDER],
+  exports: [AiConversationService, AiRetrievalService, AI_PROVIDER, OpenAiService, GeminiService],
 })
 export class AiModule {}

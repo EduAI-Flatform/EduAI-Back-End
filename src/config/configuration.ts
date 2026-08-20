@@ -54,6 +54,10 @@ export interface BackendConfig {
     from?: string;
     resendApiKey?: string;
   };
+  monitoring: {
+    enabled: boolean;
+    endpoint?: string;
+  };
 }
 
 export default function configuration(): BackendConfig {
@@ -114,6 +118,10 @@ export default function configuration(): BackendConfig {
       provider: env.EMAIL_PROVIDER,
       from: env.EMAIL_FROM,
       resendApiKey: env.RESEND_API_KEY,
+    },
+    monitoring: {
+      enabled: env.MONITORING_ENABLED,
+      endpoint: env.MONITORING_ENDPOINT,
     },
   };
 }

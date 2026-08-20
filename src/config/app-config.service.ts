@@ -50,6 +50,10 @@ export class AppConfigService {
     return this.getConfigValue('email');
   }
 
+  get monitoring(): BackendConfig['monitoring'] {
+    return this.getConfigValue('monitoring');
+  }
+
   private getConfigValue<T extends keyof BackendConfig>(key: T): BackendConfig[T] {
     const value = this.configService.get<BackendConfig[T]>(key);
 

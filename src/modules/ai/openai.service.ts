@@ -46,6 +46,16 @@ export class OpenAiService implements AiProvider {
     return this.client;
   }
 
+  async checkHealth(): Promise<'ok' | 'disabled' | 'error'> {
+    if (!this.isConfigured()) return 'disabled';
+    try {
+      await this.getClient().models.list();
+      return 'ok';
+    } catch {
+      return 'error';
+    }
+  }
+
   async complete(
     request: AiCompletionRequest,
   ): Promise<AiCompletionResult> {

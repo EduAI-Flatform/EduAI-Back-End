@@ -57,6 +57,10 @@ describe('Health endpoint', () => {
       });
   });
 
+  it('keeps dependency health restricted to platform administrators', async () => {
+    await request(app.getHttpServer()).get('/api/v1/health/dependencies').expect(401);
+  });
+
   it('rate-limits repeated login attempts before validation', async () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await request(app.getHttpServer())

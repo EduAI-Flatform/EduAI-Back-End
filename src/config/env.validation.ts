@@ -35,6 +35,8 @@ export interface ValidatedEnv {
   EMAIL_PROVIDER: EmailProviderName;
   EMAIL_FROM?: string;
   RESEND_API_KEY?: string;
+  MONITORING_ENABLED: boolean;
+  MONITORING_ENDPOINT?: string;
 }
 
 export function loadBackendEnv(): ValidatedEnv {
@@ -135,6 +137,8 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     EMAIL_PROVIDER: emailProvider,
     EMAIL_FROM: emailFrom,
     RESEND_API_KEY: resendApiKey,
+    MONITORING_ENABLED: parseBoolean(config.MONITORING_ENABLED, false, 'MONITORING_ENABLED'),
+    MONITORING_ENDPOINT: optionalUrl(config.MONITORING_ENDPOINT, 'MONITORING_ENDPOINT'),
   };
 
   if (validated.NODE_ENV === 'production' && validated.AI_PROVIDER === 'mock') {
@@ -154,7 +158,19 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     }
   }
 
+  if (validated.MONITORING_ENABLED && !validated.MONITORING_ENDPOINT) {
+    throw new Error('MONITORING_ENDPOINT is required when monitoring is enabled');
+  }
+
   return validated;
+}
+
+function parseBoolean(value: unknown, fallback: boolean, name: string): boolean {
+  const parsed = optionalString(value);
+  if (parsed === undefined) return fallback;
+  if (parsed === 'true') return true;
+  if (parsed === 'false') return false;
+  throw new Error(`${name} must be true or false`);
 }
 
 function requiredString(value: unknown, name: string): string {

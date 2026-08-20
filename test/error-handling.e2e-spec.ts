@@ -48,8 +48,10 @@ describe('Global error handling', () => {
 
   it('returns the standard API error shape without stack traces', async () => {
     await request(app.getHttpServer())
-      .get('/api/v1/error-test/unexpected')
+      .get('/api/v1/error-test/unexpected?debug=1')
+      .set('X-Request-Id', 'uat-correlation-001')
       .expect(500)
+      .expect('X-Request-Id', 'uat-correlation-001')
       .expect(({ body }) => {
         expect(body).toEqual({
           success: false,
@@ -57,6 +59,7 @@ describe('Global error handling', () => {
             code: 'INTERNAL_SERVER_ERROR',
             message: 'Internal server error',
           },
+          correlationId: 'uat-correlation-001',
         });
         expect(JSON.stringify(body)).not.toContain('stack');
         expect(JSON.stringify(body)).not.toContain('internal implementation detail');
@@ -73,6 +76,15 @@ describe('Global error handling', () => {
       method: 'GET',
       path: '/api/v1/error-test/unexpected',
       statusCode: 500,
+      correlationId: 'uat-correlation-001',
+    });
+    const requestLog = logWriter.mock.calls
+      .map(([entry]) => JSON.parse(entry))
+      .find((entry) => entry.message === 'request failed');
+    expect(requestLog).toMatchObject({
+      statusCode: 500,
+      correlationId: 'uat-correlation-001',
+      path: '/api/v1/error-test/unexpected',
     });
   });
 

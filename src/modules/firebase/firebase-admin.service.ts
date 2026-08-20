@@ -19,6 +19,17 @@ export class FirebaseAdminService {
     return this.getAuth().verifyIdToken(idToken);
   }
 
+  async checkHealth(): Promise<'ok' | 'disabled' | 'error'> {
+    const { clientEmail, privateKey, projectId } = this.appConfig.firebase;
+    if (!clientEmail || !privateKey || !projectId) return 'disabled';
+    try {
+      await this.getAuth().listUsers(1);
+      return 'ok';
+    } catch {
+      return 'error';
+    }
+  }
+
   private getAuth(): Auth {
     if (this.auth) {
       return this.auth;

@@ -1,5 +1,8 @@
 import { INestApplication, RequestMethod, ValidationPipe } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
+import type { CorrelatedRequest } from './common/http/request-context';
+import { MonitoringService } from './common/monitoring/monitoring.service';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { AppLoggerService } from './common/logging/app-logger.service';
@@ -42,6 +45,16 @@ export function configureApp(
     next();
   });
 
+  app.use((request: CorrelatedRequest, response: Response, next: NextFunction) => {
+    const supplied = request.header('x-request-id');
+    const correlationId = supplied && /^[a-zA-Z0-9._:-]{8,64}$/.test(supplied)
+      ? supplied
+      : randomUUID();
+    request.correlationId = correlationId;
+    response.setHeader('X-Request-Id', correlationId);
+    next();
+  });
+
   app.setGlobalPrefix('api/v1', {
     exclude: [{ method: RequestMethod.GET, path: 'health' }],
   });
@@ -58,5 +71,11 @@ export function configureApp(
     new ApiResponseInterceptor(legacyPublicMediaBaseUrl),
   );
 
-  app.useGlobalFilters(new GlobalExceptionFilter(nodeEnv, logger));
+  let monitoring: MonitoringService | undefined;
+  try {
+    monitoring = app.get(MonitoringService, { strict: false });
+  } catch {
+    monitoring = undefined;
+  }
+  app.useGlobalFilters(new GlobalExceptionFilter(nodeEnv, logger, monitoring));
 }

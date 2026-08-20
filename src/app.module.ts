@@ -29,11 +29,13 @@ import { MentorsModule } from './modules/mentors/mentors.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { AbuseRateLimitGuard } from './common/security/abuse-rate-limit.guard';
+import { MonitoringModule } from './common/monitoring/monitoring.module';
 
 @Module({
   imports: [
     AppConfigModule,
     LoggingModule,
+    MonitoringModule,
     PrismaModule,
     AuditModule,
     RedisModule,

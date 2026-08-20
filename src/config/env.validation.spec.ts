@@ -1,6 +1,12 @@
 import { validateEnv } from './env.validation';
 
 describe('validateEnv', () => {
+  it('requires an endpoint only when monitoring is enabled', () => {
+    const base = { DATABASE_URL: 'postgresql://local/test', JWT_ACCESS_SECRET: 'a', JWT_REFRESH_SECRET: 'b' };
+    expect(validateEnv(base).MONITORING_ENABLED).toBe(false);
+    expect(() => validateEnv({ ...base, MONITORING_ENABLED: 'true' })).toThrow('MONITORING_ENDPOINT is required');
+    expect(validateEnv({ ...base, MONITORING_ENABLED: 'true', MONITORING_ENDPOINT: 'https://monitor.example/events' }).MONITORING_ENDPOINT).toBe('https://monitor.example/events');
+  });
   it('fails fast when DATABASE_URL is missing', () => {
     expect(() => validateEnv({})).toThrow('DATABASE_URL is required');
   });

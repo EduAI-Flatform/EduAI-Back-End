@@ -63,6 +63,16 @@ export class GeminiService implements AiProvider {
     return this.client;
   }
 
+  async checkHealth(): Promise<'ok' | 'disabled' | 'error'> {
+    if (!this.isConfigured()) return 'disabled';
+    try {
+      await this.getClient().models.list({ config: { pageSize: 1 } });
+      return 'ok';
+    } catch {
+      return 'error';
+    }
+  }
+
   async complete(request: AiCompletionRequest): Promise<AiCompletionResult> {
     const systemInstruction = request.messages
       .filter((message) => message.role === 'system')

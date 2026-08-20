@@ -5,8 +5,10 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { AppLoggerService } from '../logging/app-logger.service';
+import { CorrelatedRequest, safeRequestPath } from '../http/request-context';
+import { MonitoringService } from '../monitoring/monitoring.service';
 
 interface StandardErrorResponse {
   success: false;
@@ -14,6 +16,7 @@ interface StandardErrorResponse {
     code: string;
     message: string;
   };
+  correlationId?: string;
 }
 
 @Catch()
@@ -21,11 +24,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   constructor(
     private readonly nodeEnv: string,
     private readonly logger: AppLoggerService,
+    private readonly monitoring?: MonitoringService,
   ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
-    const request = http.getRequest<Request>();
+    const request = http.getRequest<CorrelatedRequest>();
     const response = http.getResponse<Response>();
     const status = this.getStatus(exception);
     const message = this.getMessage(exception, status);
@@ -36,7 +40,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         code,
         failureClass: this.getFailureClass(exception),
         method: request.method,
-        path: request.originalUrl ?? request.url,
+        path: safeRequestPath(request),
+        statusCode: status,
+        correlationId: request.correlationId,
+      });
+      this.monitoring?.capture({
+        code,
+        correlationId: request.correlationId,
+        path: safeRequestPath(request),
         statusCode: status,
       });
     }
@@ -47,6 +58,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         code,
         message,
       },
+      ...(request.correlationId ? { correlationId: request.correlationId } : {}),
     } satisfies StandardErrorResponse);
   }
 
