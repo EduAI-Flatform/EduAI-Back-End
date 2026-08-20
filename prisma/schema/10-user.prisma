@@ -51,6 +51,7 @@ model User {
   tmiEntitlements TmiEntitlement[]
   notifications Notification[]
   notificationPreferences NotificationPreference[]
+  createdJobs JobOpportunity[] @relation("JobOpportunityCreator")
 
   @@index([status])
   @@index([deletedAt])

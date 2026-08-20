@@ -23,6 +23,7 @@ import { QuizzesModule } from './modules/quizzes/quizzes.module';
 import { VouchersModule } from './modules/vouchers/vouchers.module';
 import { ScholarshipsModule } from './modules/scholarships/scholarships.module';
 import { TmiModule } from './modules/tmi/tmi.module';
+import { JobsModule } from './modules/jobs/jobs.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -52,6 +53,7 @@ import { PrismaModule } from './prisma/prisma.module';
     VouchersModule,
     ScholarshipsModule,
     TmiModule,
+    JobsModule,
   ],
 })
 export class AppModule {}

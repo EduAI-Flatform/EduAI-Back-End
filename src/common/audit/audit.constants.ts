@@ -23,6 +23,11 @@ export const AuditAction = {
   TmiRewardRedeemed: 'TMI_REWARD_REDEEMED',
   TmiRewardRefunded: 'TMI_REWARD_REFUNDED',
   TmiBalanceAdjusted: 'TMI_BALANCE_ADJUSTED',
+  JobCreated: 'JOB_CREATED',
+  JobUpdated: 'JOB_UPDATED',
+  JobPublished: 'JOB_PUBLISHED',
+  JobClosed: 'JOB_CLOSED',
+  JobDeleted: 'JOB_DELETED',
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];

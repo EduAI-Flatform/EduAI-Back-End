@@ -246,6 +246,7 @@ model User {
   tmiEntitlements TmiEntitlement[]
   notifications Notification[]
   notificationPreferences NotificationPreference[]
+  createdJobs JobOpportunity[] @relation("JobOpportunityCreator")
 
   @@index([status])
   @@index([deletedAt])
@@ -894,6 +895,73 @@ enum CertificateStatus {
   revoked
 
   @@map("certificate_status")
+}
+
+model JobOpportunity {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdById    String             @map("created_by_id") @db.Uuid
+  title          String
+  companyName    String             @map("company_name")
+  summary        String
+  description    String
+  location       String?
+  workMode       JobWorkMode        @map("work_mode")
+  employmentType JobEmploymentType  @map("employment_type")
+  salaryMin      Int?               @map("salary_min")
+  salaryMax      Int?               @map("salary_max")
+  salaryCurrency String?            @map("salary_currency") @db.VarChar(3)
+  status         JobStatus          @default(draft)
+  publishedAt    DateTime?          @map("published_at")
+  closesAt       DateTime?          @map("closes_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  deletedAt      DateTime?          @map("deleted_at")
+  createdBy      User               @relation("JobOpportunityCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  requiredSkills JobRequiredSkill[]
+
+  @@index([status, closesAt])
+  @@index([companyName])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("job_opportunities")
+}
+
+model JobRequiredSkill {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobId     String         @map("job_id") @db.Uuid
+  name      String
+  level     String?
+  createdAt DateTime       @default(now()) @map("created_at")
+  job       JobOpportunity @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, name])
+  @@index([name])
+  @@map("job_required_skills")
+}
+
+enum JobStatus {
+  draft
+  published
+  closed
+
+  @@map("job_status")
+}
+
+enum JobWorkMode {
+  remote
+  hybrid
+  onsite
+
+  @@map("job_work_mode")
+}
+
+enum JobEmploymentType {
+  full_time
+  part_time
+  internship
+  contract
+
+  @@map("job_employment_type")
 }
 
 model Notification {
