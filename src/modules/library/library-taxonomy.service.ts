@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import {
   CreateLibraryCategoryDto,
   CreateLibraryTagDto,
@@ -39,6 +40,7 @@ export class LibraryTaxonomyService {
   listCategories(): Promise<LibraryCategoryResponse[]> {
     return this.prisma.libraryCategory.findMany({
       orderBy: { name: 'asc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: categorySelect,
     });
   }
@@ -87,6 +89,7 @@ export class LibraryTaxonomyService {
   listTags(): Promise<LibraryTagResponse[]> {
     return this.prisma.libraryTag.findMany({
       orderBy: { name: 'asc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: tagSelect,
     });
   }

@@ -12,6 +12,7 @@ import {
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApplyScholarshipDto } from './dto/apply-scholarship.dto';
 import { CreateScholarshipDto } from './dto/create-scholarship.dto';
@@ -291,10 +292,15 @@ export class ScholarshipsService {
         endsAt: { gt: new Date() },
       },
       orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: scholarshipSelect,
     });
     const existing = await this.prisma.scholarshipApplication.findMany({
-      where: { userId, courseId },
+      where: {
+        userId,
+        courseId,
+        scholarshipId: { in: campaigns.map(({ id }) => id) },
+      },
       select: { scholarshipId: true },
     });
     const existingIds = new Set(existing.map(({ scholarshipId }) => scholarshipId));

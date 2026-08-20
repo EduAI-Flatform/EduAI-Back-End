@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateCommunityPostDto } from './dto/create-community-post.dto';
 import { CreateCommunityCommentDto } from './dto/create-community-comment.dto';
@@ -103,6 +104,7 @@ export class CommunityService {
         moderationStatus: ModerationStatus.clear,
       },
       orderBy: { createdAt: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: communityPostRecordSelect,
     });
 
@@ -232,6 +234,7 @@ export class CommunityService {
         moderationStatus: ModerationStatus.clear,
       },
       orderBy: { createdAt: 'asc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: communityCommentResponseSelect,
     });
   }

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { PrismaService } from '../../prisma/prisma.service';
 import { generateCertificateQrCode } from './certificate-qr.util';
 import { IssueCertificateDto } from './dto/issue-certificate.dto';
@@ -104,6 +105,7 @@ export class CertificatesService {
     const certificates = await this.prisma.certificate.findMany({
       where: { userId },
       orderBy: { issuedAt: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: certificateListSelect,
     });
     return certificates.map(({ course, ...certificate }) => ({

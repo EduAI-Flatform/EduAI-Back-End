@@ -11,6 +11,7 @@ import {
   RoleName,
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { CreateLibraryResourceDto } from './dto/create-library-resource.dto';
 import { ListLibraryResourcesQueryDto } from './dto/list-library-resources-query.dto';
 import { LibraryR2StorageService } from './library-r2-storage.service';
@@ -133,6 +134,7 @@ export class LibraryResourceService {
         resource: visibleResources,
       },
       orderBy: { createdAt: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: { resource: { select: resourceSelect } },
     });
 

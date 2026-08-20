@@ -12,6 +12,7 @@ import {
   RoleName,
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
 import { CreateLessonDto } from './dto/create-lesson.dto';
@@ -377,6 +378,7 @@ export class LessonsService {
       orderBy: {
         orderIndex: 'asc',
       },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: lessonSummarySelect,
     });
   }

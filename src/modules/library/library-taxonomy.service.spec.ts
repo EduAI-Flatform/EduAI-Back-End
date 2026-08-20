@@ -46,6 +46,7 @@ describe('LibraryTaxonomyService', () => {
     await expect(service.listCategories()).resolves.toEqual([category]);
     expect(prisma.libraryCategory.findMany).toHaveBeenCalledWith({
       orderBy: { name: 'asc' },
+      take: 100,
       select: {
         id: true,
         name: true,

@@ -6,6 +6,7 @@ import {
   RoleName,
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CreateClassroomRecordingDto } from './dto/create-classroom-recording.dto';
 import { CreateClassroomSessionDto } from './dto/create-classroom-session.dto';
@@ -130,6 +131,7 @@ export class ClassroomsService {
     return this.prisma.classroomSession.findMany({
       where: { courseId, deletedAt: null },
       orderBy: { scheduledStart: 'asc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: classroomSessionResponseSelect,
     });
   }

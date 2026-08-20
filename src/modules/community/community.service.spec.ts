@@ -86,6 +86,7 @@ describe('CommunityService', () => {
           visibility: 'public',
           moderationStatus: ModerationStatus.clear,
         },
+        take: 100,
         select: expect.any(Object),
       }),
     );
@@ -309,6 +310,7 @@ describe('CommunityService', () => {
           moderationStatus: ModerationStatus.clear,
         },
         orderBy: { createdAt: 'asc' },
+        take: 100,
         select: expect.any(Object),
       }),
     );

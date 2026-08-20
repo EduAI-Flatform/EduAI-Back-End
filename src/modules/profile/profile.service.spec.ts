@@ -193,6 +193,7 @@ describe('ProfileService', () => {
       orderBy: {
         createdAt: 'desc',
       },
+      take: 100,
     });
   });
 
@@ -258,6 +259,7 @@ describe('ProfileService', () => {
       orderBy: {
         createdAt: 'desc',
       },
+      take: 100,
     });
   });
 

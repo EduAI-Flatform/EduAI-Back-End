@@ -150,6 +150,7 @@ describe('ClassroomsService', () => {
     expect(prisma.classroomSession.findMany).toHaveBeenCalledWith({
       where: { courseId: course.id, deletedAt: null },
       orderBy: { scheduledStart: 'asc' },
+      take: 100,
       select: expect.any(Object),
     });
   });

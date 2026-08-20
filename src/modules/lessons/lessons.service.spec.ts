@@ -375,6 +375,7 @@ describe('LessonsService', () => {
     expect(prisma.lesson.findMany).toHaveBeenCalledWith({
       where: { courseId: course.id, deletedAt: null },
       orderBy: { orderIndex: 'asc' },
+      take: 100,
       select: {
         id: true,
         courseId: true,
@@ -406,6 +407,7 @@ describe('LessonsService', () => {
     expect(prisma.lesson.findMany).toHaveBeenCalledWith({
       where: { courseId: course.id, deletedAt: null },
       orderBy: { orderIndex: 'asc' },
+      take: 100,
       select: {
         id: true,
         courseId: true,

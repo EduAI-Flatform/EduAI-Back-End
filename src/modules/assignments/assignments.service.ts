@@ -15,6 +15,7 @@ import { Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
 import { CourseCompletionService } from '../courses/course-completion.service';
@@ -145,6 +146,7 @@ export class AssignmentsService {
         ...(access === 'manager' ? {} : { status: AssignmentStatus.published }),
       },
       orderBy: { dueDate: 'asc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: assignmentResponseSelect,
     });
   }
@@ -424,6 +426,7 @@ export class AssignmentsService {
         },
       },
       orderBy: { version: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: submissionResponseSelect,
     });
     return Promise.all(submissions.map((submission) => this.toSubmissionResponse(submission)));
@@ -437,6 +440,7 @@ export class AssignmentsService {
     const submissions = await this.prisma.submission.findMany({
       where: { assignmentId },
       orderBy: { submittedAt: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: submissionResponseSelect,
     });
     return Promise.all(submissions.map((submission) => this.toSubmissionResponse(submission)));

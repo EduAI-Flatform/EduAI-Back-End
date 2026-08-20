@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { AvatarStorageService } from './avatar-storage.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { CreateSkillDto } from './dto/create-skill.dto';
@@ -88,6 +89,7 @@ export class ProfileService {
       orderBy: {
         createdAt: 'desc',
       },
+      take: MAX_UNPAGINATED_API_ITEMS,
     });
   }
 
@@ -143,6 +145,7 @@ export class ProfileService {
       orderBy: {
         createdAt: 'desc',
       },
+      take: MAX_UNPAGINATED_API_ITEMS,
     });
     return portfolios.map((portfolio) => this.toPortfolioResponse(portfolio));
   }

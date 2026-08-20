@@ -353,6 +353,7 @@ describe('QuizzesService', () => {
         },
       },
       orderBy: { updatedAt: 'desc' },
+      take: 100,
       select: expect.any(Object),
     });
   });
@@ -442,6 +443,7 @@ describe('QuizzesService', () => {
     expect(prisma.quizAttempt.findMany).toHaveBeenCalledWith({
       where: { quizId: quiz.id, userId: 'student-id' },
       orderBy: { createdAt: 'desc' },
+      take: 100,
       select: expect.not.objectContaining({ answersJson: true }),
     });
   });

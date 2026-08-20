@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CourseThumbnailStorageService } from './course-thumbnail-storage.service';
 import { CourseCompletionService } from './course-completion.service';
@@ -339,6 +340,7 @@ export class CoursesService {
         moderationStatus: ModerationStatus.clear,
       },
       orderBy: [{ featuredRank: 'asc' }, { createdAt: 'desc' }],
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: courseCatalogSelect,
     });
     const ratingByCourseId = await this.getCourseRatingAggregates(
@@ -657,6 +659,7 @@ export class CoursesService {
       orderBy: {
         enrolledAt: 'desc',
       },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: buildEnrollmentResponseSelect(userId),
     });
 

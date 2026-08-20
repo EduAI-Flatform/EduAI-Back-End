@@ -399,6 +399,7 @@ describe('CoursesService', () => {
         moderationStatus: ModerationStatus.clear,
       },
       orderBy: [{ featuredRank: 'asc' }, { createdAt: 'desc' }],
+      take: 100,
       select: expect.objectContaining({
         badge: true,
         featuredRank: true,
@@ -1035,6 +1036,7 @@ describe('CoursesService', () => {
     expect(prisma.enrollment.findMany).toHaveBeenCalledWith({
       where: { userId: student.id },
       orderBy: { enrolledAt: 'desc' },
+      take: 100,
       select: expect.any(Object),
     });
   });

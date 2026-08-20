@@ -15,6 +15,7 @@ import { Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
+import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
 import { CourseCompletionService } from '../courses/course-completion.service';
@@ -169,6 +170,7 @@ export class QuizzesService {
     return this.prisma.quiz.findMany({
       where: { courseId, deletedAt: null },
       orderBy: { updatedAt: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: quizResponseSelect,
     });
   }
@@ -274,6 +276,7 @@ export class QuizzesService {
     return this.prisma.question.findMany({
       where: { quizId },
       orderBy: { orderIndex: 'asc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: questionResponseSelect,
     });
   }
@@ -503,6 +506,7 @@ export class QuizzesService {
         },
       },
       orderBy: { updatedAt: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: quizResponseSelect,
     });
   }
@@ -519,6 +523,7 @@ export class QuizzesService {
     const attempts = await this.prisma.quizAttempt.findMany({
       where: { quizId, userId },
       orderBy: { createdAt: 'desc' },
+      take: MAX_UNPAGINATED_API_ITEMS,
       select: attemptResponseSelect,
     });
 

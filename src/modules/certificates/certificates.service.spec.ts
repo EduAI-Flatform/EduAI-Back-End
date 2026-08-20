@@ -291,6 +291,7 @@ describe('CertificatesService.listMyCertificates', () => {
     expect(prisma.certificate.findMany).toHaveBeenCalledWith({
       where: { userId },
       orderBy: { issuedAt: 'desc' },
+      take: 100,
       select: expect.objectContaining({
         course: { select: { title: true } },
       }),
