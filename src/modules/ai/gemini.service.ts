@@ -22,6 +22,8 @@ class GeminiTimeoutError extends Error {
   }
 }
 
+const AI_EMBEDDING_DIMENSIONS = 1536;
+
 @Injectable()
 export class GeminiService implements AiProvider {
   private readonly logger = new Logger(GeminiService.name);
@@ -100,7 +102,10 @@ export class GeminiService implements AiProvider {
       this.getClient().models.embedContent({
         model: this.getEmbeddingModel(),
         contents,
-        config: { abortSignal },
+        config: {
+          abortSignal,
+          outputDimensionality: AI_EMBEDDING_DIMENSIONS,
+        },
       }),
     );
 

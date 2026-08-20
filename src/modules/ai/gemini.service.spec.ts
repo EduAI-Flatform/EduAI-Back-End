@@ -112,7 +112,10 @@ describe('GeminiService', () => {
     expect(client.models.embedContent).toHaveBeenCalledWith({
       model: 'gemini-embedding-model',
       contents: ['one', 'two'],
-      config: { abortSignal: expect.any(AbortSignal) },
+      config: {
+        abortSignal: expect.any(AbortSignal),
+        outputDimensionality: 1536,
+      },
     });
   });
 
