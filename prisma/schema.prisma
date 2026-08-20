@@ -250,6 +250,8 @@ model User {
   savedJobs SavedJob[]
   jobApplications JobApplication[] @relation("JobApplicationApplicant")
   jobApplicationChanges JobApplicationStatusHistory[] @relation("JobApplicationStatusActor")
+  mentorProfile MentorProfile? @relation("MentorOwner")
+  approvedMentorProfiles MentorProfile[] @relation("MentorApprover")
 
   @@index([status])
   @@index([deletedAt])
@@ -1024,6 +1026,62 @@ enum JobApplicationStatus {
   withdrawn
 
   @@map("job_application_status")
+}
+
+model MentorProfile {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String               @unique @map("user_id") @db.Uuid
+  headline     String
+  bio          String?
+  timezone     String
+  status       MentorApprovalStatus @default(pending)
+  isActive     Boolean              @default(false) @map("is_active")
+  approvedById String?              @map("approved_by_id") @db.Uuid
+  approvedAt   DateTime?            @map("approved_at")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+  user         User                 @relation("MentorOwner", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy   User?                @relation("MentorApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  expertise    MentorExpertise[]
+  availability MentorAvailability[]
+
+  @@index([status, isActive])
+  @@index([timezone])
+  @@map("mentor_profiles")
+}
+
+model MentorExpertise {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mentorProfileId String        @map("mentor_profile_id") @db.Uuid
+  name            String
+  createdAt       DateTime      @default(now()) @map("created_at")
+  mentorProfile   MentorProfile @relation(fields: [mentorProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([mentorProfileId, name])
+  @@index([name])
+  @@map("mentor_expertise")
+}
+
+model MentorAvailability {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mentorProfileId String        @map("mentor_profile_id") @db.Uuid
+  dayOfWeek       Int           @map("day_of_week")
+  startMinute     Int           @map("start_minute")
+  endMinute       Int           @map("end_minute")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  mentorProfile   MentorProfile @relation(fields: [mentorProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([mentorProfileId, dayOfWeek, startMinute, endMinute])
+  @@index([dayOfWeek, startMinute])
+  @@map("mentor_availability")
+}
+
+enum MentorApprovalStatus {
+  pending
+  approved
+  rejected
+
+  @@map("mentor_approval_status")
 }
 
 model Notification {

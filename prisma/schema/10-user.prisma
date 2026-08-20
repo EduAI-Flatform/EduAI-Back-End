@@ -55,6 +55,8 @@ model User {
   savedJobs SavedJob[]
   jobApplications JobApplication[] @relation("JobApplicationApplicant")
   jobApplicationChanges JobApplicationStatusHistory[] @relation("JobApplicationStatusActor")
+  mentorProfile MentorProfile? @relation("MentorOwner")
+  approvedMentorProfiles MentorProfile[] @relation("MentorApprover")
 
   @@index([status])
   @@index([deletedAt])

@@ -28,6 +28,7 @@ export const AuditAction = {
   JobPublished: 'JOB_PUBLISHED',
   JobClosed: 'JOB_CLOSED',
   JobDeleted: 'JOB_DELETED',
+  MentorApprovalChanged: 'MENTOR_APPROVAL_CHANGED',
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];

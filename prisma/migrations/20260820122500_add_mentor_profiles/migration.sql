@@ -1,0 +1,15 @@
+CREATE TYPE "mentor_approval_status" AS ENUM ('pending', 'approved', 'rejected');
+CREATE TABLE "mentor_profiles" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "user_id" UUID NOT NULL, "headline" TEXT NOT NULL, "bio" TEXT, "timezone" TEXT NOT NULL, "status" "mentor_approval_status" NOT NULL DEFAULT 'pending', "is_active" BOOLEAN NOT NULL DEFAULT false, "approved_by_id" UUID, "approved_at" TIMESTAMP(3), "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "mentor_profiles_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "mentor_expertise" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "mentor_profile_id" UUID NOT NULL, "name" TEXT NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "mentor_expertise_pkey" PRIMARY KEY ("id"));
+CREATE TABLE "mentor_availability" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "mentor_profile_id" UUID NOT NULL, "day_of_week" INTEGER NOT NULL, "start_minute" INTEGER NOT NULL, "end_minute" INTEGER NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "mentor_availability_pkey" PRIMARY KEY ("id"), CONSTRAINT "mentor_availability_day_check" CHECK ("day_of_week" BETWEEN 0 AND 6), CONSTRAINT "mentor_availability_minute_check" CHECK ("start_minute" BETWEEN 0 AND 1439 AND "end_minute" BETWEEN 1 AND 1440 AND "start_minute" < "end_minute"));
+CREATE UNIQUE INDEX "mentor_profiles_user_id_key" ON "mentor_profiles"("user_id");
+CREATE INDEX "mentor_profiles_status_is_active_idx" ON "mentor_profiles"("status", "is_active");
+CREATE INDEX "mentor_profiles_timezone_idx" ON "mentor_profiles"("timezone");
+CREATE UNIQUE INDEX "mentor_expertise_mentor_profile_id_name_key" ON "mentor_expertise"("mentor_profile_id", "name");
+CREATE INDEX "mentor_expertise_name_idx" ON "mentor_expertise"("name");
+CREATE UNIQUE INDEX "mentor_availability_mentor_profile_id_day_of_week_start_minute_end_minute_key" ON "mentor_availability"("mentor_profile_id", "day_of_week", "start_minute", "end_minute");
+CREATE INDEX "mentor_availability_day_of_week_start_minute_idx" ON "mentor_availability"("day_of_week", "start_minute");
+ALTER TABLE "mentor_profiles" ADD CONSTRAINT "mentor_profiles_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "mentor_profiles" ADD CONSTRAINT "mentor_profiles_approved_by_id_fkey" FOREIGN KEY ("approved_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "mentor_expertise" ADD CONSTRAINT "mentor_expertise_mentor_profile_id_fkey" FOREIGN KEY ("mentor_profile_id") REFERENCES "mentor_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "mentor_availability" ADD CONSTRAINT "mentor_availability_mentor_profile_id_fkey" FOREIGN KEY ("mentor_profile_id") REFERENCES "mentor_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
