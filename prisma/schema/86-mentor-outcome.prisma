@@ -1,0 +1,58 @@
+model MentorPrivateNote {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId String        @unique @map("booking_id") @db.Uuid
+  content   String
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  booking   MentorBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("mentor_private_notes")
+}
+
+model MentorSharedNote {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId String        @unique @map("booking_id") @db.Uuid
+  content   String
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  booking   MentorBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("mentor_shared_notes")
+}
+
+model MentorGoal {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId   String           @map("booking_id") @db.Uuid
+  createdById String           @map("created_by_id") @db.Uuid
+  content     String
+  status      MentorGoalStatus @default(open)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  booking     MentorBooking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  createdBy   User             @relation("MentorGoalCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([bookingId, status])
+  @@map("mentor_goals")
+}
+
+model MentorReview {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId String        @unique @map("booking_id") @db.Uuid
+  studentId String        @map("student_id") @db.Uuid
+  rating    Int
+  comment   String?
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  booking   MentorBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  student   User          @relation("MentorReviewStudent", fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@index([studentId])
+  @@map("mentor_reviews")
+}
+
+enum MentorGoalStatus {
+  open
+  completed
+
+  @@map("mentor_goal_status")
+}

@@ -8,6 +8,7 @@ describe('MentorsService', () => {
     mentorProfile: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn(), findMany: jest.fn() },
     mentorExpertise: { deleteMany: jest.fn(), createMany: jest.fn() },
     mentorAvailability: { deleteMany: jest.fn(), createMany: jest.fn() },
+    mentorReview: { findMany: jest.fn() },
     $transaction: jest.fn(),
   };
   const audit = { record: jest.fn() };
@@ -16,6 +17,7 @@ describe('MentorsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.$transaction.mockImplementation((input: any) => typeof input === 'function' ? input(prisma) : Promise.all(input));
+    prisma.mentorReview.findMany.mockResolvedValue([]);
     service = new MentorsService(prisma, audit as never);
   });
 
@@ -47,6 +49,7 @@ describe('MentorsService', () => {
     prisma.mentorProfile.findMany.mockResolvedValue([{ id: 'mentor-id', user: { fullName: 'Instructor', avatarUrl: null }, headline: 'Backend mentor', bio: null, timezone: 'UTC', isActive: true, expertise: [], availability: [] }]);
     const page = await service.listDirectory({ page: 2, pageSize: 10, search: 'backend', expertise: 'NestJS', timezone: 'UTC' });
     expect(page).toMatchObject({ total: 1, page: 2, pageSize: 10 });
+    expect(page.items[0]).toMatchObject({ ratingAverage: null, ratingCount: 0 });
     const find = prisma.mentorProfile.findMany.mock.calls[0][0];
     expect(find.where).toMatchObject({ status: MentorApprovalStatus.approved, isActive: true, timezone: 'UTC' });
     expect(find.where.user.roles.some.role.name).toBe('instructor');

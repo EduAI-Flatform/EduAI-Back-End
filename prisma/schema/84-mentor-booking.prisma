@@ -15,6 +15,10 @@ model MentorBooking {
   pendingRequestedBy    User                @relation("MentorBookingRequester", fields: [pendingRequestedById], references: [id], onDelete: Restrict)
   history               MentorBookingStatusHistory[]
   session               MentorSession?
+  privateNote           MentorPrivateNote?
+  sharedNote            MentorSharedNote?
+  goals                 MentorGoal[]
+  review                MentorReview?
 
   @@index([mentorProfileId, status, scheduledStart])
   @@index([studentId, status, scheduledStart])

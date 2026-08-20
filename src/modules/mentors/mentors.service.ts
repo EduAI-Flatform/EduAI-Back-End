@@ -49,15 +49,16 @@ export class MentorsService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
-  async listDirectory(query: ListMentorsQueryDto): Promise<MentorDirectoryPage<DirectoryRecord>> {
+  async listDirectory(query: ListMentorsQueryDto) {
     const where: Prisma.MentorProfileWhereInput = { status: MentorApprovalStatus.approved, isActive: true, user: { status: UserStatus.active, deletedAt: null, roles: { some: { role: { name: RoleName.instructor } } } }, ...this.filters(query) };
-    return this.page(where, query, directorySelect);
+    const page = await this.page(where, query, directorySelect);
+    return { ...page, items: await this.withRatings(page.items) };
   }
 
-  async getDirectory(id: string): Promise<DirectoryRecord> {
+  async getDirectory(id: string) {
     const mentor = await this.prisma.mentorProfile.findFirst({ where: { id, status: MentorApprovalStatus.approved, isActive: true, user: { status: UserStatus.active, deletedAt: null, roles: { some: { role: { name: RoleName.instructor } } } } }, select: directorySelect });
     if (!mentor) throw new NotFoundException('Mentor not found');
-    return mentor;
+    return (await this.withRatings([mentor]))[0];
   }
 
   listAdmin(query: ListMentorsQueryDto) {
@@ -87,6 +88,14 @@ export class MentorsService {
   private async page<TSelect extends Prisma.MentorProfileSelect, TRecord = Prisma.MentorProfileGetPayload<{ select: TSelect }>>(where: Prisma.MentorProfileWhereInput, query: ListMentorsQueryDto, select: TSelect): Promise<MentorDirectoryPage<TRecord>> {
     const [total, items] = await this.prisma.$transaction([this.prisma.mentorProfile.count({ where }), this.prisma.mentorProfile.findMany({ where, select, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize })]);
     return { items: items as TRecord[], page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) };
+  }
+
+  private async withRatings<T extends { id: string }>(mentors: T[]) {
+    if (!mentors.length) return [];
+    const reviews = await this.prisma.mentorReview.findMany({ where: { booking: { mentorProfileId: { in: mentors.map(({ id }) => id) } } }, select: { rating: true, booking: { select: { mentorProfileId: true } } } });
+    const grouped = new Map<string, number[]>();
+    for (const review of reviews) grouped.set(review.booking.mentorProfileId, [...(grouped.get(review.booking.mentorProfileId) ?? []), review.rating]);
+    return mentors.map((mentor) => { const ratings = grouped.get(mentor.id) ?? []; return { ...mentor, ratingAverage: ratings.length ? Math.round((ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length) * 10) / 10 : null, ratingCount: ratings.length }; });
   }
 
   private normalizeExpertise(values: string[]): string[] {

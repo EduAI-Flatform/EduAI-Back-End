@@ -1,0 +1,16 @@
+CREATE TYPE "mentor_goal_status" AS ENUM ('open', 'completed');
+CREATE TABLE "mentor_private_notes" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "booking_id" UUID NOT NULL, "content" TEXT NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "mentor_private_notes_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "mentor_private_notes_booking_id_key" ON "mentor_private_notes"("booking_id");
+CREATE TABLE "mentor_shared_notes" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "booking_id" UUID NOT NULL, "content" TEXT NOT NULL, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "mentor_shared_notes_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "mentor_shared_notes_booking_id_key" ON "mentor_shared_notes"("booking_id");
+CREATE TABLE "mentor_goals" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "booking_id" UUID NOT NULL, "created_by_id" UUID NOT NULL, "content" TEXT NOT NULL, "status" "mentor_goal_status" NOT NULL DEFAULT 'open', "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "mentor_goals_pkey" PRIMARY KEY ("id"));
+CREATE INDEX "mentor_goals_booking_id_status_idx" ON "mentor_goals"("booking_id", "status");
+CREATE TABLE "mentor_reviews" ("id" UUID NOT NULL DEFAULT gen_random_uuid(), "booking_id" UUID NOT NULL, "student_id" UUID NOT NULL, "rating" INTEGER NOT NULL, "comment" TEXT, "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMP(3) NOT NULL, CONSTRAINT "mentor_reviews_pkey" PRIMARY KEY ("id"), CONSTRAINT "mentor_reviews_rating_check" CHECK ("rating" BETWEEN 1 AND 5));
+CREATE UNIQUE INDEX "mentor_reviews_booking_id_key" ON "mentor_reviews"("booking_id");
+CREATE INDEX "mentor_reviews_student_id_idx" ON "mentor_reviews"("student_id");
+ALTER TABLE "mentor_private_notes" ADD CONSTRAINT "mentor_private_notes_booking_id_fkey" FOREIGN KEY ("booking_id") REFERENCES "mentor_bookings"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "mentor_shared_notes" ADD CONSTRAINT "mentor_shared_notes_booking_id_fkey" FOREIGN KEY ("booking_id") REFERENCES "mentor_bookings"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "mentor_goals" ADD CONSTRAINT "mentor_goals_booking_id_fkey" FOREIGN KEY ("booking_id") REFERENCES "mentor_bookings"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "mentor_goals" ADD CONSTRAINT "mentor_goals_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "mentor_reviews" ADD CONSTRAINT "mentor_reviews_booking_id_fkey" FOREIGN KEY ("booking_id") REFERENCES "mentor_bookings"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "mentor_reviews" ADD CONSTRAINT "mentor_reviews_student_id_fkey" FOREIGN KEY ("student_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

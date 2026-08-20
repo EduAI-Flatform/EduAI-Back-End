@@ -10,6 +10,8 @@ import { MentorBookingsService } from './mentor-bookings.service';
 import { ClassroomsModule } from '../classrooms/classrooms.module';
 import { MentorSessionsController } from './mentor-sessions.controller';
 import { MentorSessionsService } from './mentor-sessions.service';
+import { MentorOutcomesController } from './mentor-outcomes.controller';
+import { MentorOutcomesService } from './mentor-outcomes.service';
 
-@Module({ imports: [PrismaModule, AuthModule, AuditModule, NotificationsModule, ClassroomsModule], controllers: [MentorsController, MentorBookingsController, MentorSessionsController], providers: [MentorsService, MentorBookingsService, MentorSessionsService], exports: [MentorsService, MentorBookingsService, MentorSessionsService] })
+@Module({ imports: [PrismaModule, AuthModule, AuditModule, NotificationsModule, ClassroomsModule], controllers: [MentorsController, MentorBookingsController, MentorSessionsController, MentorOutcomesController], providers: [MentorsService, MentorBookingsService, MentorSessionsService, MentorOutcomesService], exports: [MentorsService, MentorBookingsService, MentorSessionsService, MentorOutcomesService] })
 export class MentorsModule {}
