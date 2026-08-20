@@ -34,6 +34,7 @@ import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateLearningProfileDto } from './dto/update-learning-profile.dto';
+import { UpdateCareerProfileDto } from './dto/update-career-profile.dto';
 import { ProfileService } from './profile.service';
 import {
   AvatarUploadResponse,
@@ -46,6 +47,7 @@ import {
 import { ProfileResponse } from './types/profile-response.types';
 import { LearningProfileResponse } from './types/learning-profile-response.types';
 import { DeleteSkillResponse, SkillResponse } from './types/skill-response.types';
+import { CareerProfileResponse } from './types/career-profile-response.types';
 
 @ApiTags('Profile')
 @ApiBearerAuth()
@@ -72,6 +74,24 @@ export class ProfileController {
     @Body() input: UpdateProfileDto,
   ): Promise<ProfileResponse> {
     return this.profileService.updateCurrentProfile(userId, input);
+  }
+
+  @Get('career')
+  @ApiOkResponse({ description: 'Current career profile and read-only projections returned.' })
+  getCareerProfile(
+    @CurrentUser('id') userId: string,
+  ): Promise<CareerProfileResponse | null> {
+    return this.profileService.getCareerProfile(userId);
+  }
+
+  @Put('career')
+  @ApiOkResponse({ description: 'Current career preferences and visibility updated.' })
+  @ApiBadRequestResponse({ description: 'Invalid career profile payload.' })
+  updateCareerProfile(
+    @CurrentUser('id') userId: string,
+    @Body() input: UpdateCareerProfileDto,
+  ): Promise<CareerProfileResponse | null> {
+    return this.profileService.updateCareerProfile(userId, input);
   }
 
   @Get('learning-profile')

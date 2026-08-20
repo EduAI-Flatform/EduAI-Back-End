@@ -301,6 +301,11 @@ model UserProfile {
   websiteUrl  String?   @map("website_url")
   publicSlug  String?   @unique @map("public_slug")
   isPublic    Boolean   @default(false) @map("is_public")
+  careerGoal  String?   @map("career_goal")
+  preferredRoles String[] @default([]) @map("preferred_roles")
+  preferredWorkModes String[] @default([]) @map("preferred_work_modes")
+  availabilityStatus String? @map("availability_status")
+  availableFrom DateTime? @map("available_from") @db.Date
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)

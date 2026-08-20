@@ -9,6 +9,11 @@ export interface ProfileResponse {
   websiteUrl: string | null;
   publicSlug: string | null;
   isPublic: boolean;
+  careerGoal: string | null;
+  preferredRoles: string[];
+  preferredWorkModes: string[];
+  availabilityStatus: string | null;
+  availableFrom: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

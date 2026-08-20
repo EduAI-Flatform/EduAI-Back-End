@@ -13,6 +13,11 @@ describe('ProfileService', () => {
     websiteUrl: null,
     publicSlug: null,
     isPublic: false,
+    careerGoal: null,
+    preferredRoles: [],
+    preferredWorkModes: [],
+    availabilityStatus: null,
+    availableFrom: null,
     createdAt: new Date('2026-06-15T00:00:00.000Z'),
     updatedAt: new Date('2026-06-15T00:00:00.000Z'),
   };
@@ -48,6 +53,7 @@ describe('ProfileService', () => {
     const prisma = {
       userProfile: {
         findUnique: jest.fn().mockResolvedValue(profile),
+        findFirst: jest.fn(),
         upsert: jest.fn().mockResolvedValue(profile),
       },
       userSkill: {
@@ -340,6 +346,89 @@ describe('ProfileService', () => {
         avatarUrl: true,
       },
     });
+  });
+
+  it('builds the authenticated career profile from owned canonical records', async () => {
+    const { prisma, service } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-id',
+      email: 'learner@example.com',
+      fullName: 'Learner',
+      avatarUrl: null,
+      profile,
+      skills: [skill],
+      portfolios: [portfolio],
+      enrollments: [{ completedAt: new Date('2026-06-01'), course: { title: 'AI', slug: 'ai', thumbnailUrl: null } }],
+      certificates: [{ title: 'AI Certificate', issuedAt: new Date('2026-06-02'), verificationUrl: '/verify/cert', course: { title: 'AI', slug: 'ai' } }],
+    });
+
+    const result = await service.getCareerProfile('user-id');
+
+    expect(result?.email).toBe('learner@example.com');
+    expect(result?.skills).toEqual([{ name: skill.name, level: skill.level, category: skill.category }]);
+    expect(result?.completedCourses).toHaveLength(1);
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'user-id' },
+    }));
+  });
+
+  it('updates career preferences only for the authenticated user', async () => {
+    const { prisma, service } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-id', email: 'learner@example.com', fullName: 'Learner', avatarUrl: null,
+      profile, skills: [], portfolios: [], enrollments: [], certificates: [],
+    });
+
+    await service.updateCareerProfile('user-id', {
+      careerGoal: 'Backend engineer',
+      preferredRoles: ['Backend Engineer'],
+      preferredWorkModes: ['remote'],
+      availabilityStatus: 'open_to_opportunities',
+      isPublic: true,
+      publicSlug: 'learner-profile',
+    });
+
+    expect(prisma.userProfile.upsert).toHaveBeenCalledWith({
+      where: { userId: 'user-id' },
+      create: expect.objectContaining({ userId: 'user-id', careerGoal: 'Backend engineer' }),
+      update: expect.objectContaining({ careerGoal: 'Backend engineer', isPublic: true }),
+    });
+  });
+
+  it('returns only a published public career profile without private owner fields', async () => {
+    const { prisma, service } = createService();
+    prisma.userProfile.findFirst.mockResolvedValue({
+      ...profile,
+      publicSlug: 'learner-profile',
+      isPublic: true,
+      user: {
+        fullName: 'Learner',
+        avatarUrl: null,
+        skills: [skill],
+        portfolios: [portfolio],
+        enrollments: [],
+        certificates: [],
+      },
+    });
+
+    const result = await service.getPublicCareerProfile('learner-profile');
+
+    expect(result).not.toHaveProperty('email');
+    expect(result).not.toHaveProperty('userId');
+    expect(result).not.toHaveProperty('phoneNumber');
+    expect(result).not.toHaveProperty('dateOfBirth');
+    expect(prisma.userProfile.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { publicSlug: 'learner-profile', isPublic: true },
+    }));
+  });
+
+  it('does not expose a private career profile', async () => {
+    const { prisma, service } = createService();
+    prisma.userProfile.findFirst.mockResolvedValue(null);
+
+    await expect(service.getPublicCareerProfile('private-profile')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it('updates only the authenticated learning profile and replaces submitted skill gaps', async () => {

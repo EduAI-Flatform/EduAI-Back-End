@@ -6,6 +6,7 @@ import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateLearningProfileDto } from './dto/update-learning-profile.dto';
+import { UpdateCareerProfileDto } from './dto/update-career-profile.dto';
 import {
   AvatarUploadResponse,
   UploadedAvatarFile,
@@ -17,6 +18,29 @@ import {
 import { ProfileResponse } from './types/profile-response.types';
 import { LearningProfileResponse } from './types/learning-profile-response.types';
 import { DeleteSkillResponse, SkillResponse } from './types/skill-response.types';
+import {
+  CareerProfileResponse,
+  PublicCareerProfileResponse,
+} from './types/career-profile-response.types';
+
+const careerUserInclude = {
+  profile: true,
+  skills: { orderBy: { createdAt: 'desc' as const } },
+  portfolios: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' as const },
+  },
+  enrollments: {
+    where: { completedAt: { not: null } },
+    orderBy: { completedAt: 'desc' as const },
+    include: { course: { select: { title: true, slug: true, thumbnailUrl: true } } },
+  },
+  certificates: {
+    where: { status: 'active' as const },
+    orderBy: { issuedAt: 'desc' as const },
+    include: { course: { select: { title: true, slug: true } } },
+  },
+};
 
 @Injectable()
 export class ProfileService {
@@ -239,6 +263,52 @@ export class ProfileService {
     };
   }
 
+  async getCareerProfile(userId: string): Promise<CareerProfileResponse | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: careerUserInclude,
+    });
+    if (!user) return null;
+
+    return {
+      ...this.toCareerProjection(user, user.profile),
+      email: user.email,
+      publicSlug: user.profile?.publicSlug ?? null,
+      isPublic: user.profile?.isPublic ?? false,
+    };
+  }
+
+  async updateCareerProfile(
+    userId: string,
+    input: UpdateCareerProfileDto,
+  ): Promise<CareerProfileResponse | null> {
+    const data = this.removeUndefinedFields(input);
+    await this.prisma.userProfile.upsert({
+      where: { userId },
+      create: { userId, ...data },
+      update: data,
+    });
+    return this.getCareerProfile(userId);
+  }
+
+  async getPublicCareerProfile(publicSlug: string): Promise<PublicCareerProfileResponse> {
+    if (publicSlug.length > 80 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(publicSlug)) {
+      throw new NotFoundException('Career profile not found');
+    }
+    const profile = await this.prisma.userProfile.findFirst({
+      where: { publicSlug, isPublic: true },
+      include: { user: { include: careerUserInclude } },
+    });
+    if (!profile || !profile.publicSlug) {
+      throw new NotFoundException('Career profile not found');
+    }
+
+    return {
+      ...this.toCareerProjection(profile.user, profile),
+      publicSlug: profile.publicSlug,
+    };
+  }
+
   async getLearningProfile(userId: string): Promise<LearningProfileResponse | null> {
     return this.prisma.learningProfile.findUnique({
       where: { userId },
@@ -306,6 +376,60 @@ export class ProfileService {
   ): PortfolioResponse {
     const { imageStorageKey: _storageKey, ...response } = portfolio;
     return response;
+  }
+
+  private toCareerProjection(
+    user: {
+      fullName: string;
+      avatarUrl: string | null;
+      skills: Array<{ name: string; level: string | null; category: string | null }>;
+      portfolios: Array<{
+        title: string; description: string | null; projectUrl: string | null;
+        imageUrl: string | null; startDate: Date | null; endDate: Date | null;
+      }>;
+      enrollments: Array<{
+        completedAt: Date | null;
+        course: { title: string; slug: string; thumbnailUrl: string | null };
+      }>;
+      certificates: Array<{
+        title: string; issuedAt: Date; verificationUrl: string | null;
+        course: { title: string; slug: string };
+      }>;
+    },
+    profile: {
+      bio: string | null; headline: string | null; location: string | null;
+      websiteUrl: string | null; careerGoal: string | null; preferredRoles: string[];
+      preferredWorkModes: string[]; availabilityStatus: string | null;
+      availableFrom: Date | null;
+    } | null,
+  ): Omit<PublicCareerProfileResponse, 'publicSlug'> {
+    return {
+      fullName: user.fullName,
+      avatarUrl: user.avatarUrl,
+      bio: profile?.bio ?? null,
+      headline: profile?.headline ?? null,
+      location: profile?.location ?? null,
+      websiteUrl: profile?.websiteUrl ?? null,
+      careerGoal: profile?.careerGoal ?? null,
+      preferredRoles: profile?.preferredRoles ?? [],
+      preferredWorkModes: profile?.preferredWorkModes ?? [],
+      availabilityStatus: profile?.availabilityStatus ?? null,
+      availableFrom: profile?.availableFrom ?? null,
+      skills: user.skills.map(({ name, level, category }) => ({ name, level, category })),
+      portfolio: user.portfolios.map(({ title, description, projectUrl, imageUrl, startDate, endDate }) => ({
+        title, description, projectUrl, imageUrl, startDate, endDate,
+      })),
+      completedCourses: user.enrollments
+        .filter((enrollment): enrollment is typeof enrollment & { completedAt: Date } => Boolean(enrollment.completedAt))
+        .map(({ completedAt, course }) => ({ ...course, completedAt })),
+      certificates: user.certificates.map(({ title, issuedAt, verificationUrl, course }) => ({
+        title,
+        issuedAt,
+        verificationUrl,
+        courseTitle: course.title,
+        courseSlug: course.slug,
+      })),
+    };
   }
 
   private removeUndefinedFields<T extends object>(input: T): T {

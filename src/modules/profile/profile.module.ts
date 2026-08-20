@@ -3,10 +3,11 @@ import { AuthModule } from '../auth/auth.module';
 import { AvatarStorageService } from './avatar-storage.service';
 import { ProfileController } from './profile.controller';
 import { ProfileService } from './profile.service';
+import { PublicProfileController } from './public-profile.controller';
 
 @Module({
   imports: [AuthModule],
-  controllers: [ProfileController],
+  controllers: [ProfileController, PublicProfileController],
   providers: [AvatarStorageService, ProfileService],
 })
 export class ProfileModule {}
