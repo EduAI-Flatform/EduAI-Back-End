@@ -257,8 +257,7 @@ jobs:
           npm run build
 
           echo "Restarting PM2..."
-          pm2 restart eduai-backend --update-env
-          pm2 save
+          npm run process:restart:production
 
           BACKEND_PORT="$(node -e '
             require("dotenv").config({ quiet: true });

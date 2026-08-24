@@ -13,6 +13,15 @@ const {
     logger?: Pick<Console, 'log'>,
   ) => void;
 };
+const {
+  restartProductionProcess,
+} = require('../../scripts/restart-production-process.cjs') as {
+  restartProductionProcess: (
+    environment: NodeJS.ProcessEnv,
+    spawn?: jest.Mock,
+    logger?: Pick<Console, 'log'>,
+  ) => void;
+};
 
 describe('production Commerce configuration verifier', () => {
   it('requires a secret of at least 32 characters without returning its value', () => {
@@ -46,12 +55,37 @@ describe('production Commerce configuration verifier', () => {
       join(process.cwd(), '.github', 'workflows', 'deploy-production.yml'),
       'utf8',
     );
-    const preflight = workflow.indexOf(
-      'npm run config:verify:production-commerce',
-    );
-    const restart = workflow.indexOf('pm2 restart eduai-backend --update-env');
+    const preflight = workflow.indexOf('npm run config:verify:production-commerce');
+    const restart = workflow.indexOf('npm run process:restart:production');
 
     expect(preflight).toBeGreaterThan(-1);
     expect(restart).toBeGreaterThan(preflight);
+  });
+
+  it('hands the loaded environment to the exact approved PM2 commands', () => {
+    const spawn = jest.fn().mockReturnValue({ status: 0 });
+    const logger = { log: jest.fn() };
+    const environment = {
+      COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+      NODE_ENV: 'production',
+    };
+
+    restartProductionProcess(environment, spawn, logger);
+
+    expect(spawn).toHaveBeenNthCalledWith(
+      1,
+      'pm2',
+      ['restart', 'eduai-backend', '--update-env'],
+      expect.objectContaining({ env: environment, shell: false, stdio: 'inherit' }),
+    );
+    expect(spawn).toHaveBeenNthCalledWith(
+      2,
+      'pm2',
+      ['save'],
+      expect.objectContaining({ env: environment, shell: false, stdio: 'inherit' }),
+    );
+    expect(logger.log).toHaveBeenCalledWith(
+      'pm2EnvironmentLoadedFromFile: true',
+    );
   });
 });
