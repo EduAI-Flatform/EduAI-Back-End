@@ -2,8 +2,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const {
+  classifyMigrationFailure,
+  safeMigrationName,
   verifyDatabaseRoleSeparation,
 }: {
+  classifyMigrationFailure: (log: unknown) => string;
+  safeMigrationName: (value: unknown) => string;
   verifyDatabaseRoleSeparation: (
     runtimeUrl: unknown,
     migrationUrl: unknown,
@@ -83,5 +87,18 @@ describe('production database role separation', () => {
     expect(runtimeClient).toContain('connectionString: env.DATABASE_URL');
     expect(runtimeClient).not.toContain('MIGRATION_DATABASE_URL');
     expect(migrationRunner).toContain('DATABASE_URL: migrationDatabaseUrl');
+  });
+
+  it('classifies stored migration failures without returning their raw details', () => {
+    const rawLog =
+      'database endpoint secret-role: unsafe use of new value "membership" of enum type';
+    const failureClass = classifyMigrationFailure(rawLog);
+
+    expect(failureClass).toBe('POSTGRES_ENUM_VALUE_NOT_COMMITTED');
+    expect(failureClass).not.toContain('secret-role');
+    expect(safeMigrationName('20260824160000_add_membership_product_type')).toBe(
+      '20260824160000_add_membership_product_type',
+    );
+    expect(safeMigrationName('unsafe migration/name')).toBe('UNAVAILABLE');
   });
 });
