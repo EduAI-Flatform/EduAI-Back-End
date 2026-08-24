@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { CommerceOrderService } from './commerce-order.service';
 
@@ -64,7 +68,10 @@ const orderRecord = {
   ],
 };
 
-function createHarness(discountAmountMinor = 50000) {
+function createHarness(
+  discountAmountMinor = 50000,
+  idempotencySecret: string | undefined = 's'.repeat(32),
+) {
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([{ id: cart.id }]),
     commerceIdempotencyRecord: {
@@ -96,9 +103,7 @@ function createHarness(discountAmountMinor = 50000) {
   const prisma = {
     $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
   };
-  const config = {
-    commerce: { enabled: true, idempotencySecret: 's'.repeat(32) },
-  };
+  const config = { commerce: { idempotencySecret } };
   const vouchers = {
     evaluateForCommerce: jest.fn().mockResolvedValue({
       voucherId: 'voucher-id',
@@ -122,6 +127,26 @@ function createHarness(discountAmountMinor = 50000) {
 }
 
 describe('CommerceOrderService', () => {
+  it('fails closed when the idempotency secret is unavailable', () => {
+    const { service } = createHarness(50000, '');
+
+    expect(() =>
+      service.createOrder('buyer-id', 'checkout-key', {
+        voucherApplications: [],
+      }),
+    ).toThrow(ServiceUnavailableException);
+
+    try {
+      service.createOrder('buyer-id', 'checkout-key', {
+        voucherApplications: [],
+      });
+    } catch (error) {
+      expect((error as ServiceUnavailableException).getResponse()).toMatchObject({
+        error: 'COMMERCE_CONFIGURATION_INVALID',
+      });
+    }
+  });
+
   const input = { voucherApplications: [{ courseId: course.id, code: ' save50 ' }] };
 
   it('requires a bounded idempotency key', async () => {

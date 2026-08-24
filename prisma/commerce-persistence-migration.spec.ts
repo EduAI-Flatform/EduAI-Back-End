@@ -62,7 +62,9 @@ describe('Sprint 23 commerce persistence migration', () => {
 
     expect(recovery).toContain('Forward-only');
     expect(recovery).toContain('must not drop');
-    expect(recovery).toContain('feature flags');
+    expect(recovery).toContain('permanent Commerce entry points');
+    expect(recovery).toContain('Provider-specific controls');
+    expect(recovery).toContain('traffic/routing controls');
     expect(recovery).toContain('reconciliation');
   });
 });

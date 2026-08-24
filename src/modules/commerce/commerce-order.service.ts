@@ -77,7 +77,7 @@ export class CommerceOrderService {
     idempotencyKey: string | undefined,
     input: CreateOrderDto,
   ): Promise<OrderResponseDto> {
-    this.assertEnabled();
+    this.assertConfigured();
     this.assertIdempotencyKey(idempotencyKey);
     const normalizedApplications = this.normalizeApplications(input);
     const requestHash = createHash('sha256')
@@ -521,13 +521,7 @@ export class CommerceOrderService {
     return applications.sort((left, right) => left.courseId.localeCompare(right.courseId));
   }
 
-  private assertEnabled(): void {
-    if (!this.config.commerce.enabled) {
-      throw new ServiceUnavailableException({
-        error: 'COMMERCE_DISABLED',
-        message: 'Commerce is not enabled.',
-      });
-    }
+  private assertConfigured(): void {
     if (!this.config.commerce.idempotencySecret) {
       throw new ServiceUnavailableException({
         error: 'COMMERCE_CONFIGURATION_INVALID',

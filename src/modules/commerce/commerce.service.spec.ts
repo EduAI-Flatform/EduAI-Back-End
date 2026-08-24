@@ -1,4 +1,3 @@
-import { ServiceUnavailableException } from '@nestjs/common';
 import { CommerceService } from './commerce.service';
 
 const course = {
@@ -35,7 +34,7 @@ const cartRecord = {
   lines: [{ id: 'line-id', productId: product.id, quantity: 1, product }],
 };
 
-function createHarness(enabled = true) {
+function createHarness() {
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([{ id: course.id }]),
     commerceCart: {
@@ -62,22 +61,22 @@ function createHarness(enabled = true) {
     commerceCart: tx.commerceCart,
     enrollment: tx.enrollment,
   };
-  const config = { commerce: { enabled } };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   return {
-    service: new CommerceService(prisma as never, config as never, audit as never),
+    service: new CommerceService(prisma as never, audit as never),
     tx,
     audit,
   };
 }
 
 describe('CommerceService cart', () => {
-  it('fails closed while the Commerce feature flag is disabled', async () => {
-    const { service } = createHarness(false);
+  it('serves the authenticated learner cart as a permanent capability', async () => {
+    const { service } = createHarness();
 
-    await expect(service.getCart('student-id')).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    await expect(service.getCart('student-id')).resolves.toMatchObject({
+      id: cartRecord.id,
+      currency: 'VND',
+    });
   });
 
   it('materializes an eligible course product and adds it once', async () => {

@@ -59,7 +59,6 @@ export interface BackendConfig {
     endpoint?: string;
   };
   commerce: {
-    enabled: boolean;
     idempotencySecret?: string;
   };
 }
@@ -128,7 +127,6 @@ export default function configuration(): BackendConfig {
       endpoint: env.MONITORING_ENDPOINT,
     },
     commerce: {
-      enabled: env.COMMERCE_ENABLED,
       idempotencySecret: env.COMMERCE_IDEMPOTENCY_SECRET,
     },
   };

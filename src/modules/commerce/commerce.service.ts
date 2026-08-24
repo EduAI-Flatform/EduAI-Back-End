@@ -4,7 +4,6 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   CommerceCartStatus,
@@ -14,7 +13,6 @@ import {
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
-import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CartAvailability,
@@ -51,12 +49,10 @@ type CartClient = Pick<
 export class CommerceService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: AppConfigService,
     private readonly auditService: AuditService,
   ) {}
 
   async getCart(learnerId: string): Promise<CartResponseDto> {
-    this.assertEnabled();
     const cart = await this.prisma.commerceCart.findFirst({
       where: { buyerId: learnerId, status: CommerceCartStatus.active },
       include: cartInclude,
@@ -65,7 +61,6 @@ export class CommerceService {
   }
 
   addCourse(learnerId: string, courseId: string): Promise<CartResponseDto> {
-    this.assertEnabled();
     return this.runSerializable(async (tx) => {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM courses WHERE id = ${courseId}::uuid FOR SHARE`,
@@ -118,7 +113,6 @@ export class CommerceService {
   }
 
   removeCourse(learnerId: string, courseId: string): Promise<CartResponseDto> {
-    this.assertEnabled();
     return this.runSerializable(async (tx) => {
       const cart = await this.findActiveCart(tx, learnerId);
       if (!cart) return this.emptyCart();
@@ -146,7 +140,6 @@ export class CommerceService {
   }
 
   clearCart(learnerId: string): Promise<CartResponseDto> {
-    this.assertEnabled();
     return this.runSerializable(async (tx) => {
       const cart = await this.findActiveCart(tx, learnerId);
       if (!cart || cart.lines.length === 0) return this.projectCart(learnerId, cart, tx);
@@ -163,15 +156,6 @@ export class CommerceService {
       );
       return this.projectCart(learnerId, await this.findActiveCart(tx, learnerId), tx);
     });
-  }
-
-  private assertEnabled(): void {
-    if (!this.config.commerce.enabled) {
-      throw new ServiceUnavailableException({
-        error: 'COMMERCE_DISABLED',
-        message: 'Commerce is not enabled.',
-      });
-    }
   }
 
   private assertPurchasableCourse(

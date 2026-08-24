@@ -5,9 +5,11 @@ writing commerce records, rollback may remove the unused additive objects. Once
 any order, settlement, refund, reservation, or lifecycle record exists, rollback
 must not drop these tables, enums, indexes, constraints, or trigger functions.
 
-Application rollback disables the Phase 3 commerce and provider feature flags,
-stops new checkout/webhook/worker entry points, retains every financial and
-lifecycle record, and continues reconciliation of any in-flight collection.
+Application rollback keeps permanent Commerce entry points and records intact.
+Provider-specific controls stop new provider/webhook/worker activity. If a
+checkout defect requires containment, approved traffic/routing controls stop
+the affected write route while every financial and lifecycle record is retained
+and in-flight collection continues through reconciliation.
 Forward recovery deploys a new additive migration; it never rewrites or deletes
 settled financial history.
 
