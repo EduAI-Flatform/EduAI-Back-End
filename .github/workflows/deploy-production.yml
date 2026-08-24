@@ -244,8 +244,8 @@ jobs:
           echo "Validating Prisma schema..."
           npm run prisma:validate
 
-          echo "Applying database migrations..."
-          npm run prisma:migrate:deploy
+          echo "Applying database migrations with isolated role..."
+          npm run prisma:migrate:production
 
           echo "Building backend..."
           npm run build

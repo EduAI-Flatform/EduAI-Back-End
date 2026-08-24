@@ -3,6 +3,7 @@ import { defineConfig } from 'prisma/config';
 import { loadBackendEnv } from './src/config/env.validation';
 
 const env = loadBackendEnv();
+const migrationDatabaseUrl = process.env.MIGRATION_DATABASE_URL?.trim();
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',
@@ -11,6 +12,6 @@ export default defineConfig({
     seed: 'ts-node prisma/seed.ts',
   },
   datasource: {
-    url: env.DATABASE_URL,
+    url: migrationDatabaseUrl || env.DATABASE_URL,
   },
 });

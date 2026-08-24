@@ -19,6 +19,7 @@
     "prisma:validate": "npm run prisma:merge && prisma validate",
     "prisma:migrate:dev": "npm run prisma:merge && prisma migrate dev",
     "prisma:migrate:deploy": "npm run prisma:merge && prisma migrate deploy",
+    "prisma:migrate:production": "node scripts/run-production-migrations.cjs",
     "prisma:studio": "npm run prisma:merge && prisma studio",
     "start": "node dist/src/main",
     "start:dev": "nest start --watch",
