@@ -58,6 +58,9 @@ export interface BackendConfig {
     enabled: boolean;
     endpoint?: string;
   };
+  commerce: {
+    enabled: boolean;
+  };
 }
 
 export default function configuration(): BackendConfig {
@@ -122,6 +125,9 @@ export default function configuration(): BackendConfig {
     monitoring: {
       enabled: env.MONITORING_ENABLED,
       endpoint: env.MONITORING_ENDPOINT,
+    },
+    commerce: {
+      enabled: env.COMMERCE_ENABLED,
     },
   };
 }

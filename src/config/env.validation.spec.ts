@@ -1,6 +1,20 @@
 import { validateEnv } from './env.validation';
 
 describe('validateEnv', () => {
+  it('keeps Commerce disabled by default and accepts only explicit booleans', () => {
+    const base = {
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+      JWT_ACCESS_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+    };
+
+    expect(validateEnv(base).COMMERCE_ENABLED).toBe(false);
+    expect(validateEnv({ ...base, COMMERCE_ENABLED: 'true' }).COMMERCE_ENABLED).toBe(true);
+    expect(() => validateEnv({ ...base, COMMERCE_ENABLED: 'yes' })).toThrow(
+      'COMMERCE_ENABLED must be true or false',
+    );
+  });
+
   it('requires an endpoint only when monitoring is enabled', () => {
     const base = { DATABASE_URL: 'postgresql://local/test', JWT_ACCESS_SECRET: 'a', JWT_REFRESH_SECRET: 'b' };
     expect(validateEnv(base).MONITORING_ENABLED).toBe(false);

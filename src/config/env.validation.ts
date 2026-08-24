@@ -37,6 +37,7 @@ export interface ValidatedEnv {
   RESEND_API_KEY?: string;
   MONITORING_ENABLED: boolean;
   MONITORING_ENDPOINT?: string;
+  COMMERCE_ENABLED: boolean;
 }
 
 export function loadBackendEnv(): ValidatedEnv {
@@ -139,6 +140,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     RESEND_API_KEY: resendApiKey,
     MONITORING_ENABLED: parseBoolean(config.MONITORING_ENABLED, false, 'MONITORING_ENABLED'),
     MONITORING_ENDPOINT: optionalUrl(config.MONITORING_ENDPOINT, 'MONITORING_ENDPOINT'),
+    COMMERCE_ENABLED: parseBoolean(config.COMMERCE_ENABLED, false, 'COMMERCE_ENABLED'),
   };
 
   if (validated.NODE_ENV === 'production' && validated.AI_PROVIDER === 'mock') {
