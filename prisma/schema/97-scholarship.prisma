@@ -95,6 +95,7 @@ model ScholarshipAward {
   scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Restrict)
   application   ScholarshipApplication @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   user          User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  commerceReservations CommercePromotionReservation[]
 
   @@index([userId, courseId])
   @@index([scholarshipId, awardedAt])

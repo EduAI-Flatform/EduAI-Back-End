@@ -13,7 +13,7 @@
     "db:seed:minimal": "npm run prisma:merge && ts-node prisma/seed-minimal.ts",
     "db:verify:minimal": "npm run prisma:merge && ts-node prisma/verify-minimal.ts",
     "db:reset:minimal": "npm run prisma:merge && ts-node prisma/reset-minimal.ts",
-    "test:demo-data": "jest --config prisma/jest.config.cjs",
+    "test:demo-data": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config prisma/jest.config.cjs",
     "prisma:merge": "node scripts/merge-prisma-schema.js",
     "prisma:generate": "npm run prisma:merge && prisma generate",
     "prisma:validate": "npm run prisma:merge && prisma validate",
@@ -52,6 +52,7 @@
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.4.1",
     "@nestjs/cli": "^10.4.8",
     "@nestjs/schematics": "^10.2.3",
     "@nestjs/testing": "^10.4.15",

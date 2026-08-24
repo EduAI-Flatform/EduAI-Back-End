@@ -33,6 +33,7 @@ model Course {
   voucherRedemptions VoucherRedemption[]
   scholarshipScopes ScholarshipCourse[]
   scholarshipApplications ScholarshipApplication[]
+  commerceProduct CommerceProduct?
 
   @@index([instructorId])
   @@index([status])

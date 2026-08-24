@@ -258,10 +258,517 @@ model User {
   mentorSessionAttendance MentorSessionAttendance[] @relation("MentorSessionAttendanceUser")
   mentorGoalsCreated MentorGoal[] @relation("MentorGoalCreator")
   mentorReviews MentorReview[] @relation("MentorReviewStudent")
+  commerceProductsSold CommerceProduct[] @relation("CommerceProductSeller")
+  commerceCarts CommerceCart[] @relation("CommerceCartBuyer")
+  commerceOrders CommerceOrder[] @relation("CommerceOrderBuyer")
+  commerceOrderLineSellerSnapshots CommerceOrderLine[] @relation("CommerceOrderLineSeller")
+  commerceReservations CommercePromotionReservation[] @relation("CommerceReservationBuyer")
+  commerceRefundsRequested CommerceRefund[] @relation("CommerceRefundRequester")
+  commerceRefundsRecorded CommerceRefund[] @relation("CommerceRefundRecorder")
+  commerceReconciliationsResolved CommerceReconciliationCase[] @relation("CommerceReconciliationResolver")
+  commerceLifecycleEvents CommerceLifecycleEvent[] @relation("CommerceLifecycleActor")
+  commerceIdempotencyRecords CommerceIdempotencyRecord[] @relation("CommerceIdempotencyActor")
 
   @@index([status])
   @@index([deletedAt])
   @@map("users")
+}
+
+enum CommerceProductType {
+  course
+
+  @@map("commerce_product_type")
+}
+
+enum CommerceProductStatus {
+  draft
+  active
+  archived
+
+  @@map("commerce_product_status")
+}
+
+enum CommerceCartStatus {
+  active
+  converted
+  abandoned
+
+  @@map("commerce_cart_status")
+}
+
+enum CommerceOrderStatus {
+  pending_payment
+  confirmed
+  cancelled
+  expired
+  late_payment_review
+  late_payment_refunded
+
+  @@map("commerce_order_status")
+}
+
+enum CommerceFulfillmentStatus {
+  not_started
+  processing
+  fulfilled
+  failed
+
+  @@map("commerce_fulfillment_status")
+}
+
+enum CommerceBenefitType {
+  voucher
+  scholarship
+
+  @@map("commerce_benefit_type")
+}
+
+enum CommerceReservationStatus {
+  reserved
+  consumed
+  released
+  expired
+
+  @@map("commerce_reservation_status")
+}
+
+enum CommercePaymentStatus {
+  created
+  pending
+  paid
+  failed
+  cancelled
+  expired
+  late_paid
+
+  @@map("commerce_payment_status")
+}
+
+enum CommerceSettlementKind {
+  provider_collection
+  no_payment_required
+
+  @@map("commerce_settlement_kind")
+}
+
+enum CommerceSettlementDisposition {
+  matched
+  duplicate_collection
+  late_collection
+  internal
+
+  @@map("commerce_settlement_disposition")
+}
+
+enum CommerceReconciliationKind {
+  duplicate_collection
+  late_payment
+
+  @@map("commerce_reconciliation_kind")
+}
+
+enum CommerceReconciliationStatus {
+  open
+  resolved
+
+  @@map("commerce_reconciliation_status")
+}
+
+enum CommerceReconciliationResolution {
+  accept
+  refund
+
+  @@map("commerce_reconciliation_resolution")
+}
+
+enum CommerceRefundStatus {
+  requested
+  recorded
+  rejected
+
+  @@map("commerce_refund_status")
+}
+
+enum CommerceLifecycleEntityType {
+  order
+  payment
+  fulfillment
+  reservation
+  reconciliation
+  refund
+
+  @@map("commerce_lifecycle_entity_type")
+}
+
+enum CommerceActorKind {
+  user
+  system
+  provider
+
+  @@map("commerce_actor_kind")
+}
+
+enum CommerceIdempotencyStatus {
+  in_progress
+  completed
+  failed
+
+  @@map("commerce_idempotency_status")
+}
+
+model CommerceProduct {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        CommerceProductType   @default(course)
+  courseId    String?               @unique @map("course_id") @db.Uuid
+  sellerId    String                @map("seller_id") @db.Uuid
+  status      CommerceProductStatus @default(draft)
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+  archivedAt  DateTime?             @map("archived_at")
+  course      Course?               @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  seller      User                  @relation("CommerceProductSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  cartLines   CommerceCartLine[]
+  orderLines  CommerceOrderLine[]
+
+  @@index([sellerId, status])
+  @@index([status, updatedAt])
+  @@index([archivedAt])
+  @@map("commerce_products")
+}
+
+model CommerceCart {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId     String             @map("buyer_id") @db.Uuid
+  status      CommerceCartStatus @default(active)
+  currency    String             @default("VND") @db.VarChar(3)
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  convertedAt DateTime?          @map("converted_at")
+  abandonedAt DateTime?          @map("abandoned_at")
+  buyer       User               @relation("CommerceCartBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  lines       CommerceCartLine[]
+  order       CommerceOrder?
+
+  @@index([buyerId, status])
+  @@index([status, updatedAt])
+  @@map("commerce_carts")
+}
+
+model CommerceCartLine {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cartId    String          @map("cart_id") @db.Uuid
+  productId String          @map("product_id") @db.Uuid
+  quantity  Int             @default(1)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  cart      CommerceCart    @relation(fields: [cartId], references: [id], onDelete: Restrict)
+  product   CommerceProduct @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([cartId, productId])
+  @@index([productId])
+  @@map("commerce_cart_lines")
+}
+
+model CommerceOrder {
+  id                    String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNumber           String                    @unique @map("order_number") @db.VarChar(40)
+  cartId                String?                   @unique @map("cart_id") @db.Uuid
+  buyerId               String                    @map("buyer_id") @db.Uuid
+  status                CommerceOrderStatus       @default(pending_payment)
+  fulfillmentStatus     CommerceFulfillmentStatus @default(not_started) @map("fulfillment_status")
+  statusOperationId     String?                    @map("status_operation_id") @db.Uuid
+  fulfillmentOperationId String?                   @map("fulfillment_operation_id") @db.Uuid
+  subtotalAmountMinor   BigInt                    @map("subtotal_amount_minor")
+  discountAmountMinor   BigInt                    @default(0) @map("discount_amount_minor")
+  payableAmountMinor    BigInt                    @map("payable_amount_minor")
+  currency              String                    @default("VND") @db.VarChar(3)
+  pricingPolicyVersion  String                    @map("pricing_policy_version") @db.VarChar(40)
+  confirmedSettlementId String?                   @unique @map("confirmed_settlement_id") @db.Uuid
+  createdAt             DateTime                  @default(now()) @map("created_at")
+  updatedAt             DateTime                  @updatedAt @map("updated_at")
+  confirmedAt           DateTime?                 @map("confirmed_at")
+  cancelledAt           DateTime?                 @map("cancelled_at")
+  expiredAt             DateTime?                 @map("expired_at")
+  archivedAt            DateTime?                 @map("archived_at")
+  cart                  CommerceCart?             @relation(fields: [cartId], references: [id], onDelete: Restrict)
+  buyer                 User                      @relation("CommerceOrderBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  confirmedSettlement   CommerceSettlement?       @relation("OrderConfirmedSettlement", fields: [confirmedSettlementId], references: [id], onDelete: Restrict)
+  lines                 CommerceOrderLine[]
+  reservations          CommercePromotionReservation[]
+  paymentAttempts       CommercePaymentAttempt[]
+  settlements           CommerceSettlement[]      @relation("OrderSettlements")
+  reconciliationCases   CommerceReconciliationCase[]
+  refunds               CommerceRefund[]
+
+  @@index([buyerId, createdAt])
+  @@index([buyerId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([fulfillmentStatus, updatedAt])
+  @@index([archivedAt])
+  @@map("commerce_orders")
+}
+
+model CommerceOrderLine {
+  id                       String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId                  String              @map("order_id") @db.Uuid
+  productId                String              @map("product_id") @db.Uuid
+  productType              CommerceProductType @map("product_type")
+  productReferenceId       String              @map("product_reference_id") @db.Uuid
+  sellerId                 String              @map("seller_id") @db.Uuid
+  displayTitle             String              @map("display_title") @db.VarChar(240)
+  quantity                 Int                 @default(1)
+  unitListPriceAmountMinor BigInt              @map("unit_list_price_amount_minor")
+  subtotalAmountMinor      BigInt              @map("subtotal_amount_minor")
+  discountAmountMinor      BigInt              @default(0) @map("discount_amount_minor")
+  finalAmountMinor         BigInt              @map("final_amount_minor")
+  currency                 String              @default("VND") @db.VarChar(3)
+  createdAt                DateTime            @default(now()) @map("created_at")
+  order                    CommerceOrder       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product                  CommerceProduct     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  seller                   User                @relation("CommerceOrderLineSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  benefits                 CommerceOrderLineBenefit[]
+  reservations             CommercePromotionReservation[]
+  refundAllocations        CommerceRefundAllocation[]
+
+  @@unique([orderId, productId])
+  @@index([sellerId, createdAt])
+  @@index([productType, productReferenceId])
+  @@map("commerce_order_lines")
+}
+
+model CommerceOrderLineBenefit {
+  id                             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderLineId                    String              @map("order_line_id") @db.Uuid
+  benefitType                    CommerceBenefitType @map("benefit_type")
+  sourceId                       String              @map("source_id") @db.Uuid
+  policyVersion                  String              @map("policy_version") @db.VarChar(40)
+  sourceVersion                  String?             @map("source_version") @db.VarChar(80)
+  allocatedDiscountAmountMinor  BigInt              @map("allocated_discount_amount_minor")
+  reservationId                  String              @unique @map("reservation_id") @db.Uuid
+  createdAt                      DateTime            @default(now()) @map("created_at")
+  orderLine                      CommerceOrderLine   @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+  reservation                   CommercePromotionReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+
+  @@index([benefitType, sourceId])
+  @@map("commerce_order_line_benefits")
+}
+
+model CommercePromotionReservation {
+  id                 String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId            String                    @map("buyer_id") @db.Uuid
+  orderId            String                    @map("order_id") @db.Uuid
+  orderLineId        String                    @map("order_line_id") @db.Uuid
+  benefitType        CommerceBenefitType       @map("benefit_type")
+  voucherId          String?                   @map("voucher_id") @db.Uuid
+  scholarshipAwardId String?                   @map("scholarship_award_id") @db.Uuid
+  status             CommerceReservationStatus @default(reserved)
+  statusOperationId  String?                   @map("status_operation_id") @db.Uuid
+  reservedAt         DateTime                  @default(now()) @map("reserved_at")
+  expiresAt          DateTime                  @map("expires_at")
+  consumedAt         DateTime?                 @map("consumed_at")
+  releasedAt         DateTime?                 @map("released_at")
+  expiredAt          DateTime?                 @map("expired_at")
+  buyer              User                      @relation("CommerceReservationBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  order              CommerceOrder             @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  orderLine          CommerceOrderLine         @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+  voucher            Voucher?                  @relation(fields: [voucherId], references: [id], onDelete: Restrict)
+  scholarshipAward   ScholarshipAward?         @relation(fields: [scholarshipAwardId], references: [id], onDelete: Restrict)
+  benefitSnapshot    CommerceOrderLineBenefit?
+
+  @@index([orderId, status])
+  @@index([orderLineId])
+  @@index([voucherId, status])
+  @@index([buyerId, voucherId, status])
+  @@index([scholarshipAwardId, status])
+  @@map("commerce_promotion_reservations")
+}
+
+model CommercePaymentAttempt {
+  id                              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId                         String                @map("order_id") @db.Uuid
+  provider                        String                @db.VarChar(32)
+  localRequestIdentity            String                @unique @map("local_request_identity") @db.Uuid
+  providerPaymentIdentity         String?               @map("provider_payment_identity") @db.VarChar(128)
+  status                          CommercePaymentStatus @default(created)
+  statusOperationId               String?                @map("status_operation_id") @db.Uuid
+  amountMinor                     BigInt                @map("amount_minor")
+  currency                        String                @default("VND") @db.VarChar(3)
+  providerStatusCheckedAt         DateTime?             @map("provider_status_checked_at")
+  providerCancellationRequestedAt DateTime?             @map("provider_cancellation_requested_at")
+  createdAt                       DateTime              @default(now()) @map("created_at")
+  updatedAt                       DateTime              @updatedAt @map("updated_at")
+  paidAt                          DateTime?             @map("paid_at")
+  closedAt                        DateTime?             @map("closed_at")
+  order                           CommerceOrder         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  events                          CommercePaymentEvent[]
+  settlements                     CommerceSettlement[]
+
+  @@unique([provider, providerPaymentIdentity])
+  @@index([orderId, status])
+  @@index([status, updatedAt])
+  @@map("commerce_payment_attempts")
+}
+
+model CommercePaymentEvent {
+  id                          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentAttemptId            String                 @map("payment_attempt_id") @db.Uuid
+  provider                    String                 @db.VarChar(32)
+  providerEventIdentity       String                 @map("provider_event_identity") @db.VarChar(128)
+  providerPaymentIdentity     String?                @map("provider_payment_identity") @db.VarChar(128)
+  providerSettlementReference String?                @map("provider_settlement_reference") @db.VarChar(128)
+  amountMinor                 BigInt                 @map("amount_minor")
+  currency                    String                 @default("VND") @db.VarChar(3)
+  nextStatus                  CommercePaymentStatus  @map("next_status")
+  providerOccurredAt          DateTime?              @map("provider_occurred_at")
+  receivedAt                  DateTime               @default(now()) @map("received_at")
+  paymentAttempt              CommercePaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  settlement                  CommerceSettlement?
+
+  @@unique([provider, providerEventIdentity])
+  @@index([paymentAttemptId, receivedAt])
+  @@index([provider, providerPaymentIdentity])
+  @@index([provider, providerSettlementReference])
+  @@map("commerce_payment_events")
+}
+
+model CommerceSettlement {
+  id                          String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId                     String                        @map("order_id") @db.Uuid
+  paymentAttemptId            String?                       @map("payment_attempt_id") @db.Uuid
+  paymentEventId              String?                       @unique @map("payment_event_id") @db.Uuid
+  kind                        CommerceSettlementKind
+  disposition                 CommerceSettlementDisposition
+  provider                    String?                       @db.VarChar(32)
+  providerSettlementReference String?                       @map("provider_settlement_reference") @db.VarChar(128)
+  amountMinor                 BigInt                        @map("amount_minor")
+  currency                    String                        @default("VND") @db.VarChar(3)
+  settledAt                   DateTime                      @map("settled_at")
+  recordedAt                  DateTime                      @default(now()) @map("recorded_at")
+  order                       CommerceOrder                 @relation("OrderSettlements", fields: [orderId], references: [id], onDelete: Restrict)
+  confirmedOrder              CommerceOrder?                @relation("OrderConfirmedSettlement")
+  paymentAttempt              CommercePaymentAttempt?       @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  paymentEvent                CommercePaymentEvent?         @relation(fields: [paymentEventId], references: [id], onDelete: Restrict)
+  reconciliationCase          CommerceReconciliationCase?
+  refunds                     CommerceRefund[]
+
+  @@unique([provider, providerSettlementReference])
+  @@index([orderId, recordedAt])
+  @@index([paymentAttemptId])
+  @@index([disposition, recordedAt])
+  @@map("commerce_settlements")
+}
+
+model CommerceReconciliationCase {
+  id             String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId        String                           @map("order_id") @db.Uuid
+  settlementId   String                           @unique @map("settlement_id") @db.Uuid
+  kind           CommerceReconciliationKind
+  status         CommerceReconciliationStatus     @default(open)
+  statusOperationId String?                        @map("status_operation_id") @db.Uuid
+  resolution     CommerceReconciliationResolution?
+  resolvedById   String?                          @map("resolved_by_id") @db.Uuid
+  openedAt       DateTime                         @default(now()) @map("opened_at")
+  updatedAt      DateTime                         @updatedAt @map("updated_at")
+  resolvedAt     DateTime?                        @map("resolved_at")
+  order          CommerceOrder                    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  settlement     CommerceSettlement               @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  resolvedBy     User?                            @relation("CommerceReconciliationResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+  refund         CommerceRefund?
+
+  @@index([status, openedAt])
+  @@index([orderId, status])
+  @@map("commerce_reconciliation_cases")
+}
+
+model CommerceRefund {
+  id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId              String               @map("order_id") @db.Uuid
+  settlementId         String               @map("settlement_id") @db.Uuid
+  reconciliationCaseId String?              @unique @map("reconciliation_case_id") @db.Uuid
+  status               CommerceRefundStatus @default(requested)
+  statusOperationId    String?               @map("status_operation_id") @db.Uuid
+  amountMinor          BigInt               @map("amount_minor")
+  currency             String               @default("VND") @db.VarChar(3)
+  provider             String?              @db.VarChar(32)
+  externalReference    String?              @map("external_reference") @db.VarChar(128)
+  requestedById        String               @map("requested_by_id") @db.Uuid
+  recordedById         String?              @map("recorded_by_id") @db.Uuid
+  reasonCode           String               @map("reason_code") @db.VarChar(80)
+  rejectionReasonCode  String?              @map("rejection_reason_code") @db.VarChar(80)
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  recordedAt           DateTime?            @map("recorded_at")
+  rejectedAt           DateTime?            @map("rejected_at")
+  order                CommerceOrder        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  settlement           CommerceSettlement   @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  reconciliationCase   CommerceReconciliationCase? @relation(fields: [reconciliationCaseId], references: [id], onDelete: Restrict)
+  requestedBy          User                 @relation("CommerceRefundRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  recordedBy           User?                @relation("CommerceRefundRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+  allocations          CommerceRefundAllocation[]
+
+  @@unique([provider, externalReference])
+  @@index([orderId, status, createdAt])
+  @@index([settlementId, status])
+  @@index([requestedById, createdAt])
+  @@map("commerce_refunds")
+}
+
+model CommerceRefundAllocation {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  refundId    String            @map("refund_id") @db.Uuid
+  orderLineId String            @map("order_line_id") @db.Uuid
+  amountMinor BigInt            @map("amount_minor")
+  currency    String            @default("VND") @db.VarChar(3)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  refund      CommerceRefund    @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  orderLine   CommerceOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Restrict)
+
+  @@unique([refundId, orderLineId])
+  @@index([orderLineId])
+  @@map("commerce_refund_allocations")
+}
+
+model CommerceLifecycleEvent {
+  id             String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entityType     CommerceLifecycleEntityType @map("entity_type")
+  entityId       String                      @map("entity_id") @db.Uuid
+  previousStatus String                      @map("previous_status") @db.VarChar(40)
+  nextStatus     String                      @map("next_status") @db.VarChar(40)
+  actorKind      CommerceActorKind           @map("actor_kind")
+  actorId        String?                     @map("actor_id") @db.Uuid
+  operationId    String                      @map("operation_id") @db.Uuid
+  reasonCode     String?                     @map("reason_code") @db.VarChar(80)
+  occurredAt     DateTime                    @default(now()) @map("occurred_at")
+  actor          User?                       @relation("CommerceLifecycleActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([entityType, entityId, operationId])
+  @@index([entityType, entityId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@map("commerce_lifecycle_events")
+}
+
+model CommerceIdempotencyRecord {
+  id                             String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId                        String                    @map("actor_id") @db.Uuid
+  operation                      String                    @db.VarChar(80)
+  keyHash                        String                    @map("key_hash") @db.VarChar(128)
+  keyHashVersion                 Int                       @map("key_hash_version")
+  requestHash                    String                    @map("request_hash") @db.VarChar(128)
+  requestCanonicalizationVersion Int                      @map("request_canonicalization_version")
+  status                         CommerceIdempotencyStatus @default(in_progress)
+  resourceType                   String?                   @map("resource_type") @db.VarChar(80)
+  resourceId                     String?                   @map("resource_id") @db.Uuid
+  lockedUntil                    DateTime                  @map("locked_until")
+  createdAt                      DateTime                  @default(now()) @map("created_at")
+  updatedAt                      DateTime                  @updatedAt @map("updated_at")
+  completedAt                    DateTime?                 @map("completed_at")
+  failedAt                       DateTime?                 @map("failed_at")
+  actor                          User                      @relation("CommerceIdempotencyActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, operation, keyHashVersion, keyHash])
+  @@index([status, lockedUntil])
+  @@index([resourceType, resourceId])
+  @@map("commerce_idempotency_records")
 }
 
 model Role {
@@ -422,6 +929,7 @@ model Course {
   voucherRedemptions VoucherRedemption[]
   scholarshipScopes ScholarshipCourse[]
   scholarshipApplications ScholarshipApplication[]
+  commerceProduct CommerceProduct?
 
   @@index([instructorId])
   @@index([status])
@@ -1419,6 +1927,7 @@ model Voucher {
   categoryScopes           VoucherCategory[]
   eligibleUsers            VoucherUser[]
   redemptions              VoucherRedemption[]
+  commerceReservations     CommercePromotionReservation[]
 
   @@index([status, startsAt, endsAt])
   @@index([createdById])
@@ -1578,6 +2087,7 @@ model ScholarshipAward {
   scholarship   ScholarshipCampaign @relation(fields: [scholarshipId], references: [id], onDelete: Restrict)
   application   ScholarshipApplication @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   user          User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  commerceReservations CommercePromotionReservation[]
 
   @@index([userId, courseId])
   @@index([scholarshipId, awardedAt])

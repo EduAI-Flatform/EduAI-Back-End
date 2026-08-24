@@ -20,6 +20,7 @@ model Voucher {
   categoryScopes           VoucherCategory[]
   eligibleUsers            VoucherUser[]
   redemptions              VoucherRedemption[]
+  commerceReservations     CommercePromotionReservation[]
 
   @@index([status, startsAt, endsAt])
   @@index([createdById])
