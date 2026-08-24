@@ -19,6 +19,8 @@ export const AuditAction = {
   CommerceCartItemRemoved: 'COMMERCE_CART_ITEM_REMOVED',
   CommerceCartCleared: 'COMMERCE_CART_CLEARED',
   CommerceOrderCreated: 'COMMERCE_ORDER_CREATED',
+  CommerceCatalogPriceUpdated: 'COMMERCE_CATALOG_PRICE_UPDATED',
+  CommerceProductStatusChanged: 'COMMERCE_PRODUCT_STATUS_CHANGED',
   ScholarshipCreated: 'SCHOLARSHIP_CREATED',
   ScholarshipUpdated: 'SCHOLARSHIP_UPDATED',
   ScholarshipApplied: 'SCHOLARSHIP_APPLIED',

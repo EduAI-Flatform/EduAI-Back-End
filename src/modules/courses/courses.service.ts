@@ -8,6 +8,7 @@ import {
 import {
   CourseStatus,
   CourseVisibility,
+  CommerceProductStatus,
   ModerationStatus,
   Prisma,
   RoleName,
@@ -322,6 +323,39 @@ type CourseDetailRecord = Prisma.CourseGetPayload<{
   select: typeof courseDetailSelect;
 }>;
 
+const commerceCatalogSelect = {
+  id: true,
+  title: true,
+  slug: true,
+  priceAmountMinor: true,
+  priceCurrency: true,
+  status: true,
+  visibility: true,
+  moderationStatus: true,
+  updatedAt: true,
+  instructor: { select: { id: true, fullName: true } },
+  commerceProduct: { select: { id: true, status: true, archivedAt: true } },
+} satisfies Prisma.CourseSelect;
+
+export interface CommerceCatalogQuery {
+  page: number;
+  pageSize: number;
+  search?: string;
+  sellability?: 'sellable' | 'not_sellable' | 'archived';
+}
+
+export type CommerceCatalogCourse = Prisma.CourseGetPayload<{
+  select: typeof commerceCatalogSelect;
+}>;
+
+export interface CommerceCatalogPage {
+  items: CommerceCatalogCourse[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 @Injectable()
 export class CoursesService {
   constructor(
@@ -330,6 +364,82 @@ export class CoursesService {
     private readonly auditService: AuditService,
     private readonly courseCompletionService: CourseCompletionService,
   ) {}
+
+  async listCommerceCatalog(query: CommerceCatalogQuery): Promise<CommerceCatalogPage> {
+    const productStatus: CommerceProductStatus | undefined =
+      query.sellability === 'sellable'
+        ? CommerceProductStatus.active
+        : query.sellability === 'archived'
+          ? CommerceProductStatus.archived
+          : undefined;
+    const where: Prisma.CourseWhereInput = {
+      deletedAt: null,
+      AND: [
+        ...(query.search
+          ? [{
+              OR: [
+                { title: { contains: query.search, mode: 'insensitive' as const } },
+                { slug: { contains: query.search, mode: 'insensitive' as const } },
+                { instructor: { fullName: { contains: query.search, mode: 'insensitive' as const } } },
+              ],
+            }]
+          : []),
+        ...(query.sellability === 'not_sellable'
+          ? [{ OR: [{ commerceProduct: null }, { commerceProduct: { is: { status: 'draft' as const } } }] }]
+          : productStatus
+            ? [{ commerceProduct: { is: { status: productStatus } } }]
+            : []),
+      ],
+    };
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.course.count({ where }),
+      this.prisma.course.findMany({
+        where,
+        select: commerceCatalogSelect,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+    ]);
+    return {
+      items,
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: Math.ceil(total / query.pageSize),
+    };
+  }
+
+  async updateCommercePrice(
+    tx: Prisma.TransactionClient,
+    actorId: string,
+    courseId: string,
+    input: { priceAmountMinor: number | null; priceCurrency: string | null },
+  ): Promise<CommerceCatalogCourse> {
+    this.assertValidPricePair(input.priceAmountMinor, input.priceCurrency);
+    const updated = await tx.course.update({
+      where: { id: courseId },
+      data: {
+        priceAmountMinor: input.priceAmountMinor,
+        priceCurrency: input.priceCurrency,
+      },
+      select: commerceCatalogSelect,
+    });
+    await this.auditService.record(
+      {
+        actorId,
+        action: AuditAction.CommerceCatalogPriceUpdated,
+        target: { type: 'course', id: courseId },
+        metadata: {
+          amountMinor:
+            input.priceAmountMinor === null ? 'NONE' : String(input.priceAmountMinor),
+          currency: input.priceCurrency ?? 'NONE',
+        },
+      },
+      tx,
+    );
+    return updated;
+  }
 
   async listCourses(): Promise<CourseCatalogResponse[]> {
     const courses = await this.prisma.course.findMany({

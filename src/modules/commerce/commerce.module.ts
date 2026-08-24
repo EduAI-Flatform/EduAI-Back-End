@@ -6,11 +6,14 @@ import { CommerceController } from './commerce.controller';
 import { CommerceService } from './commerce.service';
 import { CommerceOrderService } from './commerce-order.service';
 import { VouchersModule } from '../vouchers/vouchers.module';
+import { CoursesModule } from '../courses/courses.module';
+import { CommerceAdminController } from './commerce-admin.controller';
+import { CommerceAdminService } from './commerce-admin.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, AuditModule, VouchersModule],
-  controllers: [CommerceController],
-  providers: [CommerceService, CommerceOrderService],
+  imports: [PrismaModule, AuthModule, AuditModule, VouchersModule, CoursesModule],
+  controllers: [CommerceController, CommerceAdminController],
+  providers: [CommerceService, CommerceOrderService, CommerceAdminService],
   exports: [CommerceService, CommerceOrderService],
 })
 export class CommerceModule {}
