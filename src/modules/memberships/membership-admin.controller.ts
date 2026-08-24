@@ -9,6 +9,9 @@ import {
   CreateMembershipPlanDto,
   CreateMembershipPlanVersionDto,
   ListMembershipPlansQueryDto,
+  CreateServiceEntitlementDefinitionDto,
+  ConfigureMembershipPlanEntitlementDto,
+  ListServiceEntitlementDefinitionsQueryDto,
 } from './dto/membership-plan.dto';
 import { MembershipAdminService } from './membership-admin.service';
 
@@ -30,6 +33,28 @@ export class MembershipAdminController {
   @ApiOkResponse({ description: 'Paginated membership plans and immutable version history.' })
   listPlans(@Query() query: ListMembershipPlansQueryDto) {
     return this.service.listPlans(query);
+  }
+
+  @Post('service-entitlements')
+  createEntitlementDefinition(
+    @CurrentUser('id') actorId: string,
+    @Body() input: CreateServiceEntitlementDefinitionDto,
+  ) {
+    return this.service.createEntitlementDefinition(actorId, input);
+  }
+
+  @Get('service-entitlements')
+  listEntitlementDefinitions(@Query() query: ListServiceEntitlementDefinitionsQueryDto) {
+    return this.service.listEntitlementDefinitions(query);
+  }
+
+  @Post('versions/:versionId/service-entitlements')
+  configurePlanEntitlement(
+    @CurrentUser('id') actorId: string,
+    @Param('versionId', new ParseUUIDPipe({ version: '4' })) versionId: string,
+    @Body() input: ConfigureMembershipPlanEntitlementDto,
+  ) {
+    return this.service.configurePlanEntitlement(actorId, versionId, input);
   }
 
   @Post('plans/:planId/versions')

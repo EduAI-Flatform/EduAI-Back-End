@@ -8,6 +8,8 @@ import {
   MembershipPlanStatus,
   MembershipPlanVersionStatus,
   Prisma,
+  ServiceEntitlementResetPeriod,
+  ServiceEntitlementValueType,
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
@@ -17,11 +19,19 @@ import {
   CreateMembershipPlanVersionDto,
   ListMembershipPlansQueryDto,
   MembershipDurationInputDto,
+  CreateServiceEntitlementDefinitionDto,
+  ConfigureMembershipPlanEntitlementDto,
+  ListServiceEntitlementDefinitionsQueryDto,
 } from './dto/membership-plan.dto';
 import { calculateDurationPrice } from './membership.rules';
+import { normalizeEntitlementValue } from './service-entitlement.rules';
 
 const versionInclude = {
   durationOptions: { orderBy: [{ displayOrder: 'asc' as const }, { id: 'asc' as const }] },
+  serviceEntitlements: {
+    orderBy: [{ definition: { displayOrder: 'asc' as const } }, { id: 'asc' as const }],
+    include: { definition: true },
+  },
 } satisfies Prisma.MembershipPlanVersionInclude;
 const planInclude = {
   versions: {
@@ -81,6 +91,117 @@ export class MembershipAdminService {
         tx,
       );
       return this.planResponse(plan);
+    });
+  }
+
+  async createEntitlementDefinition(actorId: string, input: CreateServiceEntitlementDefinitionDto) {
+    const valueType = input.valueType.toLowerCase() as ServiceEntitlementValueType;
+    const resetPeriod = input.resetPeriod.toLowerCase() as ServiceEntitlementResetPeriod;
+    try {
+      normalizeEntitlementValue(
+        valueType,
+        resetPeriod,
+        valueType === ServiceEntitlementValueType.boolean ? false : null,
+        valueType === ServiceEntitlementValueType.metered ? 1n : null,
+      );
+    } catch {
+      throw new BadRequestException('Service entitlement reset period does not match its value type.');
+    }
+    try {
+      const definition = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.serviceEntitlementDefinition.create({
+          data: {
+            code: input.code.trim().toUpperCase(), valueType, resetPeriod,
+            displayName: input.displayName.trim(), description: input.description?.trim() || null,
+            unitLabel: input.unitLabel?.trim() || null, displayOrder: input.displayOrder,
+            createdById: actorId,
+          },
+        });
+        await this.audit.record({
+          actorId, action: AuditAction.ServiceEntitlementDefinitionCreated,
+          target: { type: 'service_entitlement_definition', id: created.id },
+          metadata: { code: created.code, valueType: created.valueType, resetPeriod: created.resetPeriod },
+        }, tx);
+        return created;
+      });
+      return this.entitlementDefinitionResponse(definition);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Service entitlement code already exists.');
+      }
+      throw error;
+    }
+  }
+
+  async listEntitlementDefinitions(query: ListServiceEntitlementDefinitionsQueryDto) {
+    const where: Prisma.ServiceEntitlementDefinitionWhereInput = query.search ? {
+      OR: [
+        { code: { contains: query.search, mode: 'insensitive' } },
+        { displayName: { contains: query.search, mode: 'insensitive' } },
+      ],
+    } : {};
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.serviceEntitlementDefinition.count({ where }),
+      this.prisma.serviceEntitlementDefinition.findMany({
+        where, orderBy: [{ displayOrder: 'asc' }, { code: 'asc' }],
+        skip: (query.page - 1) * query.pageSize, take: query.pageSize,
+      }),
+    ]);
+    return {
+      items: items.map((item) => this.entitlementDefinitionResponse(item)),
+      page: query.page, pageSize: query.pageSize, total,
+      totalPages: Math.ceil(total / query.pageSize),
+    };
+  }
+
+  configurePlanEntitlement(
+    actorId: string,
+    versionId: string,
+    input: ConfigureMembershipPlanEntitlementDto,
+  ) {
+    return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
+      const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
+      if (!version) throw new NotFoundException('Membership plan version not found.');
+      if (version.status !== MembershipPlanVersionStatus.draft) {
+        throw new ConflictException('Published membership entitlements are immutable.');
+      }
+      const definition = await tx.serviceEntitlementDefinition.findUnique({ where: { id: input.definitionId } });
+      if (!definition) throw new NotFoundException('Service entitlement definition not found.');
+      let quota: bigint | null = null;
+      if (input.quota) quota = this.parseAmountMinor(input.quota);
+      const booleanValue = input.booleanValue ?? null;
+      try {
+        normalizeEntitlementValue(
+          definition.valueType,
+          definition.resetPeriod,
+          booleanValue,
+          quota,
+        );
+      } catch {
+        throw new BadRequestException('Configured entitlement value does not match its stable definition.');
+      }
+      try {
+        const configured = await tx.membershipPlanEntitlement.create({
+          data: {
+            versionId, definitionId: definition.id,
+            valueType: definition.valueType, resetPeriod: definition.resetPeriod,
+            booleanValue, quota, createdById: actorId,
+          },
+          include: { definition: true },
+        });
+        await this.audit.record({
+          actorId, action: AuditAction.MembershipPlanEntitlementConfigured,
+          target: { type: 'membership_plan_entitlement', id: configured.id },
+          metadata: { versionId, code: definition.code, valueType: definition.valueType },
+        }, tx);
+        return this.planEntitlementResponse(configured);
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new ConflictException('Service entitlement is already configured for this version.');
+        }
+        throw error;
+      }
     });
   }
 
@@ -363,6 +484,31 @@ export class MembershipAdminService {
         currency: version.currency,
         displayOrder: duration.displayOrder,
       })),
+      serviceEntitlements: version.serviceEntitlements.map((item) => this.planEntitlementResponse(item)),
+    };
+  }
+
+  private entitlementDefinitionResponse(definition: {
+    id: string; code: string; valueType: ServiceEntitlementValueType;
+    resetPeriod: ServiceEntitlementResetPeriod; displayName: string;
+    description: string | null; unitLabel: string | null; displayOrder: number;
+  }) {
+    return {
+      id: definition.id, code: definition.code,
+      valueType: definition.valueType.toUpperCase(), resetPeriod: definition.resetPeriod.toUpperCase(),
+      displayName: definition.displayName, description: definition.description,
+      unitLabel: definition.unitLabel, displayOrder: definition.displayOrder,
+    };
+  }
+
+  private planEntitlementResponse(item: {
+    id: string; versionId: string; booleanValue: boolean | null; quota: bigint | null;
+    definition: Parameters<MembershipAdminService['entitlementDefinitionResponse']>[0];
+  }) {
+    return {
+      id: item.id, versionId: item.versionId,
+      definition: this.entitlementDefinitionResponse(item.definition),
+      booleanValue: item.booleanValue, quota: item.quota?.toString() ?? null,
     };
   }
 

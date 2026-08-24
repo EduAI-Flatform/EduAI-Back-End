@@ -4,11 +4,13 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { MembershipAdminController } from './membership-admin.controller';
 import { MembershipAdminService } from './membership-admin.service';
+import { ServiceEntitlementController } from './service-entitlement.controller';
+import { ServiceEntitlementService } from './service-entitlement.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, AuditModule],
-  controllers: [MembershipAdminController],
-  providers: [MembershipAdminService],
-  exports: [MembershipAdminService],
+  controllers: [MembershipAdminController, ServiceEntitlementController],
+  providers: [MembershipAdminService, ServiceEntitlementService],
+  exports: [MembershipAdminService, ServiceEntitlementService],
 })
 export class MembershipsModule {}

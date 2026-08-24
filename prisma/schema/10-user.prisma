@@ -76,6 +76,10 @@ model User {
   membershipVersionsCreated MembershipPlanVersion[] @relation("MembershipVersionCreator")
   membershipVersionsPublished MembershipPlanVersion[] @relation("MembershipVersionPublisher")
   membershipVersionsArchived MembershipPlanVersion[] @relation("MembershipVersionArchiver")
+  serviceEntitlementDefinitionsCreated ServiceEntitlementDefinition[] @relation("ServiceEntitlementDefinitionCreator")
+  membershipPlanEntitlementsCreated MembershipPlanEntitlement[] @relation("MembershipPlanEntitlementCreator")
+  serviceEntitlementGrants ServiceEntitlementGrant[]
+  serviceEntitlementUsage ServiceEntitlementUsage[]
 
   @@index([status])
   @@index([deletedAt])

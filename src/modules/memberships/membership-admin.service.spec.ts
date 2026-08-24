@@ -31,6 +31,7 @@ const version = {
       createdAt: new Date('2026-08-24T00:00:00.000Z'),
     },
   ],
+  serviceEntitlements: [],
 };
 
 function harness() {
@@ -60,10 +61,30 @@ function harness() {
         publishedAt: new Date('2026-08-24T01:00:00.000Z'),
       }),
     },
+    serviceEntitlementDefinition: {
+      create: jest.fn().mockResolvedValue({
+        id: 'definition-id', code: 'AI_CHAT', valueType: 'metered', resetPeriod: 'calendar_month',
+        displayName: 'AI chat', description: null, unitLabel: 'request', displayOrder: 1,
+      }),
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'definition-id', code: 'AI_CHAT', valueType: 'metered', resetPeriod: 'calendar_month',
+        displayName: 'AI chat', description: null, unitLabel: 'request', displayOrder: 1,
+      }),
+    },
+    membershipPlanEntitlement: {
+      create: jest.fn().mockResolvedValue({
+        id: 'plan-entitlement-id', versionId: 'version-id', booleanValue: null, quota: 30n,
+        definition: {
+          id: 'definition-id', code: 'AI_CHAT', valueType: 'metered', resetPeriod: 'calendar_month',
+          displayName: 'AI chat', description: null, unitLabel: 'request', displayOrder: 1,
+        },
+      }),
+    },
   };
   const prisma = {
     $transaction: jest.fn(async (operation) => operation(tx)),
     membershipPlan: { count: jest.fn(), findMany: jest.fn() },
+    serviceEntitlementDefinition: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const audit = { record: jest.fn() };
   return {
@@ -151,5 +172,34 @@ describe('MembershipAdminService', () => {
         baseMonthlyPriceAmountMinor: '9223372036854775808',
       }),
     ).toThrow(BadRequestException);
+  });
+
+  it('creates code-driven entitlement definitions with safe typed metadata', async () => {
+    const { service, tx, audit } = harness();
+    await expect(service.createEntitlementDefinition('admin-id', {
+      code: 'ai_chat', valueType: 'METERED', resetPeriod: 'CALENDAR_MONTH',
+      displayName: ' AI chat ', unitLabel: ' request ', displayOrder: 1,
+    })).resolves.toMatchObject({ code: 'AI_CHAT', valueType: 'METERED', resetPeriod: 'CALENDAR_MONTH' });
+    expect(tx.serviceEntitlementDefinition.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ code: 'AI_CHAT', displayName: 'AI chat' }),
+    }));
+    expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('configures a draft version from definition semantics and string quota', async () => {
+    const { service, tx } = harness();
+    await expect(service.configurePlanEntitlement('admin-id', 'version-id', {
+      definitionId: 'definition-id', quota: '30',
+    })).resolves.toMatchObject({ quota: '30', definition: { code: 'AI_CHAT' } });
+    expect(tx.membershipPlanEntitlement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ valueType: 'metered', resetPeriod: 'calendar_month', quota: 30n }),
+    }));
+  });
+
+  it('rejects configuration whose value does not match the stable definition', async () => {
+    const { service } = harness();
+    await expect(service.configurePlanEntitlement('admin-id', 'version-id', {
+      definitionId: 'definition-id', booleanValue: true,
+    })).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -26,6 +26,8 @@ export const AuditAction = {
   MembershipPlanVersionPublished: 'MEMBERSHIP_PLAN_VERSION_PUBLISHED',
   MembershipPlanVersionArchived: 'MEMBERSHIP_PLAN_VERSION_ARCHIVED',
   MembershipPlanArchived: 'MEMBERSHIP_PLAN_ARCHIVED',
+  ServiceEntitlementDefinitionCreated: 'SERVICE_ENTITLEMENT_DEFINITION_CREATED',
+  MembershipPlanEntitlementConfigured: 'MEMBERSHIP_PLAN_ENTITLEMENT_CONFIGURED',
   ScholarshipCreated: 'SCHOLARSHIP_CREATED',
   ScholarshipUpdated: 'SCHOLARSHIP_UPDATED',
   ScholarshipApplied: 'SCHOLARSHIP_APPLIED',

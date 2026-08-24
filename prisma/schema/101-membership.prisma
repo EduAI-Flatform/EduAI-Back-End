@@ -13,6 +13,29 @@ enum MembershipPlanVersionStatus {
   @@map("membership_plan_version_status")
 }
 
+enum ServiceEntitlementValueType {
+  boolean
+  metered
+  unlimited
+
+  @@map("service_entitlement_value_type")
+}
+
+enum ServiceEntitlementResetPeriod {
+  none
+  calendar_month
+  membership_term
+
+  @@map("service_entitlement_reset_period")
+}
+
+enum ServiceEntitlementGrantStatus {
+  active
+  revoked
+
+  @@map("service_entitlement_grant_status")
+}
+
 model MembershipPlan {
   id         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code       String               @unique @db.VarChar(64)
@@ -50,12 +73,96 @@ model MembershipPlanVersion {
   publishedBy                 User?                       @relation("MembershipVersionPublisher", fields: [publishedById], references: [id], onDelete: Restrict)
   archivedBy                  User?                       @relation("MembershipVersionArchiver", fields: [archivedById], references: [id], onDelete: Restrict)
   durationOptions             MembershipDurationOption[]
+  serviceEntitlements         MembershipPlanEntitlement[]
   commerceProduct             CommerceProduct?
 
   @@unique([planId, versionNumber])
   @@index([planId, status, versionNumber])
   @@index([status, salesStartAt, salesEndAt])
   @@map("membership_plan_versions")
+}
+
+model ServiceEntitlementDefinition {
+  id           String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String                          @unique @db.VarChar(64)
+  valueType    ServiceEntitlementValueType     @map("value_type")
+  resetPeriod  ServiceEntitlementResetPeriod   @map("reset_period")
+  displayName  String                          @map("display_name") @db.VarChar(120)
+  description  String?                         @db.VarChar(500)
+  unitLabel    String?                         @map("unit_label") @db.VarChar(40)
+  displayOrder Int                             @default(0) @map("display_order")
+  createdById  String                          @map("created_by_id") @db.Uuid
+  createdAt    DateTime                        @default(now()) @map("created_at")
+  createdBy    User                            @relation("ServiceEntitlementDefinitionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  planValues   MembershipPlanEntitlement[]
+  grants       ServiceEntitlementGrant[]
+
+  @@index([displayOrder, code])
+  @@map("service_entitlement_definitions")
+}
+
+model MembershipPlanEntitlement {
+  id            String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId     String                        @map("version_id") @db.Uuid
+  definitionId  String                        @map("definition_id") @db.Uuid
+  valueType     ServiceEntitlementValueType   @map("value_type")
+  resetPeriod   ServiceEntitlementResetPeriod @map("reset_period")
+  booleanValue  Boolean?                      @map("boolean_value")
+  quota         BigInt?
+  createdById   String                        @map("created_by_id") @db.Uuid
+  createdAt     DateTime                      @default(now()) @map("created_at")
+  version       MembershipPlanVersion         @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  definition    ServiceEntitlementDefinition  @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  createdBy     User                          @relation("MembershipPlanEntitlementCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([versionId, definitionId])
+  @@index([definitionId, versionId])
+  @@map("membership_plan_entitlements")
+}
+
+model ServiceEntitlementGrant {
+  id            String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String                         @map("user_id") @db.Uuid
+  definitionId  String                         @map("definition_id") @db.Uuid
+  sourceType    String                         @map("source_type") @db.VarChar(64)
+  sourceId      String                         @map("source_id") @db.VarChar(128)
+  valueType     ServiceEntitlementValueType    @map("value_type")
+  resetPeriod   ServiceEntitlementResetPeriod  @map("reset_period")
+  booleanValue  Boolean?                       @map("boolean_value")
+  quota         BigInt?
+  status        ServiceEntitlementGrantStatus  @default(active)
+  startsAt      DateTime                       @map("starts_at")
+  endsAt        DateTime?                      @map("ends_at")
+  revokedAt     DateTime?                      @map("revoked_at")
+  createdAt     DateTime                       @default(now()) @map("created_at")
+  user          User                           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  definition    ServiceEntitlementDefinition   @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  usage         ServiceEntitlementUsage[]
+
+  @@unique([userId, definitionId, sourceType, sourceId], map: "service_entitlement_grants_source_key")
+  @@index([userId, status, startsAt, endsAt])
+  @@index([definitionId, status])
+  @@map("service_entitlement_grants")
+}
+
+model ServiceEntitlementUsage {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  grantId          String                   @map("grant_id") @db.Uuid
+  userId           String                   @map("user_id") @db.Uuid
+  operationKeyHash String                   @map("operation_key_hash") @db.Char(64)
+  requestHash      String                   @map("request_hash") @db.Char(64)
+  quantity         BigInt
+  remainingAfter   BigInt?                  @map("remaining_after")
+  periodStartsAt   DateTime                 @map("period_starts_at")
+  periodEndsAt     DateTime?                @map("period_ends_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  grant            ServiceEntitlementGrant  @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, operationKeyHash])
+  @@index([grantId, periodStartsAt, periodEndsAt])
+  @@index([userId, createdAt])
+  @@map("service_entitlement_usage")
 }
 
 model MembershipDurationOption {
