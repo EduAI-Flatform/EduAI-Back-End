@@ -10,6 +10,7 @@ import {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CourseAccessService } from '../access/course-access.service';
 import { AI_PROVIDER, AiProvider } from './ai-provider';
 import { AiRateLimitService } from './ai-rate-limit.service';
 
@@ -41,6 +42,7 @@ export class AiLearningPathService {
     private readonly prisma: PrismaService,
     private readonly rateLimit: AiRateLimitService,
     @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
+    private readonly courseAccess: CourseAccessService,
   ) {}
 
   async getCurrent(user: AuthenticatedUser): Promise<CurrentLearningPathResponse | null> {
@@ -60,10 +62,6 @@ export class AiLearningPathService {
         status: CourseStatus.published,
         moderationStatus: ModerationStatus.clear,
         deletedAt: null,
-        OR: [
-          { visibility: CourseVisibility.public },
-          { enrollments: { some: { userId: user.id, status: { in: ['active', 'completed'] } } } },
-        ],
       },
       select: {
         id: true,
@@ -71,11 +69,23 @@ export class AiLearningPathService {
         slug: true,
         thumbnailUrl: true,
         level: true,
+        visibility: true,
         enrollments: { where: { userId: user.id }, select: { status: true }, take: 1 },
         progress: { where: { userId: user.id }, select: { progressPercent: true }, take: 1 },
       },
     });
-    const coursesById = new Map(courses.map((course) => [course.id, course]));
+    const accessibleCourses = (
+      await Promise.all(courses.map(async (course) => ({
+        course,
+        allowed: course.visibility === CourseVisibility.public
+          || (await this.courseAccess.decide({
+            user,
+            courseId: course.id,
+            operation: 'FULL_LEARNING',
+          })).allowed,
+      })))
+    ).filter(({ allowed }) => allowed).map(({ course }) => course);
+    const coursesById = new Map(accessibleCourses.map((course) => [course.id, course]));
 
     return {
       id: latest.id,
@@ -113,12 +123,13 @@ export class AiLearningPathService {
     const [profile, courses, latest] = await Promise.all([
       this.prisma.learningProfile.findUnique({ where: { userId: user.id }, select: { learningGoal: true, currentLevel: true, weeklyAvailabilityHours: true, skillGaps: { select: { name: true, currentLevel: true, targetLevel: true } } } }),
       this.prisma.course.findMany({
-        where: { status: CourseStatus.published, moderationStatus: ModerationStatus.clear, deletedAt: null, OR: [{ visibility: CourseVisibility.public }, { enrollments: { some: { userId: user.id, status: { in: ['active', 'completed'] } } } }] },
+        where: { status: CourseStatus.published, moderationStatus: ModerationStatus.clear, deletedAt: null },
         select: {
           id: true,
           title: true,
           description: true,
           level: true,
+          visibility: true,
           enrollments: { where: { userId: user.id }, select: { status: true } },
           progress: { where: { userId: user.id }, select: { progressPercent: true } },
           quizzes: {
@@ -148,9 +159,20 @@ export class AiLearningPathService {
       }),
       this.prisma.aiLearningPath.findFirst({ where: { userId: user.id }, orderBy: { version: 'desc' }, select: { version: true } }),
     ]);
+    const accessibleCourses = (
+      await Promise.all(courses.map(async (course) => ({
+        course,
+        allowed: course.visibility === CourseVisibility.public
+          || (await this.courseAccess.decide({
+            user,
+            courseId: course.id,
+            operation: 'FULL_LEARNING',
+          })).allowed,
+      })))
+    ).filter(({ allowed }) => allowed).map(({ course }) => course);
     const input = {
       profile,
-      courses: courses.map((course) => ({
+      courses: accessibleCourses.map((course) => ({
         id: course.id,
         title: course.title,
         description: course.description,
@@ -170,7 +192,7 @@ export class AiLearningPathService {
       })),
     };
     const completion = await this.aiProvider.complete({ json: true, responseSchema: this.schema(), messages: [{ role: 'system', content: 'Return only valid JSON. Recommend only supplied course IDs and do not invent course content.' }, { role: 'user', content: `Create a short learner path from this safe JSON:\n${JSON.stringify(input)}` }] });
-    const path = this.validate(completion.content, new Set(courses.map((course) => course.id)));
+    const path = this.validate(completion.content, new Set(accessibleCourses.map((course) => course.id)));
     const created = await this.prisma.aiLearningPath.create({ data: { userId: user.id, version: (latest?.version ?? 0) + 1, inputJson: input as Prisma.InputJsonValue, outputJson: path as unknown as Prisma.InputJsonValue, provider: this.aiProvider.getModel() === 'mock' ? 'mock' : 'configured', model: this.aiProvider.getModel() }, select: { id: true, version: true } });
     return { ...created, path };
   }

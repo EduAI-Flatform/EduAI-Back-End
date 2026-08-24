@@ -32,6 +32,7 @@ const version = {
     },
   ],
   serviceEntitlements: [],
+  includedCourses: [],
 };
 
 function harness() {
@@ -78,6 +79,16 @@ function harness() {
           id: 'definition-id', code: 'AI_CHAT', valueType: 'metered', resetPeriod: 'calendar_month',
           displayName: 'AI chat', description: null, unitLabel: 'request', displayOrder: 1,
         },
+      }),
+    },
+    course: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'course-id', title: 'Course', slug: 'course' }),
+    },
+    membershipPlanIncludedCourse: {
+      create: jest.fn().mockResolvedValue({
+        id: 'included-id', versionId: 'version-id', courseId: 'course-id',
+        graceDays: 7, createdById: 'admin-id', createdAt: version.createdAt,
+        course: { id: 'course-id', title: 'Course', slug: 'course' },
       }),
     },
   };
@@ -201,5 +212,15 @@ describe('MembershipAdminService', () => {
     await expect(service.configurePlanEntitlement('admin-id', 'version-id', {
       definitionId: 'definition-id', booleanValue: true,
     })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('snapshots an explicit available course only on a draft version', async () => {
+    const { service, tx } = harness();
+    await expect(service.configureIncludedCourse('admin-id', 'version-id', {
+      courseId: '10000000-0000-4000-8000-000000000001', graceDays: 7,
+    })).resolves.toMatchObject({ graceDays: 7, course: { slug: 'course' } });
+    expect(tx.membershipPlanIncludedCourse.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ versionId: 'version-id', graceDays: 7 }),
+    }));
   });
 });

@@ -204,6 +204,7 @@ describe('Sprint 21 minimal fixture design contract', () => {
         __dirname,
         '..',
         '..',
+        'EduAI-Workspace',
         'EduAI_Docs',
         'docs',
         'tasks_2.0',

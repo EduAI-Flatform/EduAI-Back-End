@@ -124,7 +124,7 @@ export class ClassroomsController {
   @Roles(RoleName.student)
   @ApiOkResponse({ description: 'Live classroom join URL returned.' })
   @ApiNotFoundResponse({
-    description: 'Live classroom session or enrollment not found.',
+    description: 'Live classroom session or learner access not found.',
   })
   joinSession(
     @CurrentUser() user: AuthenticatedUser,
@@ -138,7 +138,7 @@ export class ClassroomsController {
   @ApiOkResponse({ description: 'Classroom attendance event recorded.' })
   @ApiBadRequestResponse({ description: 'Invalid attendance event.' })
   @ApiNotFoundResponse({
-    description: 'Live classroom session, enrollment, or attendance not found.',
+    description: 'Live classroom session, learner access, or attendance not found.',
   })
   recordAttendance(
     @CurrentUser() user: AuthenticatedUser,

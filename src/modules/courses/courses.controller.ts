@@ -273,7 +273,7 @@ export class CoursesController {
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })
   @ApiNotFoundResponse({
-    description: 'Lesson or enrollment not found for current student.',
+    description: 'Lesson or learner access not found for current student.',
   })
   completeLesson(
     @CurrentUser() user: AuthenticatedUser,
@@ -311,7 +311,7 @@ export class CoursesController {
   @ApiBadRequestResponse({ description: 'Invalid course id.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })
-  @ApiNotFoundResponse({ description: 'Course or enrollment not found.' })
+  @ApiNotFoundResponse({ description: 'Course or learner access not found.' })
   getLearningPath(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,

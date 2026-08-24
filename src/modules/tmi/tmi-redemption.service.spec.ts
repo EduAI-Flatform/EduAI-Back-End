@@ -6,6 +6,7 @@ import { TmiRedemptionService } from './tmi-redemption.service';
 const now = new Date('2026-08-18T14:00:00.000Z');
 const userId = '00000010-0000-4000-8000-000000000005';
 const rewardId = '00000020-0000-4000-8000-000000000001';
+const courseId = '00000030-0000-4000-8000-000000000001';
 
 function createHarness() {
   const tx = {
@@ -22,7 +23,7 @@ function createHarness() {
         redeemedCount: 1,
         startsAt: new Date('2026-08-01T00:00:00.000Z'),
         endsAt: new Date('2026-09-01T00:00:00.000Z'),
-        inventoryMetadata: { courseId: 'course-1' },
+        inventoryMetadata: { courseId },
       }),
       update: jest.fn().mockResolvedValue({ redeemedCount: 2 }),
     },
@@ -40,6 +41,7 @@ function createHarness() {
     },
     tmiEntitlement: {
       create: jest.fn().mockResolvedValue({ id: 'entitlement-1', status: 'active' }),
+      findUnique: jest.fn().mockResolvedValue({ kind: TmiRewardKind.course_access, benefitMetadata: { courseId } }),
       update: jest.fn(),
     },
   };
@@ -48,7 +50,8 @@ function createHarness() {
     $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
   };
   const audit = { record: jest.fn() };
-  return { service: new TmiRedemptionService(prisma as never, audit as never), tx, prisma, audit };
+  const courseAccess = { ensureGrant: jest.fn(), revokeGrant: jest.fn() };
+  return { service: new TmiRedemptionService(prisma as never, audit as never, courseAccess as never), tx, prisma, audit, courseAccess };
 }
 
 describe('TmiRedemptionService', () => {
@@ -87,7 +90,7 @@ describe('TmiRedemptionService', () => {
   });
 
   it('creates one entitlement and debit ledger entry atomically', async () => {
-    const { service, tx, audit } = createHarness();
+    const { service, tx, audit, courseAccess } = createHarness();
 
     const result = await service.redeem(userId, rewardId, { idempotencyKey: 'request-001' });
 
@@ -99,7 +102,32 @@ describe('TmiRedemptionService', () => {
     expect(tx.tmiLedgerEntry.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ kind: 'redeem', amount: 40, userId }),
     }));
+    expect(courseAccess.ensureGrant).toHaveBeenCalledWith(expect.objectContaining({
+      userId,
+      courseId,
+      sourceType: 'tmi_reward',
+      sourceId: 'redemption-1',
+    }), tx);
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: AuditAction.TmiRewardRedeemed }), tx);
+  });
+
+  it('revokes only the refunded TMI reward grant in the same transaction', async () => {
+    const { service, tx, courseAccess } = createHarness();
+    tx.tmiRedemption.findUnique.mockResolvedValueOnce({
+      id: 'redemption-1', userId, rewardId, idempotencyKey: 'request-001', cost: 40, createdAt: now,
+    });
+
+    await expect(service.refund('admin-id', 'redemption-1', {
+      reason: 'Support correction',
+    })).resolves.toMatchObject({ idempotent: false });
+
+    expect(courseAccess.revokeGrant).toHaveBeenCalledWith({
+      userId,
+      courseId,
+      sourceType: 'tmi_reward',
+      sourceId: 'redemption-1',
+    }, 'Support correction', tx);
+    expect(tx.tmiEntitlement.update).toHaveBeenCalled();
   });
 
   it('returns the existing redemption for the same idempotency key', async () => {

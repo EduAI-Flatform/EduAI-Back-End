@@ -148,3 +148,13 @@ export class ListServiceEntitlementDefinitionsQueryDto {
   @IsOptional() @Transform(trim) @IsString() @MaxLength(120)
   search?: string;
 }
+
+export class ConfigureMembershipIncludedCourseDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsString() @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  courseId!: string;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 3650, default: 0 })
+  @IsOptional() @IsInt() @Min(0) @Max(3650)
+  graceDays = 0;
+}

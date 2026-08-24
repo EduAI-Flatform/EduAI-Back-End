@@ -19,12 +19,14 @@ import {
   CommerceSettlementDisposition,
   CommerceSettlementKind,
   Prisma,
+  RoleName,
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { VouchersService } from '../vouchers/vouchers.service';
+import { CourseAccessService } from '../access/course-access.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderResponseDto } from './dto/order-response.dto';
 
@@ -32,7 +34,6 @@ const CURRENCY = 'VND';
 const IDEMPOTENCY_OPERATION = 'commerce.create-order';
 const PRICING_POLICY_VERSION = 'course-v1-single-promotion';
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
-const QUALIFYING_ENROLLMENT_STATUSES = ['active', 'completed'];
 
 const orderInclude = {
   lines: {
@@ -70,6 +71,7 @@ export class CommerceOrderService {
     private readonly config: AppConfigService,
     private readonly vouchersService: VouchersService,
     private readonly auditService: AuditService,
+    private readonly courseAccess: CourseAccessService,
   ) {}
 
   createOrder(
@@ -145,15 +147,14 @@ export class CommerceOrderService {
       )}) FOR SHARE`,
     );
 
-    const owned = await tx.enrollment.findMany({
-      where: {
-        userId: learnerId,
-        courseId: { in: cart.lines.map((line) => line.product.courseId as string) },
-        status: { in: QUALIFYING_ENROLLMENT_STATUSES },
-      },
-      select: { courseId: true },
-    });
-    if (owned.length > 0) {
+    const owned = await Promise.all(cart.lines.map((line) =>
+      this.courseAccess.decideWithClient({
+        user: { id: learnerId, roles: [RoleName.student] },
+        courseId: line.product.courseId as string,
+        operation: 'FULL_LEARNING',
+      }, tx),
+    ));
+    if (owned.some((decision) => decision.allowed)) {
       throw new ConflictException({
         error: 'ALREADY_OWNED',
         message: 'One or more cart courses are already owned.',

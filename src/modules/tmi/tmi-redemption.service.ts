@@ -5,15 +5,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CourseAccessSourceType,
   Prisma,
   TmiAdjustmentDirection,
   TmiEntitlementStatus,
   TmiLedgerKind,
   TmiRewardStatus,
+  TmiRewardKind,
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CourseAccessService } from '../access/course-access.service';
 import { AdjustTmiBalanceDto } from './dto/adjust-tmi-balance.dto';
 import { RedeemTmiRewardDto } from './dto/redeem-tmi-reward.dto';
 import { RefundTmiRedemptionDto } from './dto/refund-tmi-redemption.dto';
@@ -130,6 +133,7 @@ export class TmiRedemptionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly courseAccess: CourseAccessService,
   ) {}
 
   async listAvailableRewards(query: { page: number; pageSize: number }): Promise<{ items: Omit<TmiRewardResponse, 'createdById'>[]; page: number; pageSize: number; total: number; totalPages: number }> {
@@ -210,6 +214,15 @@ export class TmiRedemptionService {
         },
         select: { id: true },
       });
+      if (reward.kind === TmiRewardKind.course_access) {
+        await this.courseAccess.ensureGrant({
+          userId,
+          courseId: this.courseIdFromMetadata(reward.inventoryMetadata),
+          sourceType: CourseAccessSourceType.tmi_reward,
+          sourceId: redemption.id,
+          startsAt: redemption.createdAt,
+        }, tx);
+      }
       await tx.tmiLedgerEntry.create({
         data: {
           userId,
@@ -249,6 +262,11 @@ export class TmiRedemptionService {
       });
       if (existing) return { redemptionId, amount: redemption.cost, idempotent: true };
 
+      const entitlement = await tx.tmiEntitlement.findUnique({
+        where: { redemptionId },
+        select: { kind: true, benefitMetadata: true },
+      });
+
       await tx.tmiLedgerEntry.create({
         data: {
           userId: redemption.userId,
@@ -263,6 +281,14 @@ export class TmiRedemptionService {
         select: { id: true },
       });
       await tx.tmiEntitlement.update({ where: { redemptionId }, data: { status: TmiEntitlementStatus.revoked, revokedAt: new Date() }, select: { id: true } });
+      if (entitlement?.kind === TmiRewardKind.course_access) {
+        await this.courseAccess.revokeGrant({
+          userId: redemption.userId,
+          courseId: this.courseIdFromMetadata(entitlement.benefitMetadata),
+          sourceType: CourseAccessSourceType.tmi_reward,
+          sourceId: redemptionId,
+        }, input.reason?.trim() || 'TMI_REWARD_REFUNDED', tx);
+      }
       await this.auditService.record({
         actorId,
         action: AuditAction.TmiRewardRefunded,
@@ -271,6 +297,16 @@ export class TmiRedemptionService {
       }, tx);
       return { redemptionId, amount: redemption.cost, idempotent: false };
     });
+  }
+
+  private courseIdFromMetadata(value: Prisma.JsonValue): string {
+    const courseId = value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>).courseId
+      : null;
+    if (typeof courseId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(courseId)) {
+      throw new BadRequestException('Course-access reward requires a valid course target');
+    }
+    return courseId;
   }
 
   async adjustBalance(

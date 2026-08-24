@@ -74,12 +74,29 @@ model MembershipPlanVersion {
   archivedBy                  User?                       @relation("MembershipVersionArchiver", fields: [archivedById], references: [id], onDelete: Restrict)
   durationOptions             MembershipDurationOption[]
   serviceEntitlements         MembershipPlanEntitlement[]
+  includedCourses             MembershipPlanIncludedCourse[]
   commerceProduct             CommerceProduct?
 
   @@unique([planId, versionNumber])
   @@index([planId, status, versionNumber])
   @@index([status, salesStartAt, salesEndAt])
   @@map("membership_plan_versions")
+}
+
+model MembershipPlanIncludedCourse {
+  id            String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId     String                 @map("version_id") @db.Uuid
+  courseId      String                 @map("course_id") @db.Uuid
+  graceDays     Int                    @default(0) @map("grace_days")
+  createdById   String                 @map("created_by_id") @db.Uuid
+  createdAt     DateTime               @default(now()) @map("created_at")
+  version       MembershipPlanVersion  @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  course        Course                 @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  createdBy     User                   @relation("MembershipIncludedCourseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([versionId, courseId])
+  @@index([courseId, versionId])
+  @@map("membership_plan_included_courses")
 }
 
 model ServiceEntitlementDefinition {

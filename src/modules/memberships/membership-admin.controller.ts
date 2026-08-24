@@ -12,6 +12,7 @@ import {
   CreateServiceEntitlementDefinitionDto,
   ConfigureMembershipPlanEntitlementDto,
   ListServiceEntitlementDefinitionsQueryDto,
+  ConfigureMembershipIncludedCourseDto,
 } from './dto/membership-plan.dto';
 import { MembershipAdminService } from './membership-admin.service';
 
@@ -55,6 +56,15 @@ export class MembershipAdminController {
     @Body() input: ConfigureMembershipPlanEntitlementDto,
   ) {
     return this.service.configurePlanEntitlement(actorId, versionId, input);
+  }
+
+  @Post('versions/:versionId/included-courses')
+  configureIncludedCourse(
+    @CurrentUser('id') actorId: string,
+    @Param('versionId', new ParseUUIDPipe({ version: '4' })) versionId: string,
+    @Body() input: ConfigureMembershipIncludedCourseDto,
+  ) {
+    return this.service.configureIncludedCourse(actorId, versionId, input);
   }
 
   @Post('plans/:planId/versions')

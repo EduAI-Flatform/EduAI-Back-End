@@ -42,6 +42,13 @@ function createService() {
       .fn()
       .mockImplementation((roomName: string) => `https://meet.jit.si/${roomName}`),
   };
+  const courseAccess = {
+    decide: jest.fn(async ({ user }: { user: { roles: RoleName[] } }) => ({
+      allowed: user.roles.includes(RoleName.instructor),
+      mode: user.roles.includes(RoleName.instructor) ? 'MANAGER' : 'NONE',
+    })),
+    require: jest.fn().mockResolvedValue({ allowed: true, mode: 'LEARNER' }),
+  };
   const prisma = {
     course: {
       findFirst: jest.fn().mockResolvedValue(course),
@@ -100,7 +107,8 @@ function createService() {
   return {
     prisma,
     jitsiRooms,
-    service: new ClassroomsService(prisma as never, jitsiRooms as never),
+    courseAccess,
+    service: new ClassroomsService(prisma as never, jitsiRooms as never, courseAccess as never),
   };
 }
 
@@ -156,11 +164,8 @@ describe('ClassroomsService', () => {
   });
 
   it('rejects listing for students without enrollment', async () => {
-    const { prisma, service } = createService();
-    prisma.course.findFirst.mockResolvedValue({
-      ...course,
-      enrollments: [],
-    });
+    const { prisma, service, courseAccess } = createService();
+    courseAccess.require.mockRejectedValueOnce(new NotFoundException('Course not found'));
 
     await expect(service.listSessions(student, course.id)).rejects.toEqual(
       new NotFoundException('Course not found'),
@@ -216,10 +221,11 @@ describe('ClassroomsService', () => {
   });
 
   it('lets enrolled students join live sessions without storing a permanent link', async () => {
-    const { prisma, service } = createService();
+    const { prisma, service, courseAccess } = createService();
     prisma.classroomSession.findFirst.mockResolvedValueOnce({
       id: classroomSession.id,
       roomName: classroomSession.roomName,
+      courseId: course.id,
     });
 
     await expect(service.joinSession(student.id, classroomSession.id)).resolves.toEqual(
@@ -234,13 +240,13 @@ describe('ClassroomsService', () => {
         id: classroomSession.id,
         deletedAt: null,
         status: ClassroomSessionStatus.live,
-        course: {
-          deletedAt: null,
-          status: CourseStatus.published,
-          enrollments: { some: { userId: student.id } },
-        },
       },
-      select: { id: true, roomName: true },
+      select: { id: true, roomName: true, courseId: true },
+    });
+    expect(courseAccess.require).toHaveBeenCalledWith({
+      user: { id: student.id, roles: [RoleName.student] },
+      courseId: course.id,
+      operation: 'FULL_LEARNING',
     });
   });
 

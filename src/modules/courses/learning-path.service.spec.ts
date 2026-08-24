@@ -78,6 +78,7 @@ function createFixture() {
     service: new LearningPathService(
       prisma as never,
       completionService as never,
+      { require: jest.fn().mockResolvedValue({ allowed: true, mode: 'LEARNER' }) } as never,
     ),
   };
 }

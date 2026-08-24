@@ -275,6 +275,8 @@ model User {
   membershipPlanEntitlementsCreated MembershipPlanEntitlement[] @relation("MembershipPlanEntitlementCreator")
   serviceEntitlementGrants ServiceEntitlementGrant[]
   serviceEntitlementUsage ServiceEntitlementUsage[]
+  membershipIncludedCoursesCreated MembershipPlanIncludedCourse[] @relation("MembershipIncludedCourseCreator")
+  courseAccessGrants CourseAccessGrant[]
 
   @@index([status])
   @@index([deletedAt])
@@ -857,12 +859,29 @@ model MembershipPlanVersion {
   archivedBy                  User?                       @relation("MembershipVersionArchiver", fields: [archivedById], references: [id], onDelete: Restrict)
   durationOptions             MembershipDurationOption[]
   serviceEntitlements         MembershipPlanEntitlement[]
+  includedCourses             MembershipPlanIncludedCourse[]
   commerceProduct             CommerceProduct?
 
   @@unique([planId, versionNumber])
   @@index([planId, status, versionNumber])
   @@index([status, salesStartAt, salesEndAt])
   @@map("membership_plan_versions")
+}
+
+model MembershipPlanIncludedCourse {
+  id            String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId     String                 @map("version_id") @db.Uuid
+  courseId      String                 @map("course_id") @db.Uuid
+  graceDays     Int                    @default(0) @map("grace_days")
+  createdById   String                 @map("created_by_id") @db.Uuid
+  createdAt     DateTime               @default(now()) @map("created_at")
+  version       MembershipPlanVersion  @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  course        Course                 @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  createdBy     User                   @relation("MembershipIncludedCourseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([versionId, courseId])
+  @@index([courseId, versionId])
+  @@map("membership_plan_included_courses")
 }
 
 model ServiceEntitlementDefinition {
@@ -962,6 +981,59 @@ model MembershipDurationOption {
   @@unique([versionId, displayOrder])
   @@index([versionId, displayOrder])
   @@map("membership_duration_options")
+}
+
+enum CourseAccessSourceType {
+  course_purchase
+  membership
+  scholarship
+  tmi_reward
+  admin
+  free_enrollment
+  legacy_enrollment
+
+  @@map("course_access_source_type")
+}
+
+enum CourseAccessGrantStatus {
+  active
+  revoked
+
+  @@map("course_access_grant_status")
+}
+
+model CourseAccessGrant {
+  id               String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String                  @map("user_id") @db.Uuid
+  courseId         String                  @map("course_id") @db.Uuid
+  sourceType       CourseAccessSourceType  @map("source_type")
+  sourceId         String                  @map("source_id") @db.VarChar(128)
+  status           CourseAccessGrantStatus @default(active)
+  startsAt         DateTime                @map("starts_at")
+  endsAt           DateTime?               @map("ends_at")
+  graceEndsAt      DateTime?               @map("grace_ends_at")
+  revokedAt        DateTime?               @map("revoked_at")
+  revocationReason String?                 @map("revocation_reason") @db.VarChar(120)
+  createdAt        DateTime                @default(now()) @map("created_at")
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  course           Course                  @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, courseId, sourceType, sourceId], map: "course_access_grants_source_key")
+  @@index([userId, courseId, status, startsAt, endsAt, graceEndsAt])
+  @@index([sourceType, sourceId])
+  @@map("course_access_grants")
+}
+
+model CourseAccessBackfillIssue {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  enrollmentId String     @unique @map("enrollment_id") @db.Uuid
+  status       String     @db.VarChar(64)
+  reasonCode   String     @map("reason_code") @db.VarChar(64)
+  recordedAt   DateTime   @default(now()) @map("recorded_at")
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Restrict)
+
+  @@index([reasonCode, recordedAt])
+  @@map("course_access_backfill_issues")
 }
 
 model Role {
@@ -1123,6 +1195,8 @@ model Course {
   scholarshipScopes ScholarshipCourse[]
   scholarshipApplications ScholarshipApplication[]
   commerceProduct CommerceProduct?
+  membershipPlanInclusions MembershipPlanIncludedCourse[]
+  accessGrants CourseAccessGrant[]
 
   @@index([instructorId])
   @@index([status])
@@ -1192,6 +1266,7 @@ model Enrollment {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  accessBackfillIssue CourseAccessBackfillIssue?
 
   @@unique([userId, courseId])
   @@index([courseId])

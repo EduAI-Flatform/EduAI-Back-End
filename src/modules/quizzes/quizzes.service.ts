@@ -19,6 +19,7 @@ import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits'
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { LearningPathService } from '../courses/learning-path.service';
 import { CourseCompletionService } from '../courses/course-completion.service';
+import { CourseAccessService } from '../access/course-access.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { CreateQuizDto } from './dto/create-quiz.dto';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
@@ -131,6 +132,7 @@ export class QuizzesService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly courseCompletionService: CourseCompletionService,
+    private readonly courseAccessService: CourseAccessService,
     @Optional() private readonly learningPathService?: LearningPathService,
   ) {}
 
@@ -328,8 +330,6 @@ export class QuizzesService {
         status: QuizStatus.published,
         course: {
           deletedAt: null,
-          status: CourseStatus.published,
-          enrollments: { some: { userId } },
         },
       },
       select: {
@@ -353,6 +353,10 @@ export class QuizzesService {
     if (!quiz) {
       throw new NotFoundException('Quiz not found');
     }
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: quiz.courseId, operation: 'FULL_LEARNING',
+    });
 
     await this.learningPathService?.assertStudentStepAccessible(
       userId,
@@ -455,6 +459,10 @@ export class QuizzesService {
     if (!quiz) {
       throw new NotFoundException('Quiz not found');
     }
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: quiz.courseId, operation: 'FULL_LEARNING',
+    });
 
     await this.learningPathService?.assertStudentStepAccessible(
       userId,
@@ -494,16 +502,15 @@ export class QuizzesService {
     userId: string,
     courseId: string,
   ): Promise<QuizResponse[]> {
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] }, courseId, operation: 'FULL_LEARNING',
+    });
     return this.prisma.quiz.findMany({
       where: {
         courseId,
         deletedAt: null,
         status: QuizStatus.published,
-        course: {
-          deletedAt: null,
-          status: CourseStatus.published,
-          enrollments: { some: { userId } },
-        },
+        course: { deletedAt: null },
       },
       orderBy: { updatedAt: 'desc' },
       take: MAX_UNPAGINATED_API_ITEMS,
@@ -561,8 +568,6 @@ export class QuizzesService {
       status: QuizStatus.published,
       course: {
         deletedAt: null,
-        status: CourseStatus.published,
-        enrollments: { some: { userId } },
       },
     };
   }

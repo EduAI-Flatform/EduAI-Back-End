@@ -10,10 +10,12 @@ import {
   CommerceProductStatus,
   CommerceProductType,
   Prisma,
+  RoleName,
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CourseAccessService } from '../access/course-access.service';
 import {
   CartAvailability,
   CartItemResponseDto,
@@ -21,7 +23,6 @@ import {
 } from './dto/commerce-response.dto';
 
 const CART_CURRENCY = 'VND' as const;
-const QUALIFYING_ENROLLMENT_STATUSES = ['active', 'completed'];
 
 const cartInclude = {
   lines: {
@@ -43,6 +44,8 @@ type CartClient = Pick<
   | 'commerceProduct'
   | 'course'
   | 'enrollment'
+  | 'courseAccessGrant'
+  | 'user'
 >;
 
 @Injectable()
@@ -50,6 +53,7 @@ export class CommerceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly courseAccess: CourseAccessService,
   ) {}
 
   async getCart(learnerId: string): Promise<CartResponseDto> {
@@ -68,15 +72,12 @@ export class CommerceService {
       const course = await tx.course.findFirst({ where: { id: courseId } });
       this.assertPurchasableCourse(course);
 
-      const owned = await tx.enrollment.findFirst({
-        where: {
-          userId: learnerId,
-          courseId,
-          status: { in: QUALIFYING_ENROLLMENT_STATUSES },
-        },
-        select: { id: true },
-      });
-      if (owned) {
+      const owned = await this.courseAccess.decideWithClient({
+        user: { id: learnerId, roles: [RoleName.student] },
+        courseId,
+        operation: 'FULL_LEARNING',
+      }, tx);
+      if (owned.allowed) {
         throw new ConflictException({
           error: 'ALREADY_OWNED',
           message: 'You already have perpetual access to this course.',
@@ -246,7 +247,7 @@ export class CommerceService {
   private async projectCart(
     learnerId: string,
     cart: CartRecord | null,
-    client: Pick<Prisma.TransactionClient, 'enrollment'>,
+    client: Prisma.TransactionClient | PrismaService,
   ): Promise<CartResponseDto> {
     if (!cart) return this.emptyCart();
 
@@ -254,16 +255,13 @@ export class CommerceService {
       cart.lines.map(async (line): Promise<CartItemResponseDto> => {
         const course = line.product.course;
         const owned = course
-          ? await client.enrollment.findFirst({
-              where: {
-                userId: learnerId,
-                courseId: course.id,
-                status: { in: QUALIFYING_ENROLLMENT_STATUSES },
-              },
-              select: { id: true },
-            })
+          ? await this.courseAccess.decideWithClient({
+              user: { id: learnerId, roles: [RoleName.student] },
+              courseId: course.id,
+              operation: 'FULL_LEARNING',
+            }, client)
           : null;
-        const availability = this.resolveAvailability(line.product.status, course, Boolean(owned));
+        const availability = this.resolveAvailability(line.product.status, course, owned?.allowed === true);
         const amountMinor = course?.priceAmountMinor ?? 0;
         return {
           id: line.id,

@@ -34,6 +34,8 @@ model Course {
   scholarshipScopes ScholarshipCourse[]
   scholarshipApplications ScholarshipApplication[]
   commerceProduct CommerceProduct?
+  membershipPlanInclusions MembershipPlanIncludedCourse[]
+  accessGrants CourseAccessGrant[]
 
   @@index([instructorId])
   @@index([status])

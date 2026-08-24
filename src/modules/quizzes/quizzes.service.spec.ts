@@ -126,6 +126,7 @@ function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQui
       enrollmentUpdated: false,
     }),
   };
+  const courseAccess = { require: jest.fn().mockResolvedValue({ allowed: true, mode: 'LEARNER' }) };
 
   return {
     attempt,
@@ -136,6 +137,7 @@ function createService(storedAttemptQuiz: typeof attemptQuiz | null = attemptQui
       prisma as never,
       auditService as never,
       completionService as never,
+      courseAccess as never,
       undefined,
     ),
   };
@@ -323,8 +325,6 @@ describe('QuizzesService', () => {
         status: QuizStatus.published,
         course: {
           deletedAt: null,
-          status: 'published',
-          enrollments: { some: { userId: 'student-id' } },
         },
       },
       select: expect.objectContaining({
@@ -348,8 +348,6 @@ describe('QuizzesService', () => {
         status: QuizStatus.published,
         course: {
           deletedAt: null,
-          status: 'published',
-          enrollments: { some: { userId: 'student-id' } },
         },
       },
       orderBy: { updatedAt: 'desc' },

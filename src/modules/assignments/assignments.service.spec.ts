@@ -101,6 +101,16 @@ function createService(storage?: { upload: jest.Mock; createDownloadUrl?: jest.M
       enrollmentUpdated: false,
     }),
   };
+  const courseAccess = {
+    decide: jest.fn(async ({ user }: { user: { roles: RoleName[] } }) => ({
+      allowed: user.roles.includes(RoleName.instructor),
+      mode: user.roles.includes(RoleName.instructor) ? 'MANAGER' : 'NONE',
+    })),
+    require: jest.fn(async ({ user }: { user: { roles: RoleName[] } }) => ({
+      allowed: true,
+      mode: user.roles.includes(RoleName.instructor) ? 'MANAGER' : 'LEARNER',
+    })),
+  };
   return {
     auditService,
     completionService,
@@ -109,6 +119,7 @@ function createService(storage?: { upload: jest.Mock; createDownloadUrl?: jest.M
       prisma as never,
       auditService as never,
       completionService as never,
+      courseAccess as never,
       undefined,
       storage as never,
     ),
@@ -272,11 +283,7 @@ describe('AssignmentsService', () => {
         assignment: {
           deletedAt: null,
           status: AssignmentStatus.published,
-          course: {
-            deletedAt: null,
-            status: 'published',
-            enrollments: { some: { userId: student.id } },
-          },
+          course: { deletedAt: null },
         },
       },
       orderBy: { version: 'desc' },
@@ -286,7 +293,7 @@ describe('AssignmentsService', () => {
     });
   });
 
-  it('allows a multi-role user to read assignments through student enrollment', async () => {
+  it('allows a multi-role user to read assignments through centralized learner access', async () => {
     const { prisma, service } = createService();
     const multiRoleUser = {
       id: student.id,

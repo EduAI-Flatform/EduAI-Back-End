@@ -16,6 +16,7 @@ describe('AiRetrievalService', () => {
         distance: 0.2,
         metadata_json: { courseId: 'course-id' },
         course_id: 'course-id',
+        is_preview: false,
         citation_path: '/courses/course-id',
       },
     ]);
@@ -25,6 +26,7 @@ describe('AiRetrievalService', () => {
       {
         embed,
       } as never,
+      { decideContent: jest.fn().mockResolvedValue({ allowed: true, mode: 'PREVIEW' }) } as never,
     );
 
     await expect(service.retrieve(student, '  explain gradient descent  ', { topK: 3 })).resolves.toEqual([
@@ -44,11 +46,8 @@ describe('AiRetrievalService', () => {
     expect(queryRaw).toHaveBeenCalledTimes(1);
     const query = queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] };
     const sql = query.strings.join(' ');
-    expect(sql).toContain('l.is_preview = TRUE');
-    expect(sql).toContain("'/learning/' || c.id::text");
+    expect(sql).toContain('l.is_preview');
     expect(sql).toContain("'/courses/' || c.id::text");
-    expect(sql).toContain("en.status IN ('active', 'completed')");
-    expect(sql).toContain("c.moderation_status = 'clear'");
     expect(sql).toContain("r.moderation_status = 'clear'");
     expect(sql).toContain('c.id =  ::uuid');
     expect(sql).toContain('AND  ::uuid IS NULL');
@@ -60,6 +59,7 @@ describe('AiRetrievalService', () => {
     const service = new AiRetrievalService(
       { $queryRaw: jest.fn() } as never,
       { embed: jest.fn() } as never,
+      { decideContent: jest.fn() } as never,
     );
 
     await expect(service.retrieve(student, '   ')).resolves.toEqual([]);
@@ -70,6 +70,7 @@ describe('AiRetrievalService', () => {
     const service = new AiRetrievalService(
       { $queryRaw: queryRaw } as never,
       { embed: jest.fn().mockResolvedValue([[0.1]]) } as never,
+      { decideContent: jest.fn() } as never,
     );
 
     await service.retrieve(student, 'course question', { courseId: 'course-id' });
@@ -79,7 +80,7 @@ describe('AiRetrievalService', () => {
   });
 
   it('rejects unsafe top-k values', async () => {
-    const service = new AiRetrievalService({ $queryRaw: jest.fn() } as never, {} as never);
+    const service = new AiRetrievalService({ $queryRaw: jest.fn() } as never, {} as never, {} as never);
 
     await expect(service.retrieve(student, 'query', { topK: 21 })).rejects.toThrow(
       'topK must be an integer between 1 and 20',

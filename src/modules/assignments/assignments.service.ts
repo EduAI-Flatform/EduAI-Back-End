@@ -25,6 +25,7 @@ import { SubmitAssignmentDto } from './dto/submit-assignment.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import { AssignmentStorageService } from './assignment-storage.service';
 import { UploadedAssignmentFile } from './types/assignment-upload.types';
+import { CourseAccessService } from '../access/course-access.service';
 
 const assignmentResponseSelect = {
   id: true,
@@ -102,6 +103,7 @@ export class AssignmentsService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly courseCompletionService: CourseCompletionService,
+    private readonly courseAccessService: CourseAccessService,
     @Optional() private readonly learningPathService?: LearningPathService,
     @Optional() private readonly assignmentStorageService?: AssignmentStorageService,
   ) {}
@@ -164,30 +166,19 @@ export class AssignmentsService {
         ...assignmentResponseSelect,
         course: {
           select: {
+            id: true,
             instructorId: true,
-            status: true,
-            deletedAt: true,
-            enrollments: {
-              where: { userId: user.id },
-              select: { id: true },
-              take: 1,
-            },
           },
         },
       },
     });
-    const canManage = assignment && this.canManage(user, assignment.course.instructorId);
-    const canStudy = Boolean(
-      assignment &&
-        user.roles.includes(RoleName.student) &&
-        assignment.status === AssignmentStatus.published &&
-        assignment.course.status === CourseStatus.published &&
-        !assignment.course.deletedAt &&
-        assignment.course.enrollments.length > 0,
-    );
-    if (!assignment || (!canManage && !canStudy)) {
-      throw new NotFoundException('Assignment not found');
-    }
+    if (!assignment) throw new NotFoundException('Assignment not found');
+    const access = await this.courseAccessService.require({
+      user, courseId: assignment.courseId,
+      operation: this.canManage(user, assignment.course.instructorId) ? 'MANAGE' : 'FULL_LEARNING',
+    });
+    const canStudy = access.mode === 'LEARNER';
+    if (canStudy && assignment.status !== AssignmentStatus.published) throw new NotFoundException('Assignment not found');
     if (canStudy && this.learningPathService) {
       await this.learningPathService.assertStudentStepAccessible(
         user.id,
@@ -278,8 +269,6 @@ export class AssignmentsService {
         status: AssignmentStatus.published,
         course: {
           deletedAt: null,
-          status: CourseStatus.published,
-          enrollments: { some: { userId } },
         },
       },
       select: {
@@ -291,6 +280,11 @@ export class AssignmentsService {
       },
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: assignment.courseId,
+      operation: 'FULL_LEARNING',
+    });
     await this.learningPathService?.assertStudentStepAccessible(
       userId,
       assignmentId,
@@ -367,6 +361,16 @@ export class AssignmentsService {
       assignmentId,
       'ASSIGNMENT',
     );
+    const assignment = await this.prisma.assignment.findFirst({
+      where: { id: assignmentId, deletedAt: null, status: AssignmentStatus.published },
+      select: { courseId: true },
+    });
+    if (!assignment) throw new NotFoundException('Submission not found');
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: assignment.courseId,
+      operation: 'FULL_LEARNING',
+    });
     const submission = await this.prisma.submission.findFirst({
       where: {
         assignmentId,
@@ -374,11 +378,7 @@ export class AssignmentsService {
         assignment: {
           deletedAt: null,
           status: AssignmentStatus.published,
-          course: {
-            deletedAt: null,
-            status: CourseStatus.published,
-            enrollments: { some: { userId } },
-          },
+          course: { deletedAt: null },
         },
       },
       orderBy: { version: 'desc' },
@@ -411,6 +411,16 @@ export class AssignmentsService {
       assignmentId,
       'ASSIGNMENT',
     );
+    const assignment = await this.prisma.assignment.findFirst({
+      where: { id: assignmentId, deletedAt: null, status: AssignmentStatus.published },
+      select: { courseId: true },
+    });
+    if (!assignment) return [];
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: assignment.courseId,
+      operation: 'FULL_LEARNING',
+    });
     const submissions = await this.prisma.submission.findMany({
       where: {
         assignmentId,
@@ -418,11 +428,7 @@ export class AssignmentsService {
         assignment: {
           deletedAt: null,
           status: AssignmentStatus.published,
-          course: {
-            deletedAt: null,
-            status: CourseStatus.published,
-            enrollments: { some: { userId } },
-          },
+          course: { deletedAt: null },
         },
       },
       orderBy: { version: 'desc' },
@@ -536,32 +542,13 @@ export class AssignmentsService {
     user: AuthenticatedUser,
     courseId: string,
   ): Promise<'manager' | 'student'> {
-    const course = await this.prisma.course.findFirst({
-      where: {
-        id: courseId,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        instructorId: true,
-        status: true,
-        enrollments: {
-          where: { userId: user.id },
-          select: { id: true },
-          take: 1,
-        },
-      },
-    });
-    if (course && this.canManage(user, course.instructorId)) return 'manager';
-    if (
-      course &&
-      user.roles.includes(RoleName.student) &&
-      course.status === CourseStatus.published &&
-      course.enrollments.length > 0
-    ) {
-      return 'student';
+    const manage = user.roles.includes(RoleName.platform_admin) || user.roles.includes(RoleName.instructor);
+    if (manage) {
+      const decision = await this.courseAccessService.decide({ user, courseId, operation: 'MANAGE' });
+      if (decision.allowed) return 'manager';
     }
-    throw new NotFoundException('Course not found');
+    await this.courseAccessService.require({ user, courseId, operation: 'FULL_LEARNING' });
+    return 'student';
   }
 
   private async findManageableAssignmentOrThrow(

@@ -1,5 +1,5 @@
 import { BadGatewayException } from '@nestjs/common';
-import { RoleName } from '../../../generated/prisma/client';
+import { CourseVisibility, RoleName } from '../../../generated/prisma/client';
 import { AiLearningPathService } from './ai-learning-path.service';
 
 const student = { id: 'student-id', roles: [RoleName.student] } as never;
@@ -16,6 +16,7 @@ function createService(content = JSON.stringify({ schemaVersion: 'v1', milestone
           description: 'Safe metadata',
           thumbnailUrl: null,
           level: 'beginner',
+          visibility: CourseVisibility.public,
           enrollments: [],
           progress: [],
           quizzes: [{ _count: { attempts: 1 }, attempts: [{ id: 'attempt-1' }] }],
@@ -27,7 +28,8 @@ function createService(content = JSON.stringify({ schemaVersion: 'v1', milestone
   };
   const quota = { assertLearningPathAllowed: jest.fn() };
   const provider = { complete: jest.fn().mockResolvedValue({ content }), getModel: jest.fn().mockReturnValue('mock') };
-  return { service: new AiLearningPathService(prisma as never, quota as never, provider as never), prisma, quota, provider };
+  const courseAccess = { decide: jest.fn().mockResolvedValue({ allowed: true }) };
+  return { service: new AiLearningPathService(prisma as never, quota as never, provider as never, courseAccess as never), prisma, quota, provider, courseAccess };
 }
 
 describe('AiLearningPathService', () => {

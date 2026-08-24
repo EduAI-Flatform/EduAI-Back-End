@@ -13,6 +13,7 @@ import { CreateClassroomSessionDto } from './dto/create-classroom-session.dto';
 import { RecordAttendanceDto } from './dto/record-attendance.dto';
 import { UpdateClassroomSessionDto } from './dto/update-classroom-session.dto';
 import { JitsiRoomService } from './jitsi-room.service';
+import { CourseAccessService } from '../access/course-access.service';
 
 const classroomSessionResponseSelect = {
   id: true,
@@ -94,6 +95,7 @@ export class ClassroomsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jitsiRooms: JitsiRoomService,
+    private readonly courseAccessService: CourseAccessService,
   ) {}
 
   async createSession(
@@ -146,31 +148,17 @@ export class ClassroomsService {
         ...classroomSessionResponseSelect,
         course: {
           select: {
+            id: true,
             instructorId: true,
-            status: true,
-            deletedAt: true,
-            enrollments: {
-              where: { userId: user.id },
-              select: { id: true },
-              take: 1,
-            },
           },
         },
       },
     });
-
-    const canManage = session && this.canManage(user, session.course.instructorId);
-    const canStudy = Boolean(
-      session &&
-        user.roles.includes(RoleName.student) &&
-        session.course.status === CourseStatus.published &&
-        !session.course.deletedAt &&
-        session.course.enrollments.length > 0,
-    );
-
-    if (!session || (!canManage && !canStudy)) {
-      throw new NotFoundException('Classroom session not found');
-    }
+    if (!session) throw new NotFoundException('Classroom session not found');
+    await this.courseAccessService.require({
+      user, courseId: session.courseId,
+      operation: this.canManage(user, session.course.instructorId) ? 'MANAGE' : 'FULL_LEARNING',
+    });
 
     const { course: _course, ...response } = session;
     return response;
@@ -254,24 +242,25 @@ export class ClassroomsService {
         id: sessionId,
         deletedAt: null,
         status: ClassroomSessionStatus.live,
-        course: {
-          deletedAt: null,
-          status: CourseStatus.published,
-          enrollments: { some: { userId } },
-        },
       },
       select: {
         id: true,
         roomName: true,
+        courseId: true,
       },
     });
 
     if (!session) {
       throw new NotFoundException('Classroom session not found');
     }
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: session.courseId, operation: 'FULL_LEARNING',
+    });
 
     return {
-      ...session,
+      id: session.id,
+      roomName: session.roomName,
       meetingUrl: this.jitsiRooms.buildMeetingUrl(session.roomName),
     };
   }
@@ -319,6 +308,7 @@ export class ClassroomsService {
     if (!course || !this.canManage(user, course.instructorId)) {
       throw new NotFoundException('Course not found');
     }
+    await this.courseAccessService.require({ user, courseId, operation: 'MANAGE' });
 
     return course;
   }
@@ -332,18 +322,17 @@ export class ClassroomsService {
         id: sessionId,
         deletedAt: null,
         status: ClassroomSessionStatus.live,
-        course: {
-          deletedAt: null,
-          status: CourseStatus.published,
-          enrollments: { some: { userId } },
-        },
       },
-      select: { id: true },
+      select: { id: true, courseId: true },
     });
 
     if (!session) {
       throw new NotFoundException('Classroom session not found');
     }
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: session.courseId, operation: 'FULL_LEARNING',
+    });
 
     return session;
   }
@@ -413,31 +402,10 @@ export class ClassroomsService {
     user: AuthenticatedUser,
     courseId: string,
   ): Promise<'manager' | 'student'> {
-    const course = await this.prisma.course.findFirst({
-      where: { id: courseId, deletedAt: null },
-      select: {
-        id: true,
-        instructorId: true,
-        status: true,
-        enrollments: {
-          where: { userId: user.id },
-          select: { id: true },
-          take: 1,
-        },
-      },
-    });
-
-    if (course && this.canManage(user, course.instructorId)) return 'manager';
-    if (
-      course &&
-      user.roles.includes(RoleName.student) &&
-      course.status === CourseStatus.published &&
-      course.enrollments.length > 0
-    ) {
-      return 'student';
-    }
-
-    throw new NotFoundException('Course not found');
+    const manager = await this.courseAccessService.decide({ user, courseId, operation: 'MANAGE' });
+    if (manager.allowed) return 'manager';
+    await this.courseAccessService.require({ user, courseId, operation: 'FULL_LEARNING' });
+    return 'student';
   }
 
   private async findManageableSessionOrThrow(

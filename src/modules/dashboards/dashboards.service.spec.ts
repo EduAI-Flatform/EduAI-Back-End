@@ -164,7 +164,9 @@ describe('DashboardsService', () => {
         findMany: jest.fn().mockResolvedValue([certificate]),
       },
     };
-    const service = new DashboardsService(prisma as never);
+    const service = new DashboardsService(prisma as never, {
+      decide: jest.fn().mockResolvedValue({ allowed: true }),
+    } as never);
 
     const result = await service.getStudentDashboard('student-id');
 
@@ -243,7 +245,9 @@ describe('DashboardsService', () => {
       classroomSession: { findMany: jest.fn().mockResolvedValue([]) },
       certificate: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = new DashboardsService(prisma as never);
+    const service = new DashboardsService(prisma as never, {
+      decide: jest.fn().mockResolvedValue({ allowed: true }),
+    } as never);
 
     await expect(service.getStudentDashboard('student-id')).resolves.toEqual(
       expect.objectContaining({
@@ -325,7 +329,9 @@ describe('DashboardsService', () => {
         count: jest.fn().mockResolvedValue(1),
       },
     };
-    const service = new DashboardsService(prisma as never);
+    const service = new DashboardsService(prisma as never, {
+      decide: jest.fn().mockResolvedValue({ allowed: true }),
+    } as never);
     const instructor = {
       id: 'instructor-id',
       roles: [RoleName.instructor],
@@ -401,7 +407,9 @@ describe('DashboardsService', () => {
         count: jest.fn().mockResolvedValue(0),
       },
     };
-    const service = new DashboardsService(prisma as never);
+    const service = new DashboardsService(prisma as never, {
+      decide: jest.fn().mockResolvedValue({ allowed: true }),
+    } as never);
 
     await service.getInstructorDashboard({
       id: 'admin-id',

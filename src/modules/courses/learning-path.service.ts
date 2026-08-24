@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CourseCompletionService } from './course-completion.service';
+import { CourseAccessService } from '../access/course-access.service';
 import { UpdateLessonProgressDto } from './dto/update-lesson-progress.dto';
 import {
   buildLearningPathSteps,
@@ -116,6 +117,7 @@ export class LearningPathService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly courseCompletionService: CourseCompletionService,
+    private readonly courseAccessService: CourseAccessService,
   ) {}
 
   async getLearningPath(
@@ -289,14 +291,13 @@ export class LearningPathService {
     userId: string,
     courseId: string,
   ): Promise<LearningPathResponse> {
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] }, courseId, operation: 'FULL_LEARNING',
+    });
     const course = await client.course.findFirst({
       where: {
         id: courseId,
         deletedAt: null,
-        status: CourseStatus.published,
-        enrollments: {
-          some: { userId, status: { in: ACTIVE_ENROLLMENT_STATUSES } },
-        },
       },
       select: learningPathSelect(userId),
     });
@@ -386,15 +387,9 @@ export class LearningPathService {
     userId: string,
     courseId: string,
   ): Promise<void> {
-    const enrollment = await client.enrollment.findFirst({
-      where: {
-        userId,
-        courseId,
-        status: { in: ACTIVE_ENROLLMENT_STATUSES },
-      },
-      select: { id: true },
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] }, courseId, operation: 'FULL_LEARNING',
     });
-    if (!enrollment) throw new NotFoundException('Enrollment not found');
   }
 
   private async findStepCourseId(

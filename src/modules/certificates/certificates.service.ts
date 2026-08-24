@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { Prisma } from '../../../generated/prisma/client';
+import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { generateCertificateQrCode } from './certificate-qr.util';
 import { IssueCertificateDto } from './dto/issue-certificate.dto';
 import { RevokeCertificateDto } from './dto/revoke-certificate.dto';
+import { CourseAccessService } from '../access/course-access.service';
 
 const certificateResponseSelect = {
   id: true,
@@ -99,6 +100,7 @@ export class CertificatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly courseAccessService: CourseAccessService,
   ) {}
 
   async listMyCertificates(userId: string): Promise<CertificateListItem[]> {
@@ -115,6 +117,11 @@ export class CertificatesService {
   }
 
   async issueCertificate(userId: string, input: IssueCertificateDto): Promise<CertificateResponse> {
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] },
+      courseId: input.courseId,
+      operation: 'FULL_LEARNING',
+    });
     const enrollment = await this.prisma.enrollment.findUnique({
       where: { userId_courseId: { userId, courseId: input.courseId } },
       select: {

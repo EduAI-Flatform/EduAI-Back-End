@@ -112,17 +112,20 @@ function createHarness(
     }),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const courseAccess = { decideWithClient: jest.fn().mockResolvedValue({ allowed: false }) };
   return {
     service: new CommerceOrderService(
       prisma as never,
       config as never,
       vouchers as never,
       audit as never,
+      courseAccess as never,
     ),
     tx,
     prisma,
     vouchers,
     audit,
+    courseAccess,
   };
 }
 
@@ -221,8 +224,8 @@ describe('CommerceOrderService', () => {
   });
 
   it('rejects ownership acquired after the item entered the cart', async () => {
-    const { service, tx } = createHarness();
-    tx.enrollment.findMany.mockResolvedValueOnce([{ courseId: course.id }]);
+    const { service, tx, courseAccess } = createHarness();
+    courseAccess.decideWithClient.mockResolvedValueOnce({ allowed: true });
 
     await expect(service.createOrder('student-id', 'request-key-1', {})).rejects.toBeInstanceOf(
       ConflictException,

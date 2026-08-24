@@ -19,6 +19,7 @@ import { CreateLessonDto } from './dto/create-lesson.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
 import { LessonMediaStorageService } from './lesson-media-storage.service';
 import { UploadedLessonDocument, VideoUploadAuthorization } from './types/lesson-media-upload.types';
+import { CourseAccessService } from '../access/course-access.service';
 
 export interface DeleteLessonResponse {
   deleted: true;
@@ -63,10 +64,6 @@ type LessonWithCourse = StoredLessonResponse & {
 type LessonDetailRecord = StoredLessonResponse & {
   course: {
     instructorId: string;
-    status: CourseStatus;
-    visibility: CourseVisibility;
-    moderationStatus: ModerationStatus;
-    enrollments?: Array<{ id: string }>;
   };
 };
 
@@ -74,6 +71,7 @@ type LessonDetailRecord = StoredLessonResponse & {
 export class LessonsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly courseAccessService: CourseAccessService,
     private readonly learningPathService?: LearningPathService,
     private readonly mediaStorage?: LessonMediaStorageService,
   ) {}
@@ -141,22 +139,8 @@ export class LessonsService {
     lessonId: string,
   ): Promise<LessonResponse> {
     const courseAccessSelect = {
+      id: true,
       instructorId: true,
-      status: true,
-      visibility: true,
-      moderationStatus: true,
-      ...(user
-        ? {
-            enrollments: {
-              where: {
-                userId: user.id,
-                status: { in: ['active', 'completed'] },
-              },
-              select: { id: true },
-              take: 1,
-            },
-          }
-        : {}),
     } satisfies Prisma.CourseSelect;
     const lesson = (await this.prisma.lesson.findFirst({
       where: {
@@ -174,17 +158,21 @@ export class LessonsService {
       },
     })) as LessonDetailRecord | null;
 
-    if (!lesson || !this.canViewLesson(user, lesson)) {
-      throw new NotFoundException('Lesson not found');
+    if (!lesson) throw new NotFoundException('Lesson not found');
+    let decision = user
+      ? await this.courseAccessService.decide({ user, courseId: lesson.courseId, operation: 'MANAGE' })
+      : { allowed: false, mode: 'NONE' as const, reason: 'NO_USER' };
+    if (!decision.allowed && lesson.isPreview) {
+      decision = await this.courseAccessService.decide({
+        user, courseId: lesson.courseId, operation: 'PUBLIC_PREVIEW', isPreviewResource: true,
+      });
     }
+    if (!decision.allowed && user) {
+      decision = await this.courseAccessService.decide({ user, courseId: lesson.courseId, operation: 'FULL_LEARNING' });
+    }
+    if (!decision.allowed) throw new NotFoundException('Lesson not found');
 
-    if (
-      user &&
-      lesson.course.enrollments &&
-      lesson.course.enrollments.length > 0 &&
-      !lesson.isPreview &&
-      !this.canManageCourse(user, lesson.course)
-    ) {
+    if (user && decision.mode === 'LEARNER' && !lesson.isPreview) {
       if (this.learningPathService) {
         await this.learningPathService.assertLessonAccessible(user, lessonId);
       }
@@ -489,25 +477,6 @@ export class LessonsService {
     } catch {
       // Media cleanup is best-effort after the authoritative DB transition.
     }
-  }
-
-  private canViewLesson(
-    user: AuthenticatedUser | undefined,
-    lesson: LessonDetailRecord,
-  ): boolean {
-    const publicPreview =
-      lesson.isPreview &&
-      lesson.course.status === CourseStatus.published &&
-      lesson.course.visibility === CourseVisibility.public &&
-      lesson.course.moderationStatus === ModerationStatus.clear;
-    const canManage = Boolean(
-      user && this.canManageCourse(user, lesson.course),
-    );
-    const isEnrolled = Boolean(
-      user && lesson.course.enrollments && lesson.course.enrollments.length > 0,
-    );
-
-    return publicPreview || canManage || isEnrolled;
   }
 
   private hasRole(user: AuthenticatedUser, role: RoleName): boolean {

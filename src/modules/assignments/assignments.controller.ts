@@ -140,7 +140,7 @@ export class AssignmentsController {
   @ApiBadRequestResponse({ description: 'Text or HTTPS file URL is required.' })
   @ApiConflictResponse({ description: 'Assignment already submitted.' })
   @ApiNotFoundResponse({
-    description: 'Published assignment or student enrollment not found.',
+    description: 'Published assignment or learner access not found.',
   })
   submitAssignment(
     @CurrentUser() user: AuthenticatedUser,
@@ -160,7 +160,7 @@ export class AssignmentsController {
     type: SubmissionResponseDto,
   })
   @ApiNotFoundResponse({
-    description: 'Published assignment, enrollment, or submission not found.',
+    description: 'Published assignment, learner access, or submission not found.',
   })
   getMySubmission(
     @CurrentUser() user: AuthenticatedUser,

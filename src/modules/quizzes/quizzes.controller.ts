@@ -171,7 +171,7 @@ export class QuizzesController {
   @ApiBadRequestResponse({ description: 'Invalid or incomplete answer set.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })
   @ApiNotFoundResponse({
-    description: 'Published quiz or student enrollment not found.',
+    description: 'Published quiz or learner access not found.',
   })
   submitAttempt(
     @CurrentUser() user: AuthenticatedUser,
@@ -186,7 +186,7 @@ export class QuizzesController {
   @ApiOkResponse({ description: 'Published quiz returned without answer keys.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })
   @ApiNotFoundResponse({
-    description: 'Published quiz or student enrollment not found.',
+    description: 'Published quiz or learner access not found.',
   })
   getStudentQuiz(
     @CurrentUser() user: AuthenticatedUser,

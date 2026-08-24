@@ -1,18 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import {
-  CourseStatus,
   CourseVisibility,
   ModerationStatus,
   RoleName,
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CourseAccessService } from '../access/course-access.service';
 import {
   AiSourceType,
   ListAiSourcesQueryDto,
 } from './dto/list-ai-sources-query.dto';
 
-const ACCESSIBLE_ENROLLMENT_STATUSES = ['active', 'completed'];
 const MAX_SOURCES = 50;
 
 export interface AiSourceResponse {
@@ -25,7 +24,10 @@ export interface AiSourceResponse {
 
 @Injectable()
 export class AiSourcesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly courseAccess: CourseAccessService,
+  ) {}
 
   async listSources(
     user: AuthenticatedUser,
@@ -53,43 +55,13 @@ export class AiSourcesService {
               course: {
                 deletedAt: null,
               },
-              ...(isAdmin
-                ? {}
-                : {
-                    OR: [
-                      {
-                        course: {
-                          instructorId: user.id,
-                        },
-                      },
-                      {
-                        isPreview: true,
-                        course: {
-                          status: CourseStatus.published,
-                          visibility: CourseVisibility.public,
-                          moderationStatus: ModerationStatus.clear,
-                        },
-                      },
-                      {
-                        course: {
-                          enrollments: {
-                            some: {
-                              userId: user.id,
-                              status: {
-                                in: ACCESSIBLE_ENROLLMENT_STATUSES,
-                              },
-                            },
-                          },
-                        },
-                      },
-                    ],
-                  }),
             },
             orderBy: { title: 'asc' },
-            take: MAX_SOURCES,
+            take: MAX_SOURCES * 4,
             select: {
               id: true,
               title: true,
+              isPreview: true,
               course: {
                 select: {
                   id: true,
@@ -134,8 +106,19 @@ export class AiSourcesService {
         : Promise.resolve([]),
     ]);
 
+    const accessibleLessons = (
+      await Promise.all(lessons.map(async (lesson) => ({
+        lesson,
+        decision: await this.courseAccess.decideContent({
+          user,
+          courseId: lesson.course.id,
+          isPreviewResource: lesson.isPreview,
+        }),
+      })))
+    ).filter(({ decision }) => decision.allowed).map(({ lesson }) => lesson);
+
     return [
-      ...lessons.map((lesson) => ({
+      ...accessibleLessons.map((lesson) => ({
         sourceType: 'lesson' as const,
         sourceId: lesson.id,
         title: lesson.title,

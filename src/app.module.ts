@@ -32,6 +32,7 @@ import { AbuseRateLimitGuard } from './common/security/abuse-rate-limit.guard';
 import { MonitoringModule } from './common/monitoring/monitoring.module';
 import { CommerceModule } from './modules/commerce/commerce.module';
 import { MembershipsModule } from './modules/memberships/memberships.module';
+import { AccessModule } from './modules/access/access.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { MembershipsModule } from './modules/memberships/memberships.module';
     LoggingModule,
     MonitoringModule,
     PrismaModule,
+    AccessModule,
     AuditModule,
     RedisModule,
     HealthModule,

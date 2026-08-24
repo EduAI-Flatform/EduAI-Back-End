@@ -102,7 +102,7 @@ export class LessonsController {
   @ApiBadRequestResponse({ description: 'Invalid progress payload.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })
-  @ApiNotFoundResponse({ description: 'Lesson or enrollment not found.' })
+  @ApiNotFoundResponse({ description: 'Lesson or learner access not found.' })
   updateLessonProgress(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,
@@ -121,7 +121,7 @@ export class LessonsController {
   @ApiOkResponse({ description: 'Lesson progress returned successfully.' })
   @ApiUnauthorizedResponse({ description: 'Authentication required.' })
   @ApiForbiddenResponse({ description: 'Student role required.' })
-  @ApiNotFoundResponse({ description: 'Lesson, enrollment, or learning step not found.' })
+  @ApiNotFoundResponse({ description: 'Lesson, learner access, or learning step not found.' })
   getLessonProgress(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) lessonId: string,

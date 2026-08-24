@@ -5,15 +5,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  CourseStatus,
-  CourseVisibility,
-  ModerationStatus,
-  Prisma,
-  RoleName,
-} from '../../../generated/prisma/client';
+import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CourseAccessService } from '../access/course-access.service';
 import { CreateAiChatDto } from './dto/create-ai-chat.dto';
 import { AiRateLimitService } from './ai-rate-limit.service';
 import { AiRetrievalService, AiRetrievalSource } from './ai-retrieval.service';
@@ -47,6 +42,7 @@ export class AiConversationService {
     private readonly rateLimit: AiRateLimitService,
     private readonly retrieval: AiRetrievalService,
     @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
+    private readonly courseAccess: CourseAccessService,
   ) {}
 
   async createChat(
@@ -150,30 +146,19 @@ export class AiConversationService {
       throw new BadRequestException('AI course context requires both contextType and contextId');
     }
 
-    if (user.roles.includes(RoleName.platform_admin)) return;
-
     const course = await this.prisma.course.findFirst({
       where: {
         id: input.contextId,
         deletedAt: null,
-        OR: [
-          { instructorId: user.id },
-          {
-            status: CourseStatus.published,
-            visibility: CourseVisibility.public,
-            moderationStatus: ModerationStatus.clear,
-            lessons: { some: { deletedAt: null, isPreview: true } },
-          },
-          {
-            enrollments: {
-              some: { userId: user.id, status: { in: ['active', 'completed'] } },
-            },
-          },
-        ],
       },
-      select: { id: true },
+      select: { id: true, lessons: { where: { deletedAt: null, isPreview: true }, select: { id: true }, take: 1 } },
     });
-
     if (!course) throw new NotFoundException('AI course context not found');
+    const decision = await this.courseAccess.decideContent({
+      user,
+      courseId: course.id,
+      isPreviewResource: course.lessons.length > 0,
+    });
+    if (!decision.allowed) throw new NotFoundException('AI course context not found');
   }
 }

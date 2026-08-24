@@ -2,13 +2,18 @@ import 'dotenv/config';
 import { AuditService } from '../src/common/audit/audit.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { TmiRedemptionService } from '../src/modules/tmi/tmi-redemption.service';
+import { CourseAccessService } from '../src/modules/access/course-access.service';
 import { TmiRewardKind, TmiRewardStatus } from '../generated/prisma/client';
 
 const integration = process.env.TMI_INTEGRATION_TEST === 'true' ? describe : describe.skip;
 
 integration('TMI redemption PostgreSQL transaction contract', () => {
   const prisma = new PrismaService();
-  const service = new TmiRedemptionService(prisma, new AuditService(prisma));
+  const service = new TmiRedemptionService(
+    prisma,
+    new AuditService(prisma),
+    new CourseAccessService(prisma),
+  );
   const suffix = `integration-${Date.now()}`;
   let studentId: string;
   let adminId: string;

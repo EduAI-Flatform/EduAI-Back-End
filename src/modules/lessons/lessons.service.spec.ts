@@ -112,11 +112,18 @@ function createService(options?: { storedCourse?: typeof course | null; storedLe
       storageKey: 'lessons/course-id/documents/generated.pdf',
     }),
   };
+  const courseAccess = {
+    decide: jest.fn(async ({ operation, isPreviewResource }: { operation: string; isPreviewResource?: boolean }) => ({
+      allowed: operation === 'MANAGE' ? false : operation === 'FULL_LEARNING' || isPreviewResource === true,
+      mode: operation === 'FULL_LEARNING' ? 'LEARNER' : 'PREVIEW',
+    })),
+  };
 
   return {
     mediaStorage,
     prisma,
-    service: new LessonsService(prisma as never, undefined, mediaStorage as never),
+    courseAccess,
+    service: new LessonsService(prisma as never, courseAccess as never, undefined, mediaStorage as never),
   };
 }
 
@@ -258,7 +265,8 @@ describe('LessonsService', () => {
   });
 
   it('does not expose a moderated course preview publicly', async () => {
-    const { prisma, service } = createService();
+    const { prisma, service, courseAccess } = createService();
+    courseAccess.decide.mockResolvedValueOnce({ allowed: false, mode: 'NONE' });
     prisma.lesson.findFirst.mockResolvedValue({
       ...lesson,
       course: {
@@ -276,7 +284,7 @@ describe('LessonsService', () => {
   });
 
   it('returns a non-preview lesson to an enrolled student', async () => {
-    const { prisma, service } = createService();
+    const { prisma, service, courseAccess } = createService();
     prisma.lesson.findFirst.mockResolvedValue({
       ...lesson,
       isPreview: false,
@@ -291,24 +299,9 @@ describe('LessonsService', () => {
     await expect(service.getLesson(student, lesson.id)).resolves.toEqual(
       expect.objectContaining({ id: lesson.id, isPreview: false }),
     );
-    expect(prisma.lesson.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        select: expect.objectContaining({
-          course: {
-            select: expect.objectContaining({
-              enrollments: {
-                where: {
-                  userId: student.id,
-                  status: { in: ['active', 'completed'] },
-                },
-                select: { id: true },
-                take: 1,
-              },
-            }),
-          },
-        }),
-      }),
-    );
+    expect(courseAccess.decide).toHaveBeenCalledWith({
+      user: student, courseId: lesson.courseId, operation: 'FULL_LEARNING',
+    });
   });
 
   it('returns draft lesson content to its instructor and platform admins', async () => {
@@ -331,7 +324,7 @@ describe('LessonsService', () => {
   });
 
   it('does not expose a protected lesson to an anonymous or unenrolled viewer', async () => {
-    const { prisma, service } = createService();
+    const { prisma, service, courseAccess } = createService();
     prisma.lesson.findFirst.mockResolvedValue({
       ...lesson,
       isPreview: false,
@@ -346,6 +339,8 @@ describe('LessonsService', () => {
     await expect(service.getLesson(undefined, lesson.id)).rejects.toEqual(
       new NotFoundException('Lesson not found'),
     );
+    courseAccess.decide.mockResolvedValueOnce({ allowed: false, mode: 'NONE' });
+    courseAccess.decide.mockResolvedValueOnce({ allowed: false, mode: 'NONE' });
     await expect(service.getLesson(student, lesson.id)).rejects.toEqual(
       new NotFoundException('Lesson not found'),
     );

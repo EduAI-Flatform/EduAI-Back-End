@@ -348,10 +348,16 @@ function createService(options?: {
       },
     ),
   };
+  const courseAccess = {
+    decide: jest.fn().mockResolvedValue({ allowed: true, mode: 'LEARNER' }),
+    require: jest.fn().mockResolvedValue({ allowed: true, mode: 'LEARNER' }),
+    ensureGrant: jest.fn().mockResolvedValue({ id: 'grant-id' }),
+  };
 
   return {
     auditService,
     completionService,
+    courseAccess,
     prisma,
     storage,
     service: new CoursesService(
@@ -359,6 +365,7 @@ function createService(options?: {
       storage as never,
       auditService as never,
       completionService as never,
+      courseAccess as never,
     ),
   };
 }
@@ -925,7 +932,7 @@ describe('CoursesService', () => {
   });
 
   it('enrolls users in published courses and initializes lesson progress', async () => {
-    const { prisma, service } = createService();
+    const { prisma, service, courseAccess } = createService();
 
     await expect(service.enrollCourse(student.id, course.id)).resolves.toEqual({
       success: true,
@@ -946,7 +953,8 @@ describe('CoursesService', () => {
         slug: true,
         description: true,
         thumbnailUrl: true,
-        level: true,
+          level: true,
+          priceAmountMinor: true,
         status: true,
         visibility: true,
         createdAt: true,
@@ -968,18 +976,13 @@ describe('CoursesService', () => {
         id: true,
       },
     });
-    expect(prisma.learningProgress.createMany).toHaveBeenCalledWith({
-      data: [
-        {
-          userId: student.id,
-          courseId: course.id,
-          lessonId: lesson.id,
-          status: 'not_started',
-          progressPercent: 0,
-        },
-      ],
-      skipDuplicates: true,
-    });
+    expect(courseAccess.ensureGrant).toHaveBeenCalledWith({
+      userId: student.id,
+      courseId: course.id,
+      sourceType: 'free_enrollment',
+      sourceId: 'enrollment-id',
+      startsAt: expect.any(Date),
+    }, prisma);
   });
 
   it('rejects enrollment for missing or unpublished courses', async () => {

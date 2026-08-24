@@ -15,6 +15,7 @@ describe('AiSourcesService', () => {
           {
             id: 'lesson-id',
             title: 'Gradient descent',
+            isPreview: false,
             course: { id: 'course-id', title: 'Machine Learning' },
           },
         ]),
@@ -29,10 +30,12 @@ describe('AiSourcesService', () => {
         ]),
       },
     };
+    const courseAccess = { decideContent: jest.fn().mockResolvedValue({ allowed: true }) };
 
     return {
       prisma,
-      service: new AiSourcesService(prisma as never),
+      courseAccess,
+      service: new AiSourcesService(prisma as never, courseAccess as never),
     };
   }
 
@@ -56,8 +59,8 @@ describe('AiSourcesService', () => {
     ]);
   });
 
-  it('applies student authorization and search at the query boundary', async () => {
-    const { service, prisma } = createService();
+  it('applies centralized student authorization and search before returning sources', async () => {
+    const { service, prisma, courseAccess } = createService();
 
     await service.listSources(student, {
       sourceType: 'lesson',
@@ -68,30 +71,15 @@ describe('AiSourcesService', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           title: { contains: 'gradient', mode: 'insensitive' },
-          OR: expect.arrayContaining([
-            {
-              isPreview: true,
-              course: {
-                status: 'published',
-                visibility: 'public',
-                moderationStatus: ModerationStatus.clear,
-              },
-            },
-            {
-              course: {
-                enrollments: {
-                  some: {
-                    userId: student.id,
-                    status: { in: ['active', 'completed'] },
-                  },
-                },
-              },
-            },
-          ]),
         }),
-        take: 50,
+        take: 200,
       }),
     );
+    expect(courseAccess.decideContent).toHaveBeenCalledWith({
+      user: student,
+      courseId: 'course-id',
+      isPreviewResource: false,
+    });
     expect(prisma.libraryResource.findMany).not.toHaveBeenCalled();
   });
 

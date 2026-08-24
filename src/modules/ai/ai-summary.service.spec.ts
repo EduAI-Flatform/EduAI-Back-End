@@ -8,7 +8,7 @@ const student: AuthenticatedUser = { id: 'student-id', roles: [RoleName.student]
 describe('AiSummaryService', () => {
   function createService() {
     const prisma = {
-      lesson: { findFirst: jest.fn() },
+      lesson: { findFirst: jest.fn(), findUnique: jest.fn() },
       libraryResource: { findFirst: jest.fn() },
     };
     const completion = jest
@@ -19,12 +19,14 @@ describe('AiSummaryService', () => {
       complete: completion,
     };
     const rateLimit = { assertSummaryAllowed: jest.fn() };
-    return { service: new AiSummaryService(prisma as never, openai as never, rateLimit as never), prisma, completion, rateLimit };
+    const courseAccess = { decideContent: jest.fn().mockResolvedValue({ allowed: true }) };
+    return { service: new AiSummaryService(prisma as never, openai as never, rateLimit as never, courseAccess as never), prisma, completion, rateLimit, courseAccess };
   }
 
   it('summarizes an accessible lesson with a stable response shape', async () => {
     const { service, prisma, completion, rateLimit } = createService();
-    prisma.lesson.findFirst.mockResolvedValue({ id: 'lesson-id', title: 'Recursion', content: 'A function calls itself.' });
+    prisma.lesson.findFirst.mockResolvedValue({ id: 'lesson-id', courseId: 'course-id', isPreview: false });
+    prisma.lesson.findUnique.mockResolvedValue({ title: 'Recursion', content: 'A function calls itself.' });
 
     await expect(service.summarize(student, { sourceType: 'lesson', sourceId: 'lesson-id' })).resolves.toEqual({
       sourceType: 'lesson', sourceId: 'lesson-id', title: 'Recursion', summary: 'A concise summary.',
@@ -33,26 +35,7 @@ describe('AiSummaryService', () => {
     expect(prisma.lesson.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          OR: expect.arrayContaining([
-            {
-              isPreview: true,
-              course: {
-                status: 'published',
-                visibility: 'public',
-                moderationStatus: ModerationStatus.clear,
-              },
-            },
-            {
-              course: {
-                enrollments: {
-                  some: {
-                    userId: student.id,
-                    status: { in: ['active', 'completed'] },
-                  },
-                },
-              },
-            },
-          ]),
+          id: 'lesson-id',
         }),
       }),
     );

@@ -9,6 +9,7 @@ import {
   CourseStatus,
   CourseVisibility,
   CommerceProductStatus,
+  CourseAccessSourceType,
   ModerationStatus,
   Prisma,
   RoleName,
@@ -20,6 +21,7 @@ import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits'
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CourseThumbnailStorageService } from './course-thumbnail-storage.service';
 import { CourseCompletionService } from './course-completion.service';
+import { CourseAccessService } from '../access/course-access.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
@@ -151,6 +153,7 @@ const buildEnrollmentResponseSelect = (userId: string) =>
 
 const publishedCourseWithLessonsSelect = {
   ...enrollmentCourseSelect,
+  priceAmountMinor: true,
   lessons: {
     where: {
       deletedAt: null,
@@ -363,6 +366,7 @@ export class CoursesService {
     private readonly thumbnailStorage: CourseThumbnailStorageService,
     private readonly auditService: AuditService,
     private readonly courseCompletionService: CourseCompletionService,
+    private readonly courseAccessService: CourseAccessService,
   ) {}
 
   async listCommerceCatalog(query: CommerceCatalogQuery): Promise<CommerceCatalogPage> {
@@ -677,8 +681,11 @@ export class CoursesService {
       course.visibility === CourseVisibility.public &&
       course.moderationStatus === ModerationStatus.clear;
     const canManage = user ? this.canManageCourse(user, course) : false;
+    const canLearn = user && !canManage
+      ? (await this.courseAccessService.decide({ user, courseId, operation: 'FULL_LEARNING' })).allowed
+      : false;
 
-    if (!isPublic && !canManage) {
+    if (!isPublic && !canManage && !canLearn) {
       throw new NotFoundException('Course not found');
     }
 
@@ -708,6 +715,9 @@ export class CoursesService {
         if (!course) {
           throw new NotFoundException('Published course not found');
         }
+        if ((course.priceAmountMinor ?? 0) > 0) {
+          throw new ConflictException({ error: 'PAYMENT_REQUIRED', message: 'Paid courses require Commerce checkout.' });
+        }
 
         const existingEnrollment = await tx.enrollment.findFirst({
           where: {
@@ -723,7 +733,7 @@ export class CoursesService {
           throw new ConflictException('Course already enrolled');
         }
 
-        await tx.enrollment.create({
+        const enrollment = await tx.enrollment.create({
           data: {
             userId,
             courseId,
@@ -733,19 +743,10 @@ export class CoursesService {
             id: true,
           },
         });
-
-        if (course.lessons.length > 0) {
-          await tx.learningProgress.createMany({
-            data: course.lessons.map((lesson) => ({
-              userId,
-              courseId,
-              lessonId: lesson.id,
-              status: PROGRESS_NOT_STARTED_STATUS,
-              progressPercent: 0,
-            })),
-            skipDuplicates: true,
-          });
-        }
+        await this.courseAccessService.ensureGrant({
+          userId, courseId, sourceType: CourseAccessSourceType.free_enrollment,
+          sourceId: enrollment.id, startsAt: new Date(),
+        }, tx);
 
         return {
           success: true,
@@ -803,6 +804,11 @@ export class CoursesService {
       if (!lesson) {
         throw new NotFoundException('Lesson not found');
       }
+      await this.courseAccessService.require({
+        user: { id: userId, roles: [RoleName.student] },
+        courseId: lesson.courseId,
+        operation: 'FULL_LEARNING',
+      });
 
       const enrollment = await tx.enrollment.findFirst({
         where: {
@@ -850,6 +856,9 @@ export class CoursesService {
     userId: string,
     courseId: string,
   ): Promise<CourseProgressResponse> {
+    await this.courseAccessService.require({
+      user: { id: userId, roles: [RoleName.student] }, courseId, operation: 'FULL_LEARNING',
+    });
     const enrollment = await this.prisma.enrollment.findFirst({
       where: {
         userId,

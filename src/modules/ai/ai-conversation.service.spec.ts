@@ -19,7 +19,7 @@ describe('AiConversationService', () => {
     const prisma = {
       $transaction: jest.fn((callback: (tx: typeof transaction) => unknown) => callback(transaction)),
       aiMessage: { create: jest.fn().mockResolvedValue(assistantMessage) },
-      course: { findFirst: jest.fn().mockResolvedValue({ id: 'course-id' }) },
+      course: { findFirst: jest.fn().mockResolvedValue({ id: 'course-id', lessons: [] }) },
     };
     const quota = { assertChatAllowed: jest.fn() };
     const retrieval = { retrieve: jest.fn().mockResolvedValue([]) };
@@ -30,8 +30,9 @@ describe('AiConversationService', () => {
         totalTokens: 12,
       }),
     };
+    const courseAccess = { decideContent: jest.fn().mockResolvedValue({ allowed: true }) };
 
-    return { service: new AiConversationService(prisma as never, quota as never, retrieval as never, openai as never), prisma, transaction, quota, retrieval, openai };
+    return { service: new AiConversationService(prisma as never, quota as never, retrieval as never, openai as never, courseAccess as never), prisma, transaction, quota, retrieval, openai, courseAccess };
   }
 
   const input: CreateAiChatDto = { message: 'Explain recursion.' };
@@ -115,7 +116,7 @@ describe('AiConversationService', () => {
 
     expect(prisma.course.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'course-id' }),
-      select: { id: true },
+      select: expect.objectContaining({ id: true, lessons: expect.any(Object) }),
     }));
     expect(retrieval.retrieve).toHaveBeenCalledWith(user, input.message, { courseId: 'course-id' });
   });

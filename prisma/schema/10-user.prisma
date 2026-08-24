@@ -80,6 +80,8 @@ model User {
   membershipPlanEntitlementsCreated MembershipPlanEntitlement[] @relation("MembershipPlanEntitlementCreator")
   serviceEntitlementGrants ServiceEntitlementGrant[]
   serviceEntitlementUsage ServiceEntitlementUsage[]
+  membershipIncludedCoursesCreated MembershipPlanIncludedCourse[] @relation("MembershipIncludedCourseCreator")
+  courseAccessGrants CourseAccessGrant[]
 
   @@index([status])
   @@index([deletedAt])

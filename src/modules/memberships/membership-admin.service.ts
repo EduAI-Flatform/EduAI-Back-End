@@ -22,6 +22,7 @@ import {
   CreateServiceEntitlementDefinitionDto,
   ConfigureMembershipPlanEntitlementDto,
   ListServiceEntitlementDefinitionsQueryDto,
+  ConfigureMembershipIncludedCourseDto,
 } from './dto/membership-plan.dto';
 import { calculateDurationPrice } from './membership.rules';
 import { normalizeEntitlementValue } from './service-entitlement.rules';
@@ -31,6 +32,10 @@ const versionInclude = {
   serviceEntitlements: {
     orderBy: [{ definition: { displayOrder: 'asc' as const } }, { id: 'asc' as const }],
     include: { definition: true },
+  },
+  includedCourses: {
+    orderBy: [{ course: { title: 'asc' as const } }, { id: 'asc' as const }],
+    include: { course: { select: { id: true, title: true, slug: true } } },
   },
 } satisfies Prisma.MembershipPlanVersionInclude;
 const planInclude = {
@@ -199,6 +204,43 @@ export class MembershipAdminService {
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
           throw new ConflictException('Service entitlement is already configured for this version.');
+        }
+        throw error;
+      }
+    });
+  }
+
+  configureIncludedCourse(
+    actorId: string,
+    versionId: string,
+    input: ConfigureMembershipIncludedCourseDto,
+  ) {
+    return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
+      const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
+      if (!version) throw new NotFoundException('Membership plan version not found.');
+      if (version.status !== MembershipPlanVersionStatus.draft) {
+        throw new ConflictException('Published membership course inclusions are immutable.');
+      }
+      const course = await tx.course.findFirst({
+        where: { id: input.courseId, deletedAt: null, status: 'published', moderationStatus: 'clear' },
+        select: { id: true, title: true, slug: true },
+      });
+      if (!course) throw new NotFoundException('Available course not found.');
+      try {
+        const included = await tx.membershipPlanIncludedCourse.create({
+          data: { versionId, courseId: course.id, graceDays: input.graceDays, createdById: actorId },
+          include: { course: { select: { id: true, title: true, slug: true } } },
+        });
+        await this.audit.record({
+          actorId, action: AuditAction.MembershipPlanCourseIncluded,
+          target: { type: 'membership_plan_included_course', id: included.id },
+          metadata: { versionId, courseId: course.id, graceDays: input.graceDays },
+        }, tx);
+        return this.includedCourseResponse(included);
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new ConflictException('Course is already included in this membership version.');
         }
         throw error;
       }
@@ -485,6 +527,7 @@ export class MembershipAdminService {
         displayOrder: duration.displayOrder,
       })),
       serviceEntitlements: version.serviceEntitlements.map((item) => this.planEntitlementResponse(item)),
+      includedCourses: version.includedCourses.map((item) => this.includedCourseResponse(item)),
     };
   }
 
@@ -510,6 +553,13 @@ export class MembershipAdminService {
       definition: this.entitlementDefinitionResponse(item.definition),
       booleanValue: item.booleanValue, quota: item.quota?.toString() ?? null,
     };
+  }
+
+  private includedCourseResponse(item: {
+    id: string; versionId: string; graceDays: number;
+    course: { id: string; title: string; slug: string };
+  }) {
+    return { id: item.id, versionId: item.versionId, graceDays: item.graceDays, course: item.course };
   }
 
   private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {

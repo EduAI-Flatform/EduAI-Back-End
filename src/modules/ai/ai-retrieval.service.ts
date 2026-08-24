@@ -2,6 +2,7 @@ import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
 import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CourseAccessService } from '../access/course-access.service';
 import { AI_PROVIDER, AiProvider } from './ai-provider';
 
 const DEFAULT_TOP_K = 5;
@@ -35,6 +36,7 @@ interface RetrievalRow {
   distance: number;
   metadata_json: unknown;
   course_id: string | null;
+  is_preview: boolean | null;
   citation_path: string;
 }
 
@@ -43,6 +45,7 @@ export class AiRetrievalService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(AI_PROVIDER) private readonly aiProvider: AiProvider,
+    private readonly courseAccess: CourseAccessService,
   ) {}
 
   async retrieve(
@@ -63,7 +66,6 @@ export class AiRetrievalService {
 
     const vector = JSON.stringify(embedding);
     const isAdmin = user.roles.includes(RoleName.platform_admin);
-    const isStudent = user.roles.includes(RoleName.student);
     const rows = await this.prisma.$queryRaw<RetrievalRow[]>(Prisma.sql`
       SELECT * FROM (
         SELECT
@@ -72,15 +74,8 @@ export class AiRetrievalService {
           e.source_id,
           l.title,
           l.course_id,
-          CASE
-            WHEN ${isStudent} AND EXISTS (
-              SELECT 1 FROM "enrollments" citation_enrollment
-              WHERE citation_enrollment.course_id = c.id
-                AND citation_enrollment.user_id = ${user.id}::uuid
-                AND citation_enrollment.status IN ('active', 'completed')
-            ) THEN '/learning/' || c.id::text
-            ELSE '/courses/' || c.id::text
-          END AS citation_path,
+          l.is_preview,
+          '/courses/' || c.id::text AS citation_path,
           e.chunk_text,
           e.embedding <=> ${vector}::vector AS distance,
           e.metadata_json
@@ -92,22 +87,6 @@ export class AiRetrievalService {
           AND l.deleted_at IS NULL
           AND c.deleted_at IS NULL
           AND (${courseId}::uuid IS NULL OR c.id = ${courseId}::uuid)
-          AND (
-            ${isAdmin}
-            OR (
-              l.is_preview = TRUE
-              AND c.status = 'published'
-              AND c.visibility = 'public'
-              AND c.moderation_status = 'clear'
-            )
-            OR c.instructor_id = ${user.id}::uuid
-            OR EXISTS (
-              SELECT 1 FROM "enrollments" en
-              WHERE en.course_id = c.id
-                AND en.user_id = ${user.id}::uuid
-                AND en.status IN ('active', 'completed')
-            )
-          )
         UNION ALL
         SELECT
           e.id AS embedding_id,
@@ -115,6 +94,7 @@ export class AiRetrievalService {
           e.source_id,
           r.title,
           NULL::uuid AS course_id,
+          NULL::boolean AS is_preview,
           '/library'::text AS citation_path,
           e.chunk_text,
           e.embedding <=> ${vector}::vector AS distance,
@@ -132,10 +112,24 @@ export class AiRetrievalService {
           )
       ) AS permitted_sources
       ORDER BY distance ASC
-      LIMIT ${topK}
+      LIMIT ${topK * 4}
     `);
 
-    return rows.map((row) => ({
+    const decisions = await Promise.all(rows.map(async (row) => ({
+      row,
+      decision: row.course_id
+        ? await this.courseAccess.decideContent({
+            user,
+            courseId: row.course_id,
+            isPreviewResource: row.is_preview === true,
+          })
+        : null,
+    })));
+
+    return decisions
+      .filter(({ row, decision }) => row.course_id === null || decision?.allowed)
+      .slice(0, topK)
+      .map(({ row, decision }) => ({
       embeddingId: row.embedding_id,
       sourceType: row.source_type,
       sourceId: row.source_id,
@@ -143,7 +137,9 @@ export class AiRetrievalService {
       chunkText: row.chunk_text,
       similarity: 1 - Number(row.distance),
       courseId: row.course_id,
-      citationPath: row.citation_path,
+      citationPath: row.course_id && decision?.mode === 'LEARNER'
+        ? `/learning/${row.course_id}`
+        : row.citation_path,
       metadata: this.toMetadata(row.metadata_json),
     }));
   }

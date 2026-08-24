@@ -65,7 +65,8 @@ function createHarness() {
     $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
   };
   const auditService = { record: jest.fn().mockResolvedValue(undefined) };
-  return { service: new ScholarshipsService(prisma as never, auditService as never), tx, auditService, application };
+  const courseAccess = { ensureGrant: jest.fn().mockResolvedValue({ id: 'grant-id' }) };
+  return { service: new ScholarshipsService(prisma as never, auditService as never, courseAccess as never), tx, auditService, application, courseAccess };
 }
 
 describe('ScholarshipsService.apply', () => {
@@ -100,6 +101,29 @@ describe('ScholarshipsService.apply', () => {
 
     expect(tx.scholarshipApplication.create).not.toHaveBeenCalled();
     expect(tx.scholarshipCampaign.update).not.toHaveBeenCalled();
+  });
+
+  it('creates the course grant atomically for a course-access award', async () => {
+    const { service, tx, application, courseAccess } = createHarness();
+    tx.scholarshipCampaign.findUnique.mockResolvedValueOnce({
+      ...scholarship,
+      benefitKind: ScholarshipBenefitKind.course_access,
+      benefitValue: 100,
+      currency: null,
+    });
+    tx.scholarshipApplication.create.mockResolvedValueOnce({
+      ...application,
+      award: { ...application.award, benefitKind: ScholarshipBenefitKind.course_access, benefitValue: 100, currency: null },
+    });
+
+    await service.apply('student-id', scholarship.id, { courseId: course.id });
+
+    expect(courseAccess.ensureGrant).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'student-id',
+      courseId: course.id,
+      sourceType: 'scholarship',
+      sourceId: 'award-id',
+    }), tx);
   });
 
   it('rejects a quota-exhausted campaign before writing an application', async () => {

@@ -8,6 +8,7 @@ import {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
+import { CourseAccessService } from '../access/course-access.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_ACTIVITY_LIMIT = 8;
@@ -210,7 +211,10 @@ interface QuizAttemptRecord {
 
 @Injectable()
 export class DashboardsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly courseAccess: CourseAccessService,
+  ) {}
 
   async getStudentDashboard(userId: string): Promise<StudentDashboardResponse> {
     const now = new Date();
@@ -219,7 +223,7 @@ export class DashboardsService {
       completedProgress,
       completedCourses,
       quizAttempts,
-      upcomingSessions,
+      upcomingSessionCandidates,
       certificateRecords,
     ] = await Promise.all([
       this.prisma.enrollment.findMany({
@@ -340,18 +344,10 @@ export class DashboardsService {
             ],
           },
           scheduledEnd: { gte: now },
-          course: {
-            deletedAt: null,
-            enrollments: {
-              some: {
-                userId,
-                status: { in: ['active', 'completed'] },
-              },
-            },
-          },
+          course: { deletedAt: null },
         },
         orderBy: { scheduledStart: 'asc' },
-        take: DASHBOARD_SESSION_LIMIT,
+        take: DASHBOARD_SESSION_LIMIT * 4,
         select: dashboardSessionSelect,
       }),
       this.prisma.certificate.findMany({
@@ -362,9 +358,30 @@ export class DashboardsService {
       }),
     ]);
 
-    const activeCourses = (
-      enrollmentRecords as StudentEnrollmentRecord[]
-    )
+    const student: AuthenticatedUser = { id: userId, roles: [RoleName.student] };
+    const accessibleEnrollmentRecords = (
+      await Promise.all((enrollmentRecords as StudentEnrollmentRecord[]).map(async (enrollment) => ({
+        enrollment,
+        decision: await this.courseAccess.decide({
+          user: student,
+          courseId: enrollment.course.id,
+          operation: 'FULL_LEARNING',
+        }),
+      })))
+    ).filter(({ decision }) => decision.allowed).map(({ enrollment }) => enrollment);
+    const upcomingSessions = (
+      await Promise.all(upcomingSessionCandidates.map(async (session) => ({
+        session,
+        decision: await this.courseAccess.decide({
+          user: student,
+          courseId: session.course.id,
+          operation: 'FULL_LEARNING',
+        }),
+      })))
+    ).filter(({ decision }) => decision.allowed)
+      .slice(0, DASHBOARD_SESSION_LIMIT)
+      .map(({ session }) => session);
+    const activeCourses = accessibleEnrollmentRecords
       .map((enrollment) => this.toDashboardActiveCourse(enrollment))
       .sort(
         (left, right) =>

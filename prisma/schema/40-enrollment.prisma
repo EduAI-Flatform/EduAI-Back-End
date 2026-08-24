@@ -9,6 +9,7 @@ model Enrollment {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  accessBackfillIssue CourseAccessBackfillIssue?
 
   @@unique([userId, courseId])
   @@index([courseId])

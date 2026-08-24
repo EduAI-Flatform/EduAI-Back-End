@@ -62,10 +62,12 @@ function createHarness() {
     enrollment: tx.enrollment,
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const courseAccess = { decideWithClient: jest.fn().mockResolvedValue({ allowed: false }) };
   return {
-    service: new CommerceService(prisma as never, audit as never),
+    service: new CommerceService(prisma as never, audit as never, courseAccess as never),
     tx,
     audit,
+    courseAccess,
   };
 }
 
@@ -114,8 +116,8 @@ describe('CommerceService cart', () => {
   });
 
   it('rejects a course already owned through a qualifying legacy enrollment', async () => {
-    const { service, tx } = createHarness();
-    tx.enrollment.findFirst.mockResolvedValueOnce({ id: 'enrollment-id' });
+    const { service, tx, courseAccess } = createHarness();
+    courseAccess.decideWithClient.mockResolvedValueOnce({ allowed: true });
 
     await expect(service.addCourse('student-id', course.id)).rejects.toMatchObject({
       response: expect.objectContaining({ error: 'ALREADY_OWNED' }),

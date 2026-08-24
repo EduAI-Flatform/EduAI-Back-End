@@ -52,7 +52,9 @@ function createService(overrides: Record<string, unknown> = {}) {
   return {
     auditService,
     prisma,
-    service: new CertificatesService(prisma as never, auditService as never),
+    service: new CertificatesService(prisma as never, auditService as never, {
+      require: jest.fn().mockResolvedValue({ allowed: true, mode: 'LEARNER' }),
+    } as never),
   };
 }
 
@@ -272,7 +274,7 @@ describe('CertificatesService.listMyCertificates', () => {
     };
     const service = new CertificatesService(prisma as never, {
       record: jest.fn(),
-    } as never);
+    } as never, { require: jest.fn().mockResolvedValue({ allowed: true }) } as never);
 
     await expect(service.listMyCertificates(userId)).resolves.toEqual([
       {

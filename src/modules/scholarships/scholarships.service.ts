@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CourseAccessSourceType,
   Prisma,
   ScholarshipApplicationStatus,
   ScholarshipBenefitKind,
@@ -14,6 +15,7 @@ import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { MAX_UNPAGINATED_API_ITEMS } from '../../common/performance/list-limits';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CourseAccessService } from '../access/course-access.service';
 import { ApplyScholarshipDto } from './dto/apply-scholarship.dto';
 import { CreateScholarshipDto } from './dto/create-scholarship.dto';
 import { ListScholarshipsQueryDto } from './dto/list-scholarships-query.dto';
@@ -135,6 +137,7 @@ export class ScholarshipsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly courseAccess: CourseAccessService,
   ) {}
 
   async createScholarship(
@@ -330,7 +333,10 @@ export class ScholarshipsService {
         where: { scholarshipId_userId_courseId: { scholarshipId, userId, courseId: input.courseId } },
         select: applicationSelect,
       });
-      if (existing) return this.toApplicationResponse(existing, true);
+      if (existing) {
+        await this.ensureCourseAccessAward(existing, tx);
+        return this.toApplicationResponse(existing, true);
+      }
 
       const course = await this.findEligibleCourse(tx, input.courseId);
       const decision = evaluateScholarshipEligibility(this.toPolicy(scholarship), {
@@ -361,6 +367,7 @@ export class ScholarshipsService {
         },
         select: applicationSelect,
       });
+      await this.ensureCourseAccessAward(application, tx);
       await tx.scholarshipCampaign.update({ where: { id: scholarshipId }, data: { awardedCount: { increment: 1 } } });
       await this.auditService.record(
         {
@@ -373,6 +380,20 @@ export class ScholarshipsService {
       );
       return this.toApplicationResponse(application, false);
     });
+  }
+
+  private async ensureCourseAccessAward(
+    application: ApplicationRecord,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    if (application.award?.benefitKind !== ScholarshipBenefitKind.course_access) return;
+    await this.courseAccess.ensureGrant({
+      userId: application.userId,
+      courseId: application.courseId,
+      sourceType: CourseAccessSourceType.scholarship,
+      sourceId: application.award.id,
+      startsAt: application.award.awardedAt,
+    }, tx);
   }
 
   async listApplications(
