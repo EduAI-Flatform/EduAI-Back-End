@@ -139,6 +139,9 @@ jobs:
             "$VPS_USER@$VPS_HOST" << 'EOF'
           set -Eeuo pipefail
 
+          deployment_stage="initialization"
+          trap 'printf "::error title=Backend deployment failed::deploymentFailureStage=%s\n" "$deployment_stage"' ERR
+
           exec 9>/tmp/eduai-backend-deploy.lock
 
           flock -w 120 9 || {
@@ -194,6 +197,7 @@ jobs:
           '
 
           echo "Fetching source..."
+          deployment_stage="source-fetch"
           source_fetched=false
           for attempt in 1 2 3; do
             if git \
@@ -221,6 +225,7 @@ jobs:
           fi
 
           echo "Verifying notification email configuration..."
+          deployment_stage="notification-configuration"
           node -e '
             require("dotenv").config({ quiet: true });
             const provider = process.env.EMAIL_PROVIDER;
@@ -236,27 +241,35 @@ jobs:
           '
 
           echo "Installing dependencies..."
+          deployment_stage="dependency-installation"
           npm ci
 
           echo "Verifying permanent Commerce configuration..."
+          deployment_stage="commerce-configuration"
           npm run config:verify:production-commerce
 
           echo "Generating Prisma client..."
+          deployment_stage="prisma-generation"
           npm run prisma:generate
 
           echo "Validating Prisma schema..."
+          deployment_stage="prisma-validation"
           npm run prisma:validate
 
           echo "Applying database migrations with isolated role..."
+          deployment_stage="database-migration"
           npm run prisma:migrate:production
 
           echo "Verifying least-privilege runtime database role..."
+          deployment_stage="runtime-role-verification"
           npm run db:verify:production-runtime-role
 
           echo "Building backend..."
+          deployment_stage="backend-build"
           npm run build
 
           echo "Restarting PM2..."
+          deployment_stage="pm2-restart"
           npm run process:restart:production
 
           BACKEND_PORT="$(node -e '
@@ -267,6 +280,7 @@ jobs:
           ')"
 
           echo "Waiting for backend readiness..."
+          deployment_stage="backend-readiness"
           for attempt in {1..12}; do
             if curl \
               --fail \
@@ -382,6 +396,8 @@ jobs:
             });
           '
 
+          deployment_stage="complete"
+          trap - ERR
           echo "Backend deployment completed."
           EOF
 
