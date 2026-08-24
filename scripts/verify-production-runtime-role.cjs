@@ -4,6 +4,14 @@ const dotenv = require('dotenv');
 const { Client } = require('pg');
 
 const RUNTIME_ENV_FILE = '.env';
+const VERIFICATION_STAGES = new Set([
+  'configuration',
+  'connection',
+  'transaction',
+  'metadata-query',
+  'assessment',
+  'assertion',
+]);
 const ASSESSMENT_KEYS = [
   'commerceTablesPresent',
   'runtimeRoleSuperuser',
@@ -85,6 +93,15 @@ function loadRuntimeDatabaseUrl(rootDirectory) {
   return value;
 }
 
+function buildRuntimeClientConfig(connectionString) {
+  return {
+    application_name: 'eduai-runtime-role-verifier',
+    connectionString,
+    connectionTimeoutMillis: 10000,
+    query_timeout: 10000,
+  };
+}
+
 function assessRuntimeRole(row) {
   const commerceTablesPresent = requiredBoolean(
     row.commerceTablesPresent,
@@ -145,34 +162,109 @@ function logAssessment(assessment) {
   }
 }
 
+function createSafeFailureDiagnostic(error, stage = 'unknown') {
+  const safeStage = VERIFICATION_STAGES.has(stage) ? stage : 'unknown';
+  const code =
+    error && typeof error === 'object' && typeof error.code === 'string'
+      ? error.code
+      : '';
+  const message = error instanceof Error ? error.message : '';
+
+  let failureClass;
+  if (/unsupported startup parameter/i.test(message)) {
+    failureClass = 'POOLED_STARTUP_PARAMETER_UNSUPPORTED';
+  } else if (code === '28P01' || code === '28000') {
+    failureClass = 'DATABASE_AUTHENTICATION_FAILED';
+  } else if (code === '42501') {
+    failureClass = 'DATABASE_METADATA_PERMISSION_DENIED';
+  } else if (code === '57014' || message === 'Query read timeout') {
+    failureClass = 'DATABASE_METADATA_QUERY_TIMEOUT';
+  } else if (code.startsWith('42')) {
+    failureClass = 'DATABASE_METADATA_QUERY_INVALID';
+  } else if (code.startsWith('08') || /^E(?:CONN|HOST|PIPE|AI_)/.test(code)) {
+    failureClass = 'DATABASE_CONNECTION_FAILED';
+  } else if (message === 'Runtime database role metadata is incomplete') {
+    failureClass = 'DATABASE_ROLE_METADATA_INCOMPLETE';
+  } else if (
+    message === 'Production runtime database role is not least-privilege ready'
+  ) {
+    failureClass = 'DATABASE_ROLE_NOT_LEAST_PRIVILEGE';
+  } else if (safeStage === 'configuration') {
+    failureClass = 'RUNTIME_DATABASE_CONFIGURATION_INVALID';
+  } else if (safeStage === 'connection') {
+    failureClass = 'DATABASE_CONNECTION_FAILED';
+  } else if (safeStage === 'transaction' || safeStage === 'metadata-query') {
+    failureClass = 'DATABASE_METADATA_QUERY_FAILED';
+  } else {
+    failureClass = 'UNKNOWN_VERIFICATION_FAILURE';
+  }
+
+  return { stage: safeStage, failureClass };
+}
+
+class RuntimeRoleVerificationError extends Error {
+  constructor(stage, cause) {
+    super('Production runtime database-role verification failed');
+    this.name = 'RuntimeRoleVerificationError';
+    this.stage = stage;
+    this.cause = cause;
+  }
+}
+
 async function run() {
-  const client = new Client({
-    application_name: 'eduai-runtime-role-verifier',
-    connectionString: loadRuntimeDatabaseUrl(process.cwd()),
-    connectionTimeoutMillis: 10000,
-    options: '-c default_transaction_read_only=on',
-    query_timeout: 10000,
-    statement_timeout: 10000,
-  });
+  let stage = 'configuration';
+  let client;
+  let transactionOpen = false;
 
   try {
+    const connectionString = loadRuntimeDatabaseUrl(process.cwd());
+    client = new Client(buildRuntimeClientConfig(connectionString));
+
+    stage = 'connection';
     await client.connect();
+
+    stage = 'transaction';
+    await client.query('BEGIN TRANSACTION READ ONLY');
+    transactionOpen = true;
+
+    stage = 'metadata-query';
     const result = await client.query(RUNTIME_ROLE_QUERY);
     if (result.rowCount !== 1) {
       throw new Error('Runtime database role metadata is incomplete');
     }
 
+    stage = 'assessment';
     const assessment = assessRuntimeRole(result.rows[0]);
+
+    stage = 'transaction';
+    await client.query('COMMIT');
+    transactionOpen = false;
+
     logAssessment(assessment);
+
+    stage = 'assertion';
     assertRuntimeRoleReady(assessment);
+  } catch (error) {
+    if (transactionOpen) {
+      await client.query('ROLLBACK').catch(() => undefined);
+    }
+    throw new RuntimeRoleVerificationError(stage, error);
   } finally {
-    await client.end().catch(() => undefined);
+    await client?.end().catch(() => undefined);
   }
 }
 
 if (require.main === module) {
-  run().catch(() => {
+  run().catch((error) => {
+    const diagnostic =
+      error instanceof RuntimeRoleVerificationError
+        ? createSafeFailureDiagnostic(error.cause, error.stage)
+        : createSafeFailureDiagnostic(error);
     console.error('Production runtime database-role verification failed');
+    console.error(`runtimeRoleVerificationStage: ${diagnostic.stage}`);
+    console.error(
+      `runtimeRoleVerificationFailureClass: ${diagnostic.failureClass}`,
+    );
     process.exitCode = 1;
   });
 }
@@ -181,5 +273,7 @@ module.exports = {
   RUNTIME_ROLE_QUERY,
   assessRuntimeRole,
   assertRuntimeRoleReady,
+  buildRuntimeClientConfig,
+  createSafeFailureDiagnostic,
   loadRuntimeDatabaseUrl,
 };
