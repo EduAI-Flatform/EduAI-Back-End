@@ -73,6 +73,9 @@ model User {
   commerceReconciliationsResolved CommerceReconciliationCase[] @relation("CommerceReconciliationResolver")
   commerceLifecycleEvents CommerceLifecycleEvent[] @relation("CommerceLifecycleActor")
   commerceIdempotencyRecords CommerceIdempotencyRecord[] @relation("CommerceIdempotencyActor")
+  membershipVersionsCreated MembershipPlanVersion[] @relation("MembershipVersionCreator")
+  membershipVersionsPublished MembershipPlanVersion[] @relation("MembershipVersionPublisher")
+  membershipVersionsArchived MembershipPlanVersion[] @relation("MembershipVersionArchiver")
 
   @@index([status])
   @@index([deletedAt])

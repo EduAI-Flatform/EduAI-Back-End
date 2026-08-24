@@ -31,6 +31,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { AbuseRateLimitGuard } from './common/security/abuse-rate-limit.guard';
 import { MonitoringModule } from './common/monitoring/monitoring.module';
 import { CommerceModule } from './modules/commerce/commerce.module';
+import { MembershipsModule } from './modules/memberships/memberships.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { CommerceModule } from './modules/commerce/commerce.module';
     CommunityModule,
     AiModule,
     CommerceModule,
+    MembershipsModule,
     VouchersModule,
     ScholarshipsModule,
     TmiModule,

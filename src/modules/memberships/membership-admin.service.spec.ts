@@ -1,0 +1,155 @@
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import { MembershipPlanVersionStatus } from '../../../generated/prisma/client';
+import { MembershipAdminService } from './membership-admin.service';
+
+const version = {
+  id: 'version-id',
+  planId: 'plan-id',
+  versionNumber: 1,
+  displayName: 'Gold',
+  description: null,
+  baseMonthlyPriceAmountMinor: 100_000n,
+  currency: 'VND',
+  salesStartAt: null,
+  salesEndAt: null,
+  status: MembershipPlanVersionStatus.draft,
+  createdById: 'admin-id',
+  publishedById: null,
+  archivedById: null,
+  createdAt: new Date('2026-08-24T00:00:00.000Z'),
+  updatedAt: new Date('2026-08-24T00:00:00.000Z'),
+  publishedAt: null,
+  archivedAt: null,
+  durationOptions: [
+    {
+      id: 'duration-id',
+      versionId: 'version-id',
+      months: 3,
+      priceAmountMinor: null,
+      discountPercent: 25,
+      displayOrder: 0,
+      createdAt: new Date('2026-08-24T00:00:00.000Z'),
+    },
+  ],
+};
+
+function harness() {
+  const tx = {
+    $queryRaw: jest.fn(),
+    membershipPlan: {
+      create: jest.fn().mockResolvedValue({
+        id: 'plan-id',
+        code: 'GOLD',
+        status: 'active',
+        createdAt: version.createdAt,
+        updatedAt: version.updatedAt,
+        archivedAt: null,
+        versions: [version],
+      }),
+      findUnique: jest.fn().mockResolvedValue({ id: 'plan-id', status: 'active' }),
+      update: jest.fn(),
+    },
+    membershipPlanVersion: {
+      aggregate: jest.fn().mockResolvedValue({ _max: { versionNumber: 1 } }),
+      create: jest.fn().mockResolvedValue({ ...version, versionNumber: 2 }),
+      findUnique: jest.fn().mockResolvedValue(version),
+      update: jest.fn().mockResolvedValue({
+        ...version,
+        status: MembershipPlanVersionStatus.published,
+        publishedById: 'admin-id',
+        publishedAt: new Date('2026-08-24T01:00:00.000Z'),
+      }),
+    },
+  };
+  const prisma = {
+    $transaction: jest.fn(async (operation) => operation(tx)),
+    membershipPlan: { count: jest.fn(), findMany: jest.fn() },
+  };
+  const audit = { record: jest.fn() };
+  return {
+    service: new MembershipAdminService(prisma as never, audit as never),
+    prisma,
+    tx,
+    audit,
+  };
+}
+
+const input = {
+  code: 'gold',
+  displayName: ' Gold ',
+  baseMonthlyPriceAmountMinor: '100000',
+  currency: 'VND' as const,
+  durations: [{ months: 3, discountPercent: 25, displayOrder: 0 }],
+};
+
+describe('MembershipAdminService', () => {
+  it('creates an arbitrary stable plan and version with string-money output', async () => {
+    const { service, tx, audit } = harness();
+
+    await expect(service.createPlan('admin-id', input)).resolves.toMatchObject({
+      code: 'GOLD',
+      versions: [
+        {
+          displayName: 'Gold',
+          baseMonthlyPriceAmountMinor: '100000',
+          durationOptions: [{ effectivePriceAmountMinor: '225000' }],
+        },
+      ],
+    });
+    expect(tx.membershipPlan.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          code: 'GOLD',
+          versions: {
+            create: expect.objectContaining({
+              baseMonthlyPriceAmountMinor: 100_000n,
+              durationOptions: {
+                create: [
+                  expect.objectContaining({ months: 3, discountPercent: 25 }),
+                ],
+              },
+            }),
+          },
+        }),
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes version numbering and creates a new version instead of editing history', async () => {
+    const { service, tx } = harness();
+
+    await service.createVersion('admin-id', 'plan-id', input);
+
+    expect(tx.$queryRaw).toHaveBeenCalled();
+    expect(tx.membershipPlanVersion.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ versionNumber: 2 }) }),
+    );
+  });
+
+  it('publishes a draft once and rejects mutation of published history', async () => {
+    const { service, tx } = harness();
+    await expect(service.publishVersion('admin-id', 'version-id')).resolves.toMatchObject({
+      status: 'PUBLISHED',
+    });
+
+    tx.membershipPlanVersion.findUnique.mockResolvedValueOnce({
+      ...version,
+      status: MembershipPlanVersionStatus.published,
+    });
+    await expect(service.publishVersion('admin-id', 'version-id')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('rejects monetary input outside the PostgreSQL 64-bit range', async () => {
+    const { service } = harness();
+
+    expect(() =>
+      service.createPlan('admin-id', {
+        ...input,
+        baseMonthlyPriceAmountMinor: '9223372036854775808',
+      }),
+    ).toThrow(BadRequestException);
+  });
+});

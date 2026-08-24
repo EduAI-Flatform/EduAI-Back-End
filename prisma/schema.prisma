@@ -268,6 +268,9 @@ model User {
   commerceReconciliationsResolved CommerceReconciliationCase[] @relation("CommerceReconciliationResolver")
   commerceLifecycleEvents CommerceLifecycleEvent[] @relation("CommerceLifecycleActor")
   commerceIdempotencyRecords CommerceIdempotencyRecord[] @relation("CommerceIdempotencyActor")
+  membershipVersionsCreated MembershipPlanVersion[] @relation("MembershipVersionCreator")
+  membershipVersionsPublished MembershipPlanVersion[] @relation("MembershipVersionPublisher")
+  membershipVersionsArchived MembershipPlanVersion[] @relation("MembershipVersionArchiver")
 
   @@index([status])
   @@index([deletedAt])
@@ -276,6 +279,7 @@ model User {
 
 enum CommerceProductType {
   course
+  membership
 
   @@map("commerce_product_type")
 }
@@ -420,12 +424,14 @@ model CommerceProduct {
   id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type        CommerceProductType   @default(course)
   courseId    String?               @unique @map("course_id") @db.Uuid
+  membershipPlanVersionId String?   @unique @map("membership_plan_version_id") @db.Uuid
   sellerId    String                @map("seller_id") @db.Uuid
   status      CommerceProductStatus @default(draft)
   createdAt   DateTime              @default(now()) @map("created_at")
   updatedAt   DateTime              @updatedAt @map("updated_at")
   archivedAt  DateTime?             @map("archived_at")
   course      Course?               @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  membershipPlanVersion MembershipPlanVersion? @relation(fields: [membershipPlanVersionId], references: [id], onDelete: Restrict)
   seller      User                  @relation("CommerceProductSeller", fields: [sellerId], references: [id], onDelete: Restrict)
   cartLines   CommerceCartLine[]
   orderLines  CommerceOrderLine[]
@@ -769,6 +775,82 @@ model CommerceIdempotencyRecord {
   @@index([status, lockedUntil])
   @@index([resourceType, resourceId])
   @@map("commerce_idempotency_records")
+}
+
+enum MembershipPlanStatus {
+  active
+  archived
+
+  @@map("membership_plan_status")
+}
+
+enum MembershipPlanVersionStatus {
+  draft
+  published
+  archived
+
+  @@map("membership_plan_version_status")
+}
+
+model MembershipPlan {
+  id         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String               @unique @db.VarChar(64)
+  status     MembershipPlanStatus @default(active)
+  createdAt  DateTime             @default(now()) @map("created_at")
+  updatedAt  DateTime             @updatedAt @map("updated_at")
+  archivedAt DateTime?            @map("archived_at")
+  versions   MembershipPlanVersion[]
+
+  @@index([status, updatedAt])
+  @@index([archivedAt])
+  @@map("membership_plans")
+}
+
+model MembershipPlanVersion {
+  id                          String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId                      String                      @map("plan_id") @db.Uuid
+  versionNumber               Int                         @map("version_number")
+  displayName                 String                      @map("display_name") @db.VarChar(120)
+  description                 String?                     @db.VarChar(2000)
+  baseMonthlyPriceAmountMinor BigInt                      @map("base_monthly_price_amount_minor")
+  currency                    String                      @default("VND") @db.VarChar(3)
+  salesStartAt                DateTime?                   @map("sales_start_at")
+  salesEndAt                  DateTime?                   @map("sales_end_at")
+  status                      MembershipPlanVersionStatus @default(draft)
+  createdById                 String                      @map("created_by_id") @db.Uuid
+  publishedById               String?                     @map("published_by_id") @db.Uuid
+  archivedById                String?                     @map("archived_by_id") @db.Uuid
+  createdAt                   DateTime                    @default(now()) @map("created_at")
+  updatedAt                   DateTime                    @updatedAt @map("updated_at")
+  publishedAt                 DateTime?                   @map("published_at")
+  archivedAt                  DateTime?                   @map("archived_at")
+  plan                        MembershipPlan              @relation(fields: [planId], references: [id], onDelete: Restrict)
+  createdBy                   User                        @relation("MembershipVersionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy                 User?                       @relation("MembershipVersionPublisher", fields: [publishedById], references: [id], onDelete: Restrict)
+  archivedBy                  User?                       @relation("MembershipVersionArchiver", fields: [archivedById], references: [id], onDelete: Restrict)
+  durationOptions             MembershipDurationOption[]
+  commerceProduct             CommerceProduct?
+
+  @@unique([planId, versionNumber])
+  @@index([planId, status, versionNumber])
+  @@index([status, salesStartAt, salesEndAt])
+  @@map("membership_plan_versions")
+}
+
+model MembershipDurationOption {
+  id               String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId        String                @map("version_id") @db.Uuid
+  months           Int
+  priceAmountMinor BigInt?               @map("price_amount_minor")
+  discountPercent  Int?                  @map("discount_percent")
+  displayOrder     Int                   @map("display_order")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  version          MembershipPlanVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+
+  @@unique([versionId, months])
+  @@unique([versionId, displayOrder])
+  @@index([versionId, displayOrder])
+  @@map("membership_duration_options")
 }
 
 model Role {

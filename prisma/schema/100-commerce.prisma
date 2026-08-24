@@ -1,5 +1,6 @@
 enum CommerceProductType {
   course
+  membership
 
   @@map("commerce_product_type")
 }
@@ -144,12 +145,14 @@ model CommerceProduct {
   id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type        CommerceProductType   @default(course)
   courseId    String?               @unique @map("course_id") @db.Uuid
+  membershipPlanVersionId String?   @unique @map("membership_plan_version_id") @db.Uuid
   sellerId    String                @map("seller_id") @db.Uuid
   status      CommerceProductStatus @default(draft)
   createdAt   DateTime              @default(now()) @map("created_at")
   updatedAt   DateTime              @updatedAt @map("updated_at")
   archivedAt  DateTime?             @map("archived_at")
   course      Course?               @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  membershipPlanVersion MembershipPlanVersion? @relation(fields: [membershipPlanVersionId], references: [id], onDelete: Restrict)
   seller      User                  @relation("CommerceProductSeller", fields: [sellerId], references: [id], onDelete: Restrict)
   cartLines   CommerceCartLine[]
   orderLines  CommerceOrderLine[]
