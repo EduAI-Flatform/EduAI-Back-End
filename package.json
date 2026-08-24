@@ -10,6 +10,7 @@
     "db:verify:demo": "npm run prisma:merge && ts-node prisma/verify-demo.ts",
     "db:verify:final-demo": "npm run prisma:merge && ts-node prisma/verify-final-demo.ts",
     "db:verify:production-runtime-role": "node scripts/verify-production-runtime-role.cjs",
+    "config:verify:production-commerce": "node scripts/verify-production-commerce-config.cjs",
     "db:reset:final-demo": "npm run prisma:merge && ts-node prisma/reset-final-demo.ts",
     "db:seed:minimal": "npm run prisma:merge && ts-node prisma/seed-minimal.ts",
     "db:verify:minimal": "npm run prisma:merge && ts-node prisma/verify-minimal.ts",

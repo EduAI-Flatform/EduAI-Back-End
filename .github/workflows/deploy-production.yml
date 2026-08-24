@@ -238,6 +238,9 @@ jobs:
           echo "Installing dependencies..."
           npm ci
 
+          echo "Verifying permanent Commerce configuration..."
+          npm run config:verify:production-commerce
+
           echo "Generating Prisma client..."
           npm run prisma:generate
 
