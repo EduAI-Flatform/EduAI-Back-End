@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import {
   Prisma,
   VoucherKind,
@@ -62,6 +63,7 @@ const voucherRuntimeSelect = {
   courseScopes: { select: { courseId: true } },
   categoryScopes: { select: { categorySlug: true } },
   eligibleUsers: { select: { userId: true } },
+  updatedAt: true,
 } satisfies Prisma.VoucherSelect;
 
 type VoucherAdminRecord = Prisma.VoucherGetPayload<{
@@ -70,6 +72,12 @@ type VoucherAdminRecord = Prisma.VoucherGetPayload<{
 type VoucherRuntimeRecord = Prisma.VoucherGetPayload<{
   select: typeof voucherRuntimeSelect;
 }>;
+
+export interface CommerceVoucherDecision {
+  voucherId: string;
+  discountAmountMinor: number;
+  sourceVersion: string;
+}
 
 export interface VoucherResponse {
   id: string;
@@ -333,13 +341,95 @@ export class VouchersService {
     });
     if (!voucher) this.throwDecision('code_invalid');
     const course = await this.findPurchasableCourse(this.prisma, courseId);
-    const userRedemptionCount = await this.prisma.voucherRedemption.count({
-      where: { voucherId: voucher.id, userId },
-    });
+    const now = new Date();
+    const [redemptionCount, reservationCount, userRedemptionCount, userReservationCount] =
+      await Promise.all([
+        this.prisma.voucherRedemption.count({ where: { voucherId: voucher.id } }),
+        this.prisma.commercePromotionReservation.count({
+          where: { voucherId: voucher.id, status: 'reserved', expiresAt: { gt: now } },
+        }),
+        this.prisma.voucherRedemption.count({ where: { voucherId: voucher.id, userId } }),
+        this.prisma.commercePromotionReservation.count({
+          where: {
+            voucherId: voucher.id,
+            buyerId: userId,
+            status: 'reserved',
+            expiresAt: { gt: now },
+          },
+        }),
+      ]);
     return this.toPreviewResponse(
       voucher,
-      this.evaluate(voucher, course, userId, code, userRedemptionCount),
+      this.evaluate(
+        voucher,
+        course,
+        userId,
+        code,
+        redemptionCount + reservationCount,
+        userRedemptionCount + userReservationCount,
+        now,
+      ),
     );
+  }
+
+  async evaluateForCommerce(
+    tx: Prisma.TransactionClient,
+    input: {
+      userId: string;
+      courseId: string;
+      categorySlug: string | null;
+      code: string;
+      priceAmountMinor: number;
+      currency: string;
+    },
+  ): Promise<CommerceVoucherDecision> {
+    const voucherId = await this.findVoucherId(tx, input.code);
+    await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "vouchers" WHERE id = ${voucherId} FOR UPDATE
+    `;
+    const voucher = await tx.voucher.findUnique({
+      where: { id: voucherId },
+      select: voucherRuntimeSelect,
+    });
+    if (!voucher) this.throwDecision('code_invalid');
+
+    const now = new Date();
+    const [redemptionCount, reservationCount, userRedemptionCount, userReservationCount] =
+      await Promise.all([
+        tx.voucherRedemption.count({ where: { voucherId } }),
+        tx.commercePromotionReservation.count({
+          where: { voucherId, status: 'reserved', expiresAt: { gt: now } },
+        }),
+        tx.voucherRedemption.count({ where: { voucherId, userId: input.userId } }),
+        tx.commercePromotionReservation.count({
+          where: {
+            voucherId,
+            buyerId: input.userId,
+            status: 'reserved',
+            expiresAt: { gt: now },
+          },
+        }),
+      ]);
+    const decision = this.evaluate(
+      voucher,
+      {
+        id: input.courseId,
+        categorySlug: input.categorySlug,
+        priceAmountMinor: input.priceAmountMinor,
+        priceCurrency: input.currency,
+      },
+      input.userId,
+      input.code,
+      redemptionCount + reservationCount,
+      userRedemptionCount + userReservationCount,
+      now,
+    );
+    if (!decision.eligible) this.throwDecision(decision.reason);
+    return {
+      voucherId,
+      discountAmountMinor: decision.discountAmountMinor,
+      sourceVersion: voucher.updatedAt.toISOString(),
+    };
   }
 
   async redeem(
@@ -375,15 +465,26 @@ export class VouchersService {
       }
 
       const course = await this.findPurchasableCourse(tx, courseId);
-      const userRedemptionCount = await tx.voucherRedemption.count({
-        where: { voucherId, userId },
-      });
+      const now = new Date();
+      const [redemptionCount, reservationCount, userRedemptionCount, userReservationCount] =
+        await Promise.all([
+          tx.voucherRedemption.count({ where: { voucherId } }),
+          tx.commercePromotionReservation.count({
+            where: { voucherId, status: 'reserved', expiresAt: { gt: now } },
+          }),
+          tx.voucherRedemption.count({ where: { voucherId, userId } }),
+          tx.commercePromotionReservation.count({
+            where: { voucherId, buyerId: userId, status: 'reserved', expiresAt: { gt: now } },
+          }),
+        ]);
       const decision = this.evaluate(
         voucher,
         course,
         userId,
         input.code,
-        userRedemptionCount,
+        redemptionCount + reservationCount,
+        userRedemptionCount + userReservationCount,
+        now,
       );
       if (!decision.eligible) this.throwDecision(decision.reason);
 
@@ -415,7 +516,7 @@ export class VouchersService {
             discountAmountMinor: redemption.discountAmountMinor,
             finalAmountMinor: redemption.finalAmountMinor,
             currency: redemption.currency,
-            redemptionKey: input.redemptionKey,
+            operationId: randomUUID(),
           },
         },
         tx,
@@ -445,6 +546,7 @@ export class VouchersService {
         id: courseId,
         status: 'published',
         visibility: 'public',
+        moderationStatus: 'clear',
         deletedAt: null,
       },
       select: {
@@ -463,7 +565,9 @@ export class VouchersService {
     course: Awaited<ReturnType<VouchersService['findPurchasableCourse']>>,
     userId: string,
     code: string,
+    redeemedCount: number,
     userRedemptionCount: number,
+    now = new Date(),
   ): VoucherDecision {
     const policy: VoucherPolicy = {
       code: voucher.code,
@@ -476,7 +580,7 @@ export class VouchersService {
       minimumCoursePriceMinor: voucher.minimumCoursePriceMinor,
       maximumDiscountMinor: voucher.maximumDiscountMinor,
       usageLimit: voucher.usageLimit,
-      redeemedCount: voucher.redeemedCount,
+      redeemedCount,
       perUserLimit: voucher.perUserLimit,
       userRedemptionCount,
       courseIds: voucher.courseScopes.map(({ courseId }) => courseId),
@@ -484,7 +588,7 @@ export class VouchersService {
       eligibleUserIds: voucher.eligibleUsers.map(({ userId: id }) => id),
     };
     const context: VoucherEligibilityContext = {
-      now: new Date().toISOString(),
+      now: now.toISOString(),
       submittedCode: code,
       userId,
       courseId: course.id,

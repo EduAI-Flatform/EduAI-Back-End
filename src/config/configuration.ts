@@ -60,6 +60,7 @@ export interface BackendConfig {
   };
   commerce: {
     enabled: boolean;
+    idempotencySecret?: string;
   };
 }
 
@@ -128,6 +129,7 @@ export default function configuration(): BackendConfig {
     },
     commerce: {
       enabled: env.COMMERCE_ENABLED,
+      idempotencySecret: env.COMMERCE_IDEMPOTENCY_SECRET,
     },
   };
 }

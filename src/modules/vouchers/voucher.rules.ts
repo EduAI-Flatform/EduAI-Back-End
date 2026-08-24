@@ -78,7 +78,7 @@ export function evaluateVoucherEligibility(
   const startsAt = Date.parse(policy.startsAt);
   const endsAt = Date.parse(policy.endsAt);
   if (now < startsAt) return fail('voucher_not_started');
-  if (now > endsAt) return fail('voucher_expired');
+  if (now >= endsAt) return fail('voucher_expired');
   if (
     policy.minimumCoursePriceMinor !== null &&
     baseAmount < policy.minimumCoursePriceMinor

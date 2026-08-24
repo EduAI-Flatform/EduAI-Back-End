@@ -9,10 +9,30 @@ describe('validateEnv', () => {
     };
 
     expect(validateEnv(base).COMMERCE_ENABLED).toBe(false);
-    expect(validateEnv({ ...base, COMMERCE_ENABLED: 'true' }).COMMERCE_ENABLED).toBe(true);
+    expect(
+      validateEnv({
+        ...base,
+        COMMERCE_ENABLED: 'true',
+        COMMERCE_IDEMPOTENCY_SECRET: 'a'.repeat(32),
+      }).COMMERCE_ENABLED,
+    ).toBe(true);
     expect(() => validateEnv({ ...base, COMMERCE_ENABLED: 'yes' })).toThrow(
       'COMMERCE_ENABLED must be true or false',
     );
+  });
+
+  it('requires a dedicated idempotency secret when Commerce is enabled', () => {
+    const base = {
+      DATABASE_URL: 'postgresql://local/test',
+      JWT_ACCESS_SECRET: 'access-secret',
+      JWT_REFRESH_SECRET: 'refresh-secret',
+      COMMERCE_ENABLED: 'true',
+    };
+
+    expect(() => validateEnv(base)).toThrow('COMMERCE_IDEMPOTENCY_SECRET');
+    expect(() =>
+      validateEnv({ ...base, COMMERCE_IDEMPOTENCY_SECRET: 'short' }),
+    ).toThrow('COMMERCE_IDEMPOTENCY_SECRET');
   });
 
   it('requires an endpoint only when monitoring is enabled', () => {

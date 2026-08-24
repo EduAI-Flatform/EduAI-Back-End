@@ -21,6 +21,7 @@ const voucher = {
   courseScopes: [],
   categoryScopes: [{ categorySlug: 'ai-foundations' }],
   eligibleUsers: [],
+  updatedAt: new Date('2026-08-01T00:00:00.000Z'),
 };
 
 const course = {
@@ -57,6 +58,7 @@ function createHarness() {
         createdAt: new Date('2026-08-18T00:00:00.000Z'),
       }),
     },
+    commercePromotionReservation: { count: jest.fn().mockResolvedValue(0) },
   };
   const prisma = {
     $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
@@ -95,7 +97,10 @@ describe('VouchersService.redeem', () => {
       expect.objectContaining({ data: { redeemedCount: { increment: 1 } } }),
     );
     expect(auditService.record).toHaveBeenCalledWith(
-      expect.objectContaining({ action: AuditAction.VoucherRedeemed }),
+      expect.objectContaining({
+        action: AuditAction.VoucherRedeemed,
+        metadata: expect.not.objectContaining({ redemptionKey: expect.anything() }),
+      }),
       tx,
     );
   });
@@ -128,10 +133,7 @@ describe('VouchersService.redeem', () => {
 
   it('rejects a quota-exhausted voucher before writing a redemption', async () => {
     const { service, tx } = createHarness();
-    tx.voucher.findUnique.mockReset();
-    tx.voucher.findUnique
-      .mockResolvedValueOnce({ id: voucher.id })
-      .mockResolvedValueOnce({ ...voucher, redeemedCount: 2 });
+    tx.voucherRedemption.count.mockResolvedValue(2);
 
     await expect(
       service.redeem('student-id', 'course-id', {
@@ -142,5 +144,37 @@ describe('VouchersService.redeem', () => {
 
     expect(tx.voucherRedemption.create).not.toHaveBeenCalled();
     expect(tx.voucher.update).not.toHaveBeenCalled();
+  });
+
+  it('counts active Commerce reservations against the legacy redemption quota', async () => {
+    const { service, tx } = createHarness();
+    tx.commercePromotionReservation.count.mockResolvedValue(2);
+
+    await expect(
+      service.redeem('student-id', 'course-id', {
+        code: 'EDUAI20',
+        redemptionKey: 'request-1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(tx.voucherRedemption.create).not.toHaveBeenCalled();
+  });
+
+  it('locks and evaluates the shared quota boundary for Commerce checkout', async () => {
+    const { service, tx } = createHarness();
+
+    await expect(
+      service.evaluateForCommerce(tx as never, {
+        userId: 'student-id',
+        courseId: course.id,
+        categorySlug: course.categorySlug,
+        code: voucher.code,
+        priceAmountMinor: course.priceAmountMinor,
+        currency: course.priceCurrency,
+      }),
+    ).resolves.toMatchObject({ voucherId: voucher.id, discountAmountMinor: 200000 });
+
+    expect(tx.$queryRaw).toHaveBeenCalled();
+    expect(tx.commercePromotionReservation.count).toHaveBeenCalled();
   });
 });

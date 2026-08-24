@@ -4,11 +4,13 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { CommerceController } from './commerce.controller';
 import { CommerceService } from './commerce.service';
+import { CommerceOrderService } from './commerce-order.service';
+import { VouchersModule } from '../vouchers/vouchers.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, AuditModule],
+  imports: [PrismaModule, AuthModule, AuditModule, VouchersModule],
   controllers: [CommerceController],
-  providers: [CommerceService],
-  exports: [CommerceService],
+  providers: [CommerceService, CommerceOrderService],
+  exports: [CommerceService, CommerceOrderService],
 })
 export class CommerceModule {}

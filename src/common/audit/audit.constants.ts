@@ -18,6 +18,7 @@ export const AuditAction = {
   CommerceCartItemAdded: 'COMMERCE_CART_ITEM_ADDED',
   CommerceCartItemRemoved: 'COMMERCE_CART_ITEM_REMOVED',
   CommerceCartCleared: 'COMMERCE_CART_CLEARED',
+  CommerceOrderCreated: 'COMMERCE_ORDER_CREATED',
   ScholarshipCreated: 'SCHOLARSHIP_CREATED',
   ScholarshipUpdated: 'SCHOLARSHIP_UPDATED',
   ScholarshipApplied: 'SCHOLARSHIP_APPLIED',

@@ -11,7 +11,12 @@ describe('CommerceController cart routes', () => {
       getCart: jest.fn().mockResolvedValue({ id: 'cart-id' }),
       removeCourse: jest.fn().mockResolvedValue({ id: 'cart-id' }),
     };
-    return { controller: new CommerceController(service as never), service };
+    const orderService = { createOrder: jest.fn().mockResolvedValue({ id: 'order-id' }) };
+    return {
+      controller: new CommerceController(service as never, orderService as never),
+      service,
+      orderService,
+    };
   }
 
   it('binds every cart mutation to the authenticated learner', async () => {
@@ -24,6 +29,19 @@ describe('CommerceController cart routes', () => {
     expect(service.addCourse).toHaveBeenCalledWith('student-id', 'course-id');
     expect(service.removeCourse).toHaveBeenCalledWith('student-id', 'course-id');
     expect(service.clearCart).toHaveBeenCalledWith('student-id');
+  });
+
+  it('forwards the idempotency key only to server-side order creation', async () => {
+    const { controller, orderService } = createController();
+    const input = { voucherApplications: [{ courseId: 'course-id', code: 'SAVE20' }] };
+
+    await controller.createOrder('student-id', 'request-key', input);
+
+    expect(orderService.createOrder).toHaveBeenCalledWith(
+      'student-id',
+      'request-key',
+      input,
+    );
   });
 
   it('requires the student role and authentication guards', () => {
