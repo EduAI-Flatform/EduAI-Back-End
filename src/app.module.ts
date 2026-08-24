@@ -30,6 +30,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { AbuseRateLimitGuard } from './common/security/abuse-rate-limit.guard';
 import { MonitoringModule } from './common/monitoring/monitoring.module';
+import { CommerceModule } from './modules/commerce/commerce.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { MonitoringModule } from './common/monitoring/monitoring.module';
     ClassroomsModule,
     CommunityModule,
     AiModule,
+    CommerceModule,
     VouchersModule,
     ScholarshipsModule,
     TmiModule,
