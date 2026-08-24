@@ -258,4 +258,51 @@ describe('CommerceOrderService', () => {
     });
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
   });
+
+  it('converges concurrent duplicate checkout requests on one order and one audit', async () => {
+    const { service, prisma, tx, audit } = createHarness();
+    let claimed = false;
+    let completed = false;
+    let releaseCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+
+    tx.commerceIdempotencyRecord.findUnique.mockImplementation(async () =>
+      claimed
+        ? {
+            status: completed ? 'completed' : 'in_progress',
+            requestHash: createHash('sha256')
+              .update(JSON.stringify({ voucherApplications: [] }))
+              .digest('hex'),
+            resourceId: completed ? 'order-id' : null,
+          }
+        : null,
+    );
+    tx.commerceIdempotencyRecord.create.mockImplementation(async () => {
+      if (!claimed) {
+        claimed = true;
+        return { id: 'idempotency-id' };
+      }
+      await completion;
+      throw new Prisma.PrismaClientKnownRequestError('duplicate request', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+    });
+    tx.commerceIdempotencyRecord.update.mockImplementation(async () => {
+      completed = true;
+      releaseCompletion();
+      return { id: 'idempotency-id' };
+    });
+
+    const [first, replay] = await Promise.all([
+      service.createOrder('student-id', 'same-request-key', {}),
+      service.createOrder('student-id', 'same-request-key', {}),
+    ]);
+
+    expect(first.id).toBe('order-id');
+    expect(replay.id).toBe('order-id');
+    expect(tx.commerceOrder.create).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+  });
 });
