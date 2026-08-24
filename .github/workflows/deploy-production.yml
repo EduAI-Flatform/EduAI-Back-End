@@ -247,6 +247,9 @@ jobs:
           echo "Applying database migrations with isolated role..."
           npm run prisma:migrate:production
 
+          echo "Verifying least-privilege runtime database role..."
+          npm run db:verify:production-runtime-role
+
           echo "Building backend..."
           npm run build
 
