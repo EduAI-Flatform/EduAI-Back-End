@@ -18,6 +18,7 @@ import {
   CreateMembershipPlanDto,
   CreateMembershipPlanVersionDto,
   ListMembershipPlansQueryDto,
+  ListMembershipAvailableCoursesQueryDto,
   MembershipDurationInputDto,
   CreateServiceEntitlementDefinitionDto,
   ConfigureMembershipPlanEntitlementDto,
@@ -275,6 +276,37 @@ export class MembershipAdminService {
     ]);
     return {
       items: items.map((plan) => this.planResponse(plan)),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: Math.ceil(total / query.pageSize),
+    };
+  }
+
+  async listAvailableCourses(query: ListMembershipAvailableCoursesQueryDto) {
+    const where: Prisma.CourseWhereInput = {
+      deletedAt: null,
+      status: 'published',
+      moderationStatus: 'clear',
+      ...(query.search ? {
+        OR: [
+          { title: { contains: query.search, mode: 'insensitive' } },
+          { slug: { contains: query.search, mode: 'insensitive' } },
+        ],
+      } : {}),
+    };
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.course.count({ where }),
+      this.prisma.course.findMany({
+        where,
+        orderBy: [{ title: 'asc' }, { id: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+        select: { id: true, title: true, slug: true, visibility: true },
+      }),
+    ]);
+    return {
+      items: items.map((course) => ({ ...course, visibility: course.visibility.toUpperCase() })),
       page: query.page,
       pageSize: query.pageSize,
       total,

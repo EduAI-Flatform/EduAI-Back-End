@@ -9,6 +9,7 @@ import {
   CreateMembershipPlanDto,
   CreateMembershipPlanVersionDto,
   ListMembershipPlansQueryDto,
+  ListMembershipAvailableCoursesQueryDto,
   CreateServiceEntitlementDefinitionDto,
   ConfigureMembershipPlanEntitlementDto,
   ListServiceEntitlementDefinitionsQueryDto,
@@ -34,6 +35,12 @@ export class MembershipAdminController {
   @ApiOkResponse({ description: 'Paginated membership plans and immutable version history.' })
   listPlans(@Query() query: ListMembershipPlansQueryDto) {
     return this.service.listPlans(query);
+  }
+
+  @Get('available-courses')
+  @ApiOkResponse({ description: 'Published, moderation-clear courses available for membership versions.' })
+  listAvailableCourses(@Query() query: ListMembershipAvailableCoursesQueryDto) {
+    return this.service.listAvailableCourses(query);
   }
 
   @Post('service-entitlements')

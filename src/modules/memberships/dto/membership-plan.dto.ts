@@ -93,6 +93,17 @@ export class ListMembershipPlansQueryDto {
   status?: 'active' | 'archived';
 }
 
+export class ListMembershipAvailableCoursesQueryDto {
+  @Type(() => Number) @IsOptional() @IsInt() @Min(1)
+  page = 1;
+
+  @Type(() => Number) @IsOptional() @IsInt() @Min(1) @Max(100)
+  pageSize = 25;
+
+  @IsOptional() @Transform(trim) @IsString() @MaxLength(120)
+  search?: string;
+}
+
 export class CreateServiceEntitlementDefinitionDto {
   @ApiProperty({ pattern: '^[A-Za-z][A-Za-z0-9_]{1,63}$' })
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toUpperCase() : value)

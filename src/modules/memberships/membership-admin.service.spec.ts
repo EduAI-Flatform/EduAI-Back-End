@@ -93,9 +93,10 @@ function harness() {
     },
   };
   const prisma = {
-    $transaction: jest.fn(async (operation) => operation(tx)),
+    $transaction: jest.fn(async (operation) => Array.isArray(operation) ? Promise.all(operation) : operation(tx)),
     membershipPlan: { count: jest.fn(), findMany: jest.fn() },
     serviceEntitlementDefinition: { findMany: jest.fn().mockResolvedValue([]) },
+    course: { count: jest.fn().mockResolvedValue(1), findMany: jest.fn().mockResolvedValue([{ id: 'course-id', title: 'Private course', slug: 'private-course', visibility: 'private' }]) },
   };
   const audit = { record: jest.fn() };
   return {
@@ -146,6 +147,18 @@ describe('MembershipAdminService', () => {
       }),
     );
     expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists bounded published clear courses without excluding private visibility', async () => {
+    const { service, prisma } = harness();
+    await expect(service.listAvailableCourses({ page: 1, pageSize: 25, search: 'Private' })).resolves.toEqual({
+      items: [{ id: 'course-id', title: 'Private course', slug: 'private-course', visibility: 'PRIVATE' }],
+      page: 1, pageSize: 25, total: 1, totalPages: 1,
+    });
+    expect(prisma.course.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ deletedAt: null, status: 'published', moderationStatus: 'clear' }),
+      take: 25,
+    }));
   });
 
   it('serializes version numbering and creates a new version instead of editing history', async () => {
