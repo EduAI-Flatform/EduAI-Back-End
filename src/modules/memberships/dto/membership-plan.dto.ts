@@ -169,3 +169,17 @@ export class ConfigureMembershipIncludedCourseDto {
   @IsOptional() @IsInt() @Min(0) @Max(3650)
   graceDays = 0;
 }
+
+export class CreateMembershipCheckoutDto {
+  @IsString() @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  versionId!: string;
+
+  @IsString() @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  durationOptionId!: string;
+
+  @IsOptional() @IsIn(['UPGRADE', 'DOWNGRADE'])
+  requestedChange?: 'UPGRADE' | 'DOWNGRADE';
+
+  @IsBoolean()
+  changedBenefitsConfirmed!: boolean;
+}

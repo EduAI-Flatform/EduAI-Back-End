@@ -1,6 +1,7 @@
 import {
   addCalendarMonths,
   calculateDurationPrice,
+  resolveMembershipChange,
 } from './membership.rules';
 
 describe('membership rules', () => {
@@ -54,5 +55,31 @@ describe('membership rules', () => {
     expect(addCalendarMonths(new Date('2027-12-31T10:15:00.000Z'), 2).toISOString()).toBe(
       '2028-02-29T10:15:00.000Z',
     );
+  });
+
+  it('extends an active renewal from expiry and an expired renewal from payment time', () => {
+    const paymentAt = new Date('2028-02-29T10:15:00.000Z');
+    expect(resolveMembershipChange({
+      action: 'RENEW',
+      months: 1,
+      paymentAt,
+      activeExpiresAt: new Date('2028-03-31T10:15:00.000Z'),
+    })).toEqual({ startsAt: new Date('2028-03-31T10:15:00.000Z'), endsAt: new Date('2028-04-30T10:15:00.000Z'), activatesImmediately: true });
+    expect(resolveMembershipChange({ action: 'RENEW', months: 1, paymentAt, activeExpiresAt: paymentAt })).toEqual({
+      startsAt: paymentAt,
+      endsAt: new Date('2028-03-29T10:15:00.000Z'),
+      activatesImmediately: true,
+    });
+  });
+
+  it('activates upgrades immediately and schedules downgrades for expiry', () => {
+    const paymentAt = new Date('2027-01-15T00:00:00.000Z');
+    const activeExpiresAt = new Date('2027-06-15T00:00:00.000Z');
+    expect(resolveMembershipChange({ action: 'UPGRADE', months: 3, paymentAt, activeExpiresAt })).toEqual({
+      startsAt: paymentAt, endsAt: new Date('2027-04-15T00:00:00.000Z'), activatesImmediately: true,
+    });
+    expect(resolveMembershipChange({ action: 'DOWNGRADE', months: 3, paymentAt, activeExpiresAt })).toEqual({
+      startsAt: activeExpiresAt, endsAt: new Date('2027-09-15T00:00:00.000Z'), activatesImmediately: false,
+    });
   });
 });

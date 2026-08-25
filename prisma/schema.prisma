@@ -276,6 +276,8 @@ model User {
   serviceEntitlementGrants ServiceEntitlementGrant[]
   serviceEntitlementUsage ServiceEntitlementUsage[]
   membershipIncludedCoursesCreated MembershipPlanIncludedCourse[] @relation("MembershipIncludedCourseCreator")
+  memberships MembershipSubscription[]
+  membershipCheckoutIntents MembershipCheckoutIntent[]
   courseAccessGrants CourseAccessGrant[]
 
   @@index([status])
@@ -511,6 +513,7 @@ model CommerceOrder {
   settlements           CommerceSettlement[]      @relation("OrderSettlements")
   reconciliationCases   CommerceReconciliationCase[]
   refunds               CommerceRefund[]
+  membershipCheckoutIntent MembershipCheckoutIntent?
 
   @@index([buyerId, createdAt])
   @@index([buyerId, status, createdAt])
@@ -821,6 +824,22 @@ enum ServiceEntitlementGrantStatus {
   @@map("service_entitlement_grant_status")
 }
 
+enum MembershipSubscriptionStatus {
+  active
+  cancelled
+
+  @@map("membership_subscription_status")
+}
+
+enum MembershipCheckoutAction {
+  purchase
+  renew
+  upgrade
+  downgrade
+
+  @@map("membership_checkout_action")
+}
+
 model MembershipPlan {
   id         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code       String               @unique @db.VarChar(64)
@@ -860,6 +879,8 @@ model MembershipPlanVersion {
   durationOptions             MembershipDurationOption[]
   serviceEntitlements         MembershipPlanEntitlement[]
   includedCourses             MembershipPlanIncludedCourse[]
+  subscriptions               MembershipSubscription[]
+  checkoutIntents             MembershipCheckoutIntent[]
   commerceProduct             CommerceProduct?
 
   @@unique([planId, versionNumber])
@@ -976,11 +997,49 @@ model MembershipDurationOption {
   displayOrder     Int                   @map("display_order")
   createdAt        DateTime              @default(now()) @map("created_at")
   version          MembershipPlanVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  checkoutIntents  MembershipCheckoutIntent[]
 
   @@unique([versionId, months])
   @@unique([versionId, displayOrder])
   @@index([versionId, displayOrder])
   @@map("membership_duration_options")
+}
+
+model MembershipSubscription {
+  id        String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String                       @map("user_id") @db.Uuid
+  versionId String                       @map("version_id") @db.Uuid
+  status    MembershipSubscriptionStatus @default(active)
+  startsAt  DateTime                     @map("starts_at")
+  expiresAt DateTime                     @map("expires_at")
+  createdAt DateTime                     @default(now()) @map("created_at")
+  updatedAt DateTime                     @updatedAt @map("updated_at")
+  user      User                         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  version   MembershipPlanVersion        @relation(fields: [versionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, status, expiresAt])
+  @@map("membership_subscriptions")
+}
+
+model MembershipCheckoutIntent {
+  id               String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId          String                   @unique @map("order_id") @db.Uuid
+  userId           String                   @map("user_id") @db.Uuid
+  versionId        String                   @map("version_id") @db.Uuid
+  durationOptionId String                   @map("duration_option_id") @db.Uuid
+  action           MembershipCheckoutAction
+  startsAt         DateTime                 @map("starts_at")
+  endsAt           DateTime                 @map("ends_at")
+  activatesImmediately Boolean              @map("activates_immediately")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  order            CommerceOrder            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  version          MembershipPlanVersion    @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  durationOption   MembershipDurationOption @relation(fields: [durationOptionId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([versionId])
+  @@map("membership_checkout_intents")
 }
 
 enum CourseAccessSourceType {

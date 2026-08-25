@@ -49,3 +49,25 @@ export function addCalendarMonths(start: Date, months: number): Date {
   result.setUTCDate(Math.min(originalDay, lastDay));
   return result;
 }
+
+export type MembershipChangeAction = 'PURCHASE' | 'RENEW' | 'UPGRADE' | 'DOWNGRADE';
+
+export function resolveMembershipChange(input: {
+  action: MembershipChangeAction;
+  months: number;
+  paymentAt: Date;
+  activeExpiresAt: Date | null;
+}) {
+  const isActive = input.activeExpiresAt !== null && input.activeExpiresAt > input.paymentAt;
+  const activeExpiry = isActive ? input.activeExpiresAt as Date : null;
+  const startsAt = input.action === 'RENEW' && activeExpiry
+    ? activeExpiry
+    : input.action === 'DOWNGRADE' && activeExpiry
+      ? activeExpiry
+      : input.paymentAt;
+  return {
+    startsAt,
+    endsAt: addCalendarMonths(startsAt, input.months),
+    activatesImmediately: input.action !== 'DOWNGRADE',
+  };
+}

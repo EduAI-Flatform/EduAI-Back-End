@@ -226,6 +226,7 @@ model CommerceOrder {
   settlements           CommerceSettlement[]      @relation("OrderSettlements")
   reconciliationCases   CommerceReconciliationCase[]
   refunds               CommerceRefund[]
+  membershipCheckoutIntent MembershipCheckoutIntent?
 
   @@index([buyerId, createdAt])
   @@index([buyerId, status, createdAt])
