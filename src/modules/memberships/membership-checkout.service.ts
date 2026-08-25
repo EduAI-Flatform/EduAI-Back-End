@@ -3,7 +3,6 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import {
   CommerceIdempotencyStatus,
   CommerceOrderStatus,
-  CommerceProductStatus,
   CommerceProductType,
   MembershipCheckoutAction,
   MembershipPlanStatus,
@@ -14,6 +13,7 @@ import {
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommerceProductService } from '../commerce/commerce-product.service';
 import { CreateMembershipCheckoutDto } from './dto/membership-plan.dto';
 import { calculateDurationPrice, resolveMembershipChange } from './membership.rules';
 
@@ -22,7 +22,11 @@ const IDEMPOTENCY_PATTERN = /^[\x21-\x7E]{8,128}$/;
 
 @Injectable()
 export class MembershipCheckoutService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly commerceProducts: CommerceProductService,
+  ) {}
 
   async catalog() {
     const now = new Date();
@@ -147,15 +151,15 @@ export class MembershipCheckoutService {
     const baseAmount = version.baseMonthlyPriceAmountMinor * BigInt(duration.months);
     const listAmount = duration.discountPercent === null ? amount : baseAmount;
     const discountAmount = listAmount - amount;
-    const product = await tx.commerceProduct.upsert({
-      where: { membershipPlanVersionId: version.id },
-      create: { type: CommerceProductType.membership, membershipPlanVersionId: version.id, sellerId: version.publishedById!, status: CommerceProductStatus.active },
-      update: { status: CommerceProductStatus.active },
-    });
+    const product = await this.commerceProducts.ensureActiveMembershipProduct(
+      tx,
+      version.id,
+      version.publishedById!,
+    );
     const orderId = randomUUID();
     const order = await tx.commerceOrder.create({ data: { id: orderId, orderNumber: `EDU-M-${now.getTime().toString(36).toUpperCase()}-${orderId.slice(0, 8).toUpperCase()}`, buyerId: learnerId, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, payableAmountMinor: amount, currency: CURRENCY, pricingPolicyVersion: 'MEMBERSHIP_V1' } });
-    await tx.commerceOrderLine.create({ data: { orderId, productId: product.id, productType: CommerceProductType.membership, productReferenceId: version.id, sellerId: product.sellerId, displayTitle: version.displayName, unitListPriceAmountMinor: listAmount, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, finalAmountMinor: amount, currency: CURRENCY } });
     await tx.membershipCheckoutIntent.create({ data: { orderId, userId: learnerId, versionId: version.id, durationOptionId: duration.id, action, startsAt: term.startsAt, endsAt: term.endsAt, activatesImmediately: term.activatesImmediately } });
+    await tx.commerceOrderLine.create({ data: { orderId, productId: product.id, productType: CommerceProductType.membership, productReferenceId: version.id, sellerId: product.sellerId, displayTitle: version.displayName, unitListPriceAmountMinor: listAmount, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, finalAmountMinor: amount, currency: CURRENCY } });
     await tx.commerceIdempotencyRecord.update({ where: { id: idempotency.id }, data: { status: CommerceIdempotencyStatus.completed, resourceType: 'commerce_order', resourceId: orderId, completedAt: now, lockedUntil: now } });
     await this.audit.record({ actorId: learnerId, action: AuditAction.MembershipCheckoutCreated, target: { type: 'membership_checkout_intent', id: orderId }, metadata: { orderNumber: order.orderNumber, versionId: version.id, durationMonths: duration.months, action, startsAt: term.startsAt.toISOString(), endsAt: term.endsAt.toISOString() } }, tx);
     return this.checkoutResponse(tx, orderId);

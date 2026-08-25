@@ -72,12 +72,6 @@ function harness() {
     },
     membershipPlanVersion: { findFirst: jest.fn().mockResolvedValue(version()) },
     membershipSubscription: { findFirst: jest.fn().mockResolvedValue(null) },
-    commerceProduct: {
-      upsert: jest.fn().mockResolvedValue({
-        id: 'product-id',
-        sellerId: '50000000-0000-4000-8000-000000000001',
-      }),
-    },
     commerceOrder: {
       create: jest.fn().mockResolvedValue({
         id: checkoutResult.order.id,
@@ -98,11 +92,22 @@ function harness() {
     membershipCheckoutIntent: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   const audit = { record: jest.fn() };
+  const commerceProducts = {
+    ensureActiveMembershipProduct: jest.fn().mockResolvedValue({
+      id: 'product-id',
+      sellerId: '50000000-0000-4000-8000-000000000001',
+    }),
+  };
   return {
-    service: new MembershipCheckoutService(prisma as never, audit as never),
+    service: new MembershipCheckoutService(
+      prisma as never,
+      audit as never,
+      commerceProducts as never,
+    ),
     prisma,
     tx,
     audit,
+    commerceProducts,
   };
 }
 
@@ -142,7 +147,7 @@ describe('MembershipCheckoutService', () => {
   });
 
   it('treats an expired same-plan checkout as renewal from payment time', async () => {
-    const { service, tx } = harness();
+    const { service, tx, commerceProducts } = harness();
     tx.membershipSubscription.findFirst.mockResolvedValue({
       status: MembershipSubscriptionStatus.active,
       expiresAt: new Date('2028-02-28T10:15:00.000Z'),
@@ -167,7 +172,7 @@ describe('MembershipCheckoutService', () => {
   });
 
   it('snapshots base price, discount, and final price on the order and line', async () => {
-    const { service, tx } = harness();
+    const { service, tx, commerceProducts } = harness();
 
     await service.createCheckout(learnerId, 'membership-key-2', input);
 
@@ -186,6 +191,14 @@ describe('MembershipCheckoutService', () => {
         finalAmountMinor: 225_000n,
       }),
     });
+    expect(commerceProducts.ensureActiveMembershipProduct).toHaveBeenCalledWith(
+      tx,
+      versionId,
+      '50000000-0000-4000-8000-000000000001',
+    );
+    expect(tx.membershipCheckoutIntent.create.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.commerceOrderLine.create.mock.invocationCallOrder[0],
+    );
   });
 
   it('replays a completed checkout only within the authenticated learner idempotency scope', async () => {

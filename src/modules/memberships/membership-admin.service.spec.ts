@@ -99,11 +99,19 @@ function harness() {
     course: { count: jest.fn().mockResolvedValue(1), findMany: jest.fn().mockResolvedValue([{ id: 'course-id', title: 'Private course', slug: 'private-course', visibility: 'private' }]) },
   };
   const audit = { record: jest.fn() };
+  const commerceProducts = {
+    archiveMembershipPlanProducts: jest.fn(),
+  };
   return {
-    service: new MembershipAdminService(prisma as never, audit as never),
+    service: new MembershipAdminService(
+      prisma as never,
+      audit as never,
+      commerceProducts as never,
+    ),
     prisma,
     tx,
     audit,
+    commerceProducts,
   };
 }
 
@@ -116,6 +124,26 @@ const input = {
 };
 
 describe('MembershipAdminService', () => {
+  it('archives Commerce products through the owning boundary before the plan', async () => {
+    const { service, tx, commerceProducts } = harness();
+    tx.membershipPlan.update.mockResolvedValue({
+      id: 'plan-id', code: 'GOLD', status: 'archived',
+      createdAt: version.createdAt, updatedAt: version.updatedAt,
+      archivedAt: version.updatedAt, versions: [version],
+    });
+
+    await service.archivePlan('admin-id', 'plan-id');
+
+    expect(commerceProducts.archiveMembershipPlanProducts).toHaveBeenCalledWith(
+      tx,
+      'admin-id',
+      'plan-id',
+    );
+    expect(commerceProducts.archiveMembershipPlanProducts.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.membershipPlan.update.mock.invocationCallOrder[0],
+    );
+  });
+
   it('creates an arbitrary stable plan and version with string-money output', async () => {
     const { service, tx, audit } = harness();
 

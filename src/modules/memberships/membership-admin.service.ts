@@ -14,6 +14,7 @@ import {
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommerceProductService } from '../commerce/commerce-product.service';
 import {
   CreateMembershipPlanDto,
   CreateMembershipPlanVersionDto,
@@ -69,6 +70,7 @@ export class MembershipAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly commerceProducts: CommerceProductService,
   ) {}
 
   createPlan(actorId: string, input: CreateMembershipPlanDto) {
@@ -369,6 +371,7 @@ export class MembershipAdminService {
       if (current.status === MembershipPlanStatus.archived) {
         throw new ConflictException('Membership plan is already archived.');
       }
+      await this.commerceProducts.archiveMembershipPlanProducts(tx, actorId, planId);
       const plan = await tx.membershipPlan.update({
         where: { id: planId },
         data: { status: MembershipPlanStatus.archived, archivedAt: new Date() },
