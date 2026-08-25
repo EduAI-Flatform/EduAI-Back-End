@@ -9,6 +9,10 @@ const snapshotSql = readFileSync(
   join(process.cwd(), 'prisma', 'migrations', '20260825120000_support_membership_order_snapshots', 'migration.sql'),
   'utf8',
 );
+const intrinsicDiscountSql = readFileSync(
+  join(process.cwd(), 'prisma', 'migrations', '20260825123000_support_membership_intrinsic_discounts', 'migration.sql'),
+  'utf8',
+);
 
 describe('Sprint 24 membership checkout migration', () => {
   it('is additive and preserves immutable order-linked checkout snapshots', () => {
@@ -36,6 +40,10 @@ describe('Sprint 24 membership checkout migration', () => {
     expect(snapshotSql).toContain('OLD."membership_plan_version_id"');
     expect(snapshotSql).toContain('order line must snapshot the active course title and current price');
     expect(snapshotSql).toContain('membership order line must match its immutable checkout intent');
+    expect(intrinsicDiscountSql).toContain('CREATE OR REPLACE FUNCTION "commerce_validate_order_totals"');
+    expect(intrinsicDiscountSql).toContain(`NEW."product_type" = 'course' AND benefit_discount <> NEW."discount_amount_minor"`);
+    expect(intrinsicDiscountSql).toContain(`NEW."product_type" = 'membership' AND benefit_discount <> 0`);
+    expect(intrinsicDiscountSql).toContain('membership duration pricing cannot be represented as a promotion benefit');
     expect(snapshotSql).not.toContain('DROP TRIGGER');
   });
 });

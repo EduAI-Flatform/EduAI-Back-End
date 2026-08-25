@@ -147,4 +147,62 @@ describe('Sprint 24 membership plans on PostgreSQL', () => {
       `),
     ).rejects.toThrow(/only active membership plans can publish versions/);
   });
+
+  it('commits a guarded membership checkout snapshot and idempotency result', async () => {
+    const adminId = '10000000-0000-4000-8000-000000000001';
+    const versionId = '10000000-0000-4000-8000-000000000004';
+    const durationId = '10000000-0000-4000-8000-000000000005';
+    const buyerId = '10000000-0000-4000-8000-000000000009';
+    const orderId = '10000000-0000-4000-8000-000000000010';
+
+    await db.exec(`
+      INSERT INTO users (id, email, password_hash, full_name, updated_at)
+      VALUES ('${buyerId}', 'membership-buyer@example.test', 'hash', 'Membership Buyer', CURRENT_TIMESTAMP);
+      BEGIN;
+      UPDATE commerce_products
+        SET status = 'active', updated_at = CURRENT_TIMESTAMP
+        WHERE membership_plan_version_id = '${versionId}';
+      INSERT INTO commerce_idempotency_records (
+        actor_id, operation, key_hash, key_hash_version, request_hash,
+        request_canonicalization_version, status, locked_until, updated_at
+      ) VALUES (
+        '${buyerId}', 'membership_checkout', repeat('a', 64), 1, repeat('b', 64),
+        1, 'in_progress', CURRENT_TIMESTAMP + INTERVAL '30 seconds', CURRENT_TIMESTAMP
+      );
+      INSERT INTO commerce_orders (
+        id, order_number, buyer_id, subtotal_amount_minor, discount_amount_minor,
+        payable_amount_minor, currency, pricing_policy_version, updated_at
+      ) VALUES (
+        '${orderId}', 'EDU-M-PGLITE', '${buyerId}', 300003, 75001,
+        225002, 'VND', 'MEMBERSHIP_V1', CURRENT_TIMESTAMP
+      );
+      INSERT INTO membership_checkout_intents (
+        order_id, user_id, version_id, duration_option_id, action,
+        starts_at, ends_at, activates_immediately
+      ) VALUES (
+        '${orderId}', '${buyerId}', '${versionId}', '${durationId}', 'purchase',
+        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '3 months', true
+      );
+      INSERT INTO commerce_order_lines (
+        order_id, product_id, product_type, product_reference_id, seller_id,
+        display_title, quantity, unit_list_price_amount_minor, subtotal_amount_minor,
+        discount_amount_minor, final_amount_minor, currency
+      ) SELECT
+        '${orderId}', id, 'membership', '${versionId}', '${adminId}',
+        'Gold', 1, 300003, 300003, 75001, 225002, 'VND'
+      FROM commerce_products WHERE membership_plan_version_id = '${versionId}';
+      UPDATE commerce_idempotency_records
+        SET status = 'completed', resource_type = 'commerce_order', resource_id = '${orderId}',
+            completed_at = CURRENT_TIMESTAMP, locked_until = CURRENT_TIMESTAMP
+        WHERE actor_id = '${buyerId}' AND operation = 'membership_checkout';
+      COMMIT;
+    `);
+
+    const result = await db.query<{ line_count: number; intent_count: number }>(`
+      SELECT
+        (SELECT COUNT(*) FROM commerce_order_lines WHERE order_id = '${orderId}') AS line_count,
+        (SELECT COUNT(*) FROM membership_checkout_intents WHERE order_id = '${orderId}') AS intent_count
+    `);
+    expect(result.rows[0]).toEqual({ line_count: 1, intent_count: 1 });
+  });
 });
