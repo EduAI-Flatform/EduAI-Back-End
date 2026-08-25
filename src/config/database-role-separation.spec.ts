@@ -17,6 +17,23 @@ const {
     databaseRolesSeparated: boolean;
   };
 } = require('../../scripts/run-production-migrations.cjs');
+const {
+  MEMBERSHIP_RUNTIME_TABLES,
+  buildRuntimePrivilegeStatement,
+  grantRuntimeMembershipPrivileges,
+}: {
+  MEMBERSHIP_RUNTIME_TABLES: readonly string[];
+  buildRuntimePrivilegeStatement: (runtimeUrl: string) => string;
+  grantRuntimeMembershipPrivileges: (
+    migrationUrl: string,
+    runtimeUrl: string,
+    ClientConstructor?: new (config: Record<string, unknown>) => {
+      connect: () => Promise<void>;
+      query: (sql: string) => Promise<void>;
+      end: () => Promise<void>;
+    },
+  ) => Promise<void>;
+} = require('../../scripts/membership-runtime-privileges.cjs');
 
 describe('production database role separation', () => {
   it('accepts distinct explicit runtime and migration roles', () => {
@@ -87,6 +104,7 @@ describe('production database role separation', () => {
     expect(runtimeClient).toContain('connectionString: env.DATABASE_URL');
     expect(runtimeClient).not.toContain('MIGRATION_DATABASE_URL');
     expect(migrationRunner).toContain('DATABASE_URL: migrationDatabaseUrl');
+    expect(migrationRunner).toContain('grantRuntimeMembershipPrivileges');
   });
 
   it('classifies stored migration failures without returning their raw details', () => {
@@ -100,5 +118,60 @@ describe('production database role separation', () => {
       '20260824160000_add_membership_product_type',
     );
     expect(safeMigrationName('unsafe migration/name')).toBe('UNAVAILABLE');
+  });
+
+  it('grants only membership-table DML to the URL-derived runtime role', () => {
+    const statement = buildRuntimePrivilegeStatement(
+      'postgresql://runtime%22role:secret@db.example/eduai',
+    );
+
+    expect(MEMBERSHIP_RUNTIME_TABLES).toEqual(expect.arrayContaining([
+      'membership_plans',
+      'membership_plan_versions',
+      'membership_checkout_intents',
+      'membership_subscriptions',
+      'service_entitlement_grants',
+      'course_access_grants',
+    ]));
+    expect(statement).toContain('GRANT SELECT, INSERT, UPDATE ON TABLE');
+    expect(statement).toContain('TO "runtime""role"');
+    expect(statement).not.toContain('_prisma_migrations');
+    expect(statement).not.toMatch(/\b(ALTER|OWNER|BYPASSRLS|SUPERUSER)\b/i);
+    expect(statement).not.toMatch(/\bDELETE\b/i);
+    expect(statement).not.toContain('secret');
+  });
+
+  it('commits the bounded grant and rolls back with a secret-safe failure', async () => {
+    const successfulQueries: string[] = [];
+    class SuccessfulClient {
+      constructor(_config: Record<string, unknown>) {}
+      connect = async () => undefined;
+      query = async (sql: string) => { successfulQueries.push(sql); };
+      end = async () => undefined;
+    }
+    await grantRuntimeMembershipPrivileges(
+      'postgresql://migration:migration-secret@db.example/eduai',
+      'postgresql://runtime:runtime-secret@db.example/eduai',
+      SuccessfulClient,
+    );
+    expect(successfulQueries[0]).toBe('BEGIN');
+    expect(successfulQueries.at(-1)).toBe('COMMIT');
+
+    const failedQueries: string[] = [];
+    class FailingClient {
+      constructor(_config: Record<string, unknown>) {}
+      connect = async () => undefined;
+      query = async (sql: string) => {
+        failedQueries.push(sql);
+        if (sql.startsWith('GRANT ')) throw new Error('secret database detail');
+      };
+      end = async () => undefined;
+    }
+    await expect(grantRuntimeMembershipPrivileges(
+      'postgresql://migration:migration-secret@db.example/eduai',
+      'postgresql://runtime:runtime-secret@db.example/eduai',
+      FailingClient,
+    )).rejects.toThrow('Runtime membership privilege grant failed');
+    expect(failedQueries.at(-1)).toBe('ROLLBACK');
   });
 });

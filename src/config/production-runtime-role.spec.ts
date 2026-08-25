@@ -23,6 +23,8 @@ const {
 describe('production runtime database role verifier', () => {
   const safeRow = {
     commerceTablesPresent: true,
+    membershipTablesPresent: true,
+    runtimeRoleCanUseMembershipTables: true,
     runtimeRoleSuperuser: false,
     runtimeRoleHasBypassRlsAttribute: false,
     runtimeRoleOwnsCommerceTables: false,
@@ -34,6 +36,8 @@ describe('production runtime database role verifier', () => {
 
     expect(assessment).toEqual({
       commerceTablesPresent: true,
+      membershipTablesPresent: true,
+      runtimeRoleCanUseMembershipTables: true,
       runtimeRoleSuperuser: false,
       runtimeRoleHasBypassRlsAttribute: false,
       runtimeRoleOwnsCommerceTables: false,
@@ -47,6 +51,8 @@ describe('production runtime database role verifier', () => {
 
   it.each([
     ['missing Commerce tables', { commerceTablesPresent: false }],
+    ['missing membership tables', { membershipTablesPresent: false }],
+    ['missing membership DML privileges', { runtimeRoleCanUseMembershipTables: false }],
     ['superuser', { runtimeRoleSuperuser: true }],
     ['BYPASSRLS', { runtimeRoleHasBypassRlsAttribute: true }],
     ['table owner', { runtimeRoleOwnsCommerceTables: true }],
@@ -124,9 +130,15 @@ describe('production runtime database role verifier', () => {
       'scripts',
       'verify-production-runtime-role.cjs',
     );
+    const privilegesPath = join(
+      repositoryRoot,
+      'scripts',
+      'membership-runtime-privileges.cjs',
+    );
     const probe = `
       const { PGlite } = require('@electric-sql/pglite');
       const { RUNTIME_ROLE_QUERY, assessRuntimeRole } = require(${JSON.stringify(verifierPath)});
+      const { MEMBERSHIP_RUNTIME_TABLES } = require(${JSON.stringify(privilegesPath)});
       (async () => {
         const database = new PGlite();
         try {
@@ -135,8 +147,12 @@ describe('production runtime database role verifier', () => {
             CREATE ROLE verifier_owner NOLOGIN;
             CREATE TABLE public.commerce_verifier_probe (id integer PRIMARY KEY);
             ALTER TABLE public.commerce_verifier_probe OWNER TO verifier_owner;
-            SET ROLE verifier_runtime;
           \`);
+          for (const table of MEMBERSHIP_RUNTIME_TABLES) {
+            await database.exec(\`CREATE TABLE public."\${table}" (id integer PRIMARY KEY)\`);
+            await database.exec(\`GRANT SELECT, INSERT, UPDATE ON public."\${table}" TO verifier_runtime\`);
+          }
+          await database.exec('SET ROLE verifier_runtime');
           const safeResult = await database.query(RUNTIME_ROLE_QUERY);
           const safeAssessment = assessRuntimeRole(safeResult.rows[0]);
 
@@ -164,6 +180,8 @@ describe('production runtime database role verifier', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       safeAssessment: {
         commerceTablesPresent: true,
+        membershipTablesPresent: true,
+        runtimeRoleCanUseMembershipTables: true,
         runtimeRoleSuperuser: false,
         runtimeRoleHasBypassRlsAttribute: false,
         runtimeRoleOwnsCommerceTables: false,
@@ -194,7 +212,7 @@ describe('production runtime database role verifier', () => {
     expect(RUNTIME_ROLE_QUERY).toContain('pg_class');
     expect(RUNTIME_ROLE_QUERY).toContain('pg_has_role');
     expect(RUNTIME_ROLE_QUERY).toContain("namespace.nspname = 'public'");
-    expect(RUNTIME_ROLE_QUERY).not.toMatch(/\b(ALTER|UPDATE|DELETE|INSERT|DROP)\b/i);
+    expect(RUNTIME_ROLE_QUERY).not.toMatch(/^\s*(ALTER|UPDATE|DELETE|INSERT|DROP)\b/im);
     expect(workflow).toContain('npm run db:verify:production-runtime-role');
     expect(verifier).not.toContain('MIGRATION_DATABASE_URL');
     expect(verifier).not.toContain('console.error(error');

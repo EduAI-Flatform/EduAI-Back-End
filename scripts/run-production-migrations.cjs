@@ -3,6 +3,9 @@ const { readFileSync, statSync } = require('node:fs');
 const { join } = require('node:path');
 const dotenv = require('dotenv');
 const { Client } = require('pg');
+const {
+  grantRuntimeMembershipPrivileges,
+} = require('./membership-runtime-privileges.cjs');
 
 const MIGRATION_ENV_FILE = '.env.migration';
 
@@ -173,7 +176,16 @@ async function run() {
   );
 
   if (migration.error) throw migration.error;
-  process.exitCode = migration.status ?? 1;
+  if (migration.status !== 0) {
+    process.exitCode = migration.status ?? 1;
+    return;
+  }
+
+  await grantRuntimeMembershipPrivileges(
+    migrationDatabaseUrl,
+    process.env.DATABASE_URL,
+  );
+  console.log('runtimeMembershipPrivilegesGranted: true');
 }
 
 if (require.main === module) {

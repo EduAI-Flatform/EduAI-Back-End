@@ -2,6 +2,9 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const dotenv = require('dotenv');
 const { Client } = require('pg');
+const {
+  MEMBERSHIP_RUNTIME_TABLES,
+} = require('./membership-runtime-privileges.cjs');
 
 const RUNTIME_ENV_FILE = '.env';
 const VERIFICATION_STAGES = new Set([
@@ -14,6 +17,8 @@ const VERIFICATION_STAGES = new Set([
 ]);
 const ASSESSMENT_KEYS = [
   'commerceTablesPresent',
+  'membershipTablesPresent',
+  'runtimeRoleCanUseMembershipTables',
   'runtimeRoleSuperuser',
   'runtimeRoleHasBypassRlsAttribute',
   'runtimeRoleOwnsCommerceTables',
@@ -22,6 +27,10 @@ const ASSESSMENT_KEYS = [
   'runtimeRoleCanDisableCommerceTriggers',
   'runtimeRoleLeastPrivilegeReady',
 ];
+
+const membershipTableValues = MEMBERSHIP_RUNTIME_TABLES.map(
+  (table) => `('${table}')`,
+).join(', ');
 
 const RUNTIME_ROLE_QUERY = `
 WITH runtime_role AS (
@@ -36,6 +45,19 @@ WITH runtime_role AS (
   WHERE namespace.nspname = 'public'
     AND relation.relkind IN ('r', 'p')
     AND left(relation.relname, 9) = 'commerce_'
+), membership_tables(relation_name) AS (
+  VALUES ${membershipTableValues}
+), membership_capabilities AS (
+  SELECT
+    COUNT(*) = COUNT(to_regclass('public.' || relation_name))
+      AS membership_tables_present,
+    COALESCE(BOOL_AND(
+      to_regclass('public.' || relation_name) IS NOT NULL
+      AND has_table_privilege(current_user, 'public.' || relation_name, 'SELECT')
+      AND has_table_privilege(current_user, 'public.' || relation_name, 'INSERT')
+      AND has_table_privilege(current_user, 'public.' || relation_name, 'UPDATE')
+    ), false) AS runtime_role_can_use_membership_tables
+  FROM membership_tables
 ), capabilities AS (
   SELECT
     EXISTS (SELECT 1 FROM commerce_tables) AS commerce_tables_present,
@@ -56,11 +78,14 @@ WITH runtime_role AS (
 )
 SELECT
   commerce_tables_present AS "commerceTablesPresent",
+  membership_tables_present AS "membershipTablesPresent",
+  runtime_role_can_use_membership_tables AS "runtimeRoleCanUseMembershipTables",
   runtime_role_superuser AS "runtimeRoleSuperuser",
   runtime_role_has_bypass_rls_attribute AS "runtimeRoleHasBypassRlsAttribute",
   runtime_role_owns_commerce_tables AS "runtimeRoleOwnsCommerceTables",
   runtime_role_can_assume_commerce_owner AS "runtimeRoleCanAssumeCommerceOwner"
 FROM capabilities
+CROSS JOIN membership_capabilities
 `;
 
 function loadRuntimeDatabaseUrl(rootDirectory) {
@@ -106,6 +131,12 @@ function assessRuntimeRole(row) {
   const commerceTablesPresent = requiredBoolean(
     row.commerceTablesPresent,
   );
+  const membershipTablesPresent = requiredBoolean(
+    row.membershipTablesPresent,
+  );
+  const runtimeRoleCanUseMembershipTables = requiredBoolean(
+    row.runtimeRoleCanUseMembershipTables,
+  );
   const runtimeRoleSuperuser = requiredBoolean(row.runtimeRoleSuperuser);
   const runtimeRoleHasBypassRlsAttribute = requiredBoolean(
     row.runtimeRoleHasBypassRlsAttribute,
@@ -128,6 +159,8 @@ function assessRuntimeRole(row) {
 
   return {
     commerceTablesPresent,
+    membershipTablesPresent,
+    runtimeRoleCanUseMembershipTables,
     runtimeRoleSuperuser,
     runtimeRoleHasBypassRlsAttribute,
     runtimeRoleOwnsCommerceTables,
@@ -136,6 +169,8 @@ function assessRuntimeRole(row) {
     runtimeRoleCanDisableCommerceTriggers,
     runtimeRoleLeastPrivilegeReady:
       commerceTablesPresent &&
+      membershipTablesPresent &&
+      runtimeRoleCanUseMembershipTables &&
       !runtimeRoleCanBypassCommerceGuards &&
       !runtimeRoleCanDisableCommerceTriggers,
   };
