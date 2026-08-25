@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  CommerceFulfillmentStatus,
   CommerceIdempotencyStatus,
   CommerceOrderStatus,
   CommerceProductStatus,
@@ -46,14 +45,53 @@ export class MembershipCheckoutService {
 
   async current(learnerId: string) {
     const now = new Date();
-    const subscription = await this.prisma.membershipSubscription.findFirst({
-      where: { userId: learnerId, status: MembershipSubscriptionStatus.active, expiresAt: { gt: now } },
-      orderBy: { expiresAt: 'desc' }, include: { version: { include: { plan: { select: { id: true, code: true } } } } },
-    });
-    return subscription ? {
-      id: subscription.id, plan: subscription.version.plan, versionId: subscription.versionId,
-      displayName: subscription.version.displayName, startsAt: subscription.startsAt, expiresAt: subscription.expiresAt,
-    } : null;
+    const [subscription, pendingChange] = await Promise.all([
+      this.prisma.membershipSubscription.findFirst({
+        where: { userId: learnerId, status: MembershipSubscriptionStatus.active },
+        orderBy: { expiresAt: 'desc' },
+        include: { version: { include: { plan: { select: { id: true, code: true } } } } },
+      }),
+      this.prisma.membershipCheckoutIntent.findFirst({
+        where: {
+          userId: learnerId,
+          action: { in: [MembershipCheckoutAction.upgrade, MembershipCheckoutAction.downgrade] },
+          order: { status: CommerceOrderStatus.pending_payment },
+        },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          order: { select: { id: true, orderNumber: true, status: true } },
+          version: { include: { plan: { select: { id: true, code: true } } } },
+        },
+      }),
+    ]);
+    return {
+      membership: subscription ? {
+        id: subscription.id,
+        plan: subscription.version.plan,
+        versionId: subscription.versionId,
+        displayName: subscription.version.displayName,
+        startsAt: subscription.startsAt,
+        expiresAt: subscription.expiresAt,
+        status: subscription.expiresAt > now ? 'ACTIVE' : 'EXPIRED',
+      } : null,
+      pendingChange: pendingChange ? {
+        action: pendingChange.action.toUpperCase(),
+        startsAt: pendingChange.startsAt,
+        endsAt: pendingChange.endsAt,
+        activatesImmediately: pendingChange.activatesImmediately,
+        plan: {
+          id: pendingChange.version.plan.id,
+          code: pendingChange.version.plan.code,
+          versionId: pendingChange.version.id,
+          displayName: pendingChange.version.displayName,
+        },
+        order: {
+          id: pendingChange.order.id,
+          orderNumber: pendingChange.order.orderNumber,
+          status: pendingChange.order.status.toUpperCase(),
+        },
+      } : null,
+    };
   }
 
   createCheckout(learnerId: string, idempotencyKey: string | undefined, input: CreateMembershipCheckoutDto) {
@@ -94,24 +132,29 @@ export class MembershipCheckoutService {
     const duration = version.durationOptions.find((item) => item.id === input.durationOptionId);
     if (!duration) throw new BadRequestException({ error: 'DURATION_UNAVAILABLE', message: 'Duration is not available for this membership version.' });
     const current = await tx.membershipSubscription.findFirst({
-      where: { userId: learnerId, status: MembershipSubscriptionStatus.active, expiresAt: { gt: now } }, orderBy: { expiresAt: 'desc' }, include: { version: true },
+      where: { userId: learnerId, status: MembershipSubscriptionStatus.active }, orderBy: { expiresAt: 'desc' }, include: { version: true },
     });
+    const hasActiveMembership = Boolean(current && current.expiresAt > now);
     const action: MembershipCheckoutAction = !current ? MembershipCheckoutAction.purchase
       : current.version.planId === version.planId ? MembershipCheckoutAction.renew
-        : input.requestedChange === 'DOWNGRADE' ? MembershipCheckoutAction.downgrade : MembershipCheckoutAction.upgrade;
-    if (current && current.version.planId !== version.planId && !input.requestedChange) {
+        : !hasActiveMembership ? MembershipCheckoutAction.purchase
+          : input.requestedChange === 'DOWNGRADE' ? MembershipCheckoutAction.downgrade : MembershipCheckoutAction.upgrade;
+    if (hasActiveMembership && current!.version.planId !== version.planId && !input.requestedChange) {
       throw new BadRequestException({ error: 'CHANGE_KIND_REQUIRED', message: 'An upgrade or downgrade must be selected explicitly.' });
     }
     const term = resolveMembershipChange({ action: action.toUpperCase() as 'PURCHASE' | 'RENEW' | 'UPGRADE' | 'DOWNGRADE', months: duration.months, paymentAt: now, activeExpiresAt: current?.expiresAt ?? null });
     const amount = calculateDurationPrice({ baseMonthlyPriceAmountMinor: version.baseMonthlyPriceAmountMinor, months: duration.months, priceAmountMinor: duration.priceAmountMinor, discountPercent: duration.discountPercent });
+    const baseAmount = version.baseMonthlyPriceAmountMinor * BigInt(duration.months);
+    const listAmount = duration.discountPercent === null ? amount : baseAmount;
+    const discountAmount = listAmount - amount;
     const product = await tx.commerceProduct.upsert({
       where: { membershipPlanVersionId: version.id },
       create: { type: CommerceProductType.membership, membershipPlanVersionId: version.id, sellerId: version.publishedById!, status: CommerceProductStatus.active },
       update: { status: CommerceProductStatus.active },
     });
     const orderId = randomUUID();
-    const order = await tx.commerceOrder.create({ data: { id: orderId, orderNumber: `EDU-M-${now.getTime().toString(36).toUpperCase()}-${orderId.slice(0, 8).toUpperCase()}`, buyerId: learnerId, subtotalAmountMinor: amount, discountAmountMinor: 0n, payableAmountMinor: amount, currency: CURRENCY, pricingPolicyVersion: 'MEMBERSHIP_V1' } });
-    await tx.commerceOrderLine.create({ data: { orderId, productId: product.id, productType: CommerceProductType.membership, productReferenceId: version.id, sellerId: product.sellerId, displayTitle: version.displayName, unitListPriceAmountMinor: amount, subtotalAmountMinor: amount, discountAmountMinor: 0n, finalAmountMinor: amount, currency: CURRENCY } });
+    const order = await tx.commerceOrder.create({ data: { id: orderId, orderNumber: `EDU-M-${now.getTime().toString(36).toUpperCase()}-${orderId.slice(0, 8).toUpperCase()}`, buyerId: learnerId, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, payableAmountMinor: amount, currency: CURRENCY, pricingPolicyVersion: 'MEMBERSHIP_V1' } });
+    await tx.commerceOrderLine.create({ data: { orderId, productId: product.id, productType: CommerceProductType.membership, productReferenceId: version.id, sellerId: product.sellerId, displayTitle: version.displayName, unitListPriceAmountMinor: listAmount, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, finalAmountMinor: amount, currency: CURRENCY } });
     await tx.membershipCheckoutIntent.create({ data: { orderId, userId: learnerId, versionId: version.id, durationOptionId: duration.id, action, startsAt: term.startsAt, endsAt: term.endsAt, activatesImmediately: term.activatesImmediately } });
     await tx.commerceIdempotencyRecord.update({ where: { id: idempotency.id }, data: { status: CommerceIdempotencyStatus.completed, resourceType: 'commerce_order', resourceId: orderId, completedAt: now, lockedUntil: now } });
     await this.audit.record({ actorId: learnerId, action: AuditAction.MembershipCheckoutCreated, target: { type: 'membership_checkout_intent', id: orderId }, metadata: { orderNumber: order.orderNumber, versionId: version.id, durationMonths: duration.months, action, startsAt: term.startsAt.toISOString(), endsAt: term.endsAt.toISOString() } }, tx);

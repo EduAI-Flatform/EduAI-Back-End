@@ -21,7 +21,7 @@ export class MembershipCheckoutController {
   catalog() { return this.checkout.catalog(); }
 
   @Get('current')
-  @ApiOkResponse({ description: 'The learner current active membership, when present.' })
+  @ApiOkResponse({ description: 'The learner latest membership state and any pending plan change.' })
   current(@CurrentUser('id') learnerId: string) { return this.checkout.current(learnerId); }
 
   @Post('checkout')
