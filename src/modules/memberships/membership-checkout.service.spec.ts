@@ -62,6 +62,7 @@ function harness() {
     },
     version: { ...version(), plan: { id: version().planId, code: 'GOLD' } },
     durationOption: version().durationOptions[0],
+    removedCourses: [],
   };
   const tx = {
     $queryRaw: jest.fn(),
@@ -80,7 +81,7 @@ function harness() {
     },
     commerceOrderLine: { create: jest.fn() },
     membershipCheckoutIntent: {
-      create: jest.fn(),
+      create: jest.fn().mockResolvedValue({ id: 'checkout-intent-id' }),
       findUnique: jest.fn().mockResolvedValue(checkoutResult),
       findFirst: jest.fn().mockResolvedValue(null),
     },
@@ -98,16 +99,23 @@ function harness() {
       sellerId: '50000000-0000-4000-8000-000000000001',
     }),
   };
+  const continuity = {
+    resolveRemovedCourses: jest.fn().mockResolvedValue([]),
+    persistSnapshots: jest.fn().mockResolvedValue({ count: 0 }),
+    listExpiringGrace: jest.fn().mockResolvedValue([]),
+  };
   return {
     service: new MembershipCheckoutService(
       prisma as never,
       audit as never,
       commerceProducts as never,
+      continuity as never,
     ),
     prisma,
     tx,
     audit,
     commerceProducts,
+    continuity,
   };
 }
 
@@ -146,8 +154,54 @@ describe('MembershipCheckoutService', () => {
     });
   });
 
+  it('lists only the latest published version per plan with learner-specific removed-course disclosure', async () => {
+    const { service, prisma, continuity } = harness();
+    const latest = version();
+    const superseded = { ...version(), id: '20000000-0000-4000-8000-000000000002', versionNumber: 1 };
+    prisma.membershipPlanVersion.findMany.mockResolvedValue([latest, superseded]);
+    prisma.membershipSubscription.findFirst.mockResolvedValue({
+      expiresAt: new Date('2028-03-29T10:15:00.000Z'),
+      version: superseded,
+    });
+    continuity.resolveRemovedCourses.mockResolvedValue([{
+      courseId: '70000000-0000-4000-8000-000000000001',
+      title: 'Removed course',
+      slug: 'removed-course',
+      startedBeforeRemoval: true,
+      graceDays: 7,
+      graceStartsAt: new Date('2028-03-29T10:15:00.000Z'),
+      graceEndsAt: new Date('2028-04-05T10:15:00.000Z'),
+    }]);
+
+    await expect(service.catalog(learnerId)).resolves.toMatchObject({
+      items: [{
+        id: versionId,
+        removedCourses: [{ id: '70000000-0000-4000-8000-000000000001', startedBeforeRemoval: true }],
+      }],
+    });
+    expect(continuity.resolveRemovedCourses).toHaveBeenCalledWith(
+      prisma,
+      learnerId,
+      superseded,
+      latest,
+      new Date('2028-03-29T10:15:00.000Z'),
+      now,
+    );
+  });
+
+  it('rejects a superseded membership version before creating an order', async () => {
+    const { service, tx } = harness();
+    tx.membershipPlanVersion.findFirst
+      .mockResolvedValueOnce(version())
+      .mockResolvedValueOnce({ id: '20000000-0000-4000-8000-000000000099' });
+
+    await expect(service.createCheckout(learnerId, 'membership-key-old-version', input))
+      .rejects.toMatchObject({ response: expect.objectContaining({ error: 'MEMBERSHIP_VERSION_SUPERSEDED' }) });
+    expect(tx.commerceOrder.create).not.toHaveBeenCalled();
+  });
+
   it('treats an expired same-plan checkout as renewal from payment time', async () => {
-    const { service, tx, commerceProducts } = harness();
+    const { service, tx } = harness();
     tx.membershipSubscription.findFirst.mockResolvedValue({
       status: MembershipSubscriptionStatus.active,
       expiresAt: new Date('2028-02-28T10:15:00.000Z'),
@@ -172,7 +226,7 @@ describe('MembershipCheckoutService', () => {
   });
 
   it('snapshots base price, discount, and final price on the order and line', async () => {
-    const { service, tx, commerceProducts } = harness();
+    const { service, tx, commerceProducts, continuity } = harness();
 
     await service.createCheckout(learnerId, 'membership-key-2', input);
 
@@ -198,6 +252,12 @@ describe('MembershipCheckoutService', () => {
     );
     expect(tx.membershipCheckoutIntent.create.mock.invocationCallOrder[0]).toBeLessThan(
       tx.commerceOrderLine.create.mock.invocationCallOrder[0],
+    );
+    expect(continuity.persistSnapshots).toHaveBeenCalledWith(
+      tx,
+      'checkout-intent-id',
+      learnerId,
+      [],
     );
   });
 

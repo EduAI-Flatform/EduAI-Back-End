@@ -8,6 +8,7 @@ const MEMBERSHIP_RUNTIME_TABLES = Object.freeze([
   'membership_plan_included_courses',
   'membership_plan_versions',
   'membership_plans',
+  'membership_removed_course_snapshots',
   'membership_subscriptions',
   'service_entitlement_definitions',
   'service_entitlement_grants',

@@ -129,6 +129,7 @@ describe('production database role separation', () => {
       'membership_plans',
       'membership_plan_versions',
       'membership_checkout_intents',
+      'membership_removed_course_snapshots',
       'membership_subscriptions',
       'service_entitlement_grants',
       'course_access_grants',

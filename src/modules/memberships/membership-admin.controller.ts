@@ -14,8 +14,10 @@ import {
   ConfigureMembershipPlanEntitlementDto,
   ListServiceEntitlementDefinitionsQueryDto,
   ConfigureMembershipIncludedCourseDto,
+  EmergencyMembershipCourseRevocationDto,
 } from './dto/membership-plan.dto';
 import { MembershipAdminService } from './membership-admin.service';
+import { MembershipContinuityService } from './membership-continuity.service';
 
 @ApiTags('Admin Membership')
 @ApiBearerAuth()
@@ -23,7 +25,10 @@ import { MembershipAdminService } from './membership-admin.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(RoleName.platform_admin)
 export class MembershipAdminController {
-  constructor(private readonly service: MembershipAdminService) {}
+  constructor(
+    private readonly service: MembershipAdminService,
+    private readonly continuity: MembershipContinuityService,
+  ) {}
 
   @Post('plans')
   @ApiCreatedResponse({ description: 'Stable membership plan and first draft version created.' })
@@ -106,5 +111,14 @@ export class MembershipAdminController {
     @Param('planId', new ParseUUIDPipe({ version: '4' })) planId: string,
   ) {
     return this.service.archivePlan(actorId, planId);
+  }
+
+  @Post('course-access/emergency-revoke')
+  @ApiOkResponse({ description: 'Immediately revokes only membership-derived course access with an immutable administrator audit event.' })
+  emergencyRevokeCourseAccess(
+    @CurrentUser('id') actorId: string,
+    @Body() input: EmergencyMembershipCourseRevocationDto,
+  ) {
+    return this.continuity.emergencyRevoke(actorId, input);
   }
 }

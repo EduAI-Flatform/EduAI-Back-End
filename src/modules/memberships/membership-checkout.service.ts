@@ -15,6 +15,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CommerceProductService } from '../commerce/commerce-product.service';
 import { CreateMembershipCheckoutDto } from './dto/membership-plan.dto';
+import { MembershipContinuityService, RemovedCourseContinuity } from './membership-continuity.service';
 import { calculateDurationPrice, resolveMembershipChange } from './membership.rules';
 
 const CURRENCY = 'VND';
@@ -26,30 +27,52 @@ export class MembershipCheckoutService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly commerceProducts: CommerceProductService,
+    private readonly continuity: MembershipContinuityService,
   ) {}
 
-  async catalog() {
+  async catalog(learnerId: string) {
     const now = new Date();
-    const versions = await this.prisma.membershipPlanVersion.findMany({
-      where: {
-        status: MembershipPlanVersionStatus.published,
-        plan: { status: MembershipPlanStatus.active },
-        AND: [{ OR: [{ salesStartAt: null }, { salesStartAt: { lte: now } }] }, { OR: [{ salesEndAt: null }, { salesEndAt: { gt: now } }] }],
-      },
-      orderBy: [{ plan: { code: 'asc' } }, { versionNumber: 'desc' }],
-      include: {
-        plan: { select: { id: true, code: true } },
-        durationOptions: { orderBy: { displayOrder: 'asc' } },
-        serviceEntitlements: { orderBy: { definition: { displayOrder: 'asc' } }, include: { definition: true } },
-        includedCourses: { orderBy: { course: { title: 'asc' } }, include: { course: { select: { id: true, title: true, slug: true } } } },
-      },
-    });
-    return { items: versions.map((version) => this.catalogItem(version)) };
+    const [versions, current] = await Promise.all([
+      this.prisma.membershipPlanVersion.findMany({
+        where: {
+          status: MembershipPlanVersionStatus.published,
+          plan: { status: MembershipPlanStatus.active },
+          AND: [{ OR: [{ salesStartAt: null }, { salesStartAt: { lte: now } }] }, { OR: [{ salesEndAt: null }, { salesEndAt: { gt: now } }] }],
+        },
+        orderBy: [{ plan: { code: 'asc' } }, { versionNumber: 'desc' }],
+        include: {
+          plan: { select: { id: true, code: true } },
+          durationOptions: { orderBy: { displayOrder: 'asc' } },
+          serviceEntitlements: { orderBy: { definition: { displayOrder: 'asc' } }, include: { definition: true } },
+          includedCourses: { orderBy: { course: { title: 'asc' } }, include: { course: { select: { id: true, title: true, slug: true } } } },
+        },
+      }),
+      this.prisma.membershipSubscription.findFirst({
+        where: { userId: learnerId, status: MembershipSubscriptionStatus.active },
+        orderBy: { expiresAt: 'desc' },
+        include: { version: { include: { includedCourses: { include: { course: { select: { id: true, title: true, slug: true } } } } } } },
+      }),
+    ]);
+    const latestVersions = versions.filter((version, index) =>
+      versions.findIndex((candidate) => candidate.planId === version.planId) === index,
+    );
+    const items = await Promise.all(latestVersions.map(async (version) => {
+      const removedCourses = await this.continuity.resolveRemovedCourses(
+        this.prisma,
+        learnerId,
+        current?.version ?? null,
+        version,
+        current?.expiresAt ?? null,
+        now,
+      );
+      return this.catalogItem(version, removedCourses);
+    }));
+    return { items };
   }
 
   async current(learnerId: string) {
     const now = new Date();
-    const [subscription, pendingChange] = await Promise.all([
+    const [subscription, pendingChange, expiringGraceCourses] = await Promise.all([
       this.prisma.membershipSubscription.findFirst({
         where: { userId: learnerId, status: MembershipSubscriptionStatus.active },
         orderBy: { expiresAt: 'desc' },
@@ -67,6 +90,7 @@ export class MembershipCheckoutService {
           version: { include: { plan: { select: { id: true, code: true } } } },
         },
       }),
+      this.continuity.listExpiringGrace(learnerId, now),
     ]);
     return {
       membership: subscription ? {
@@ -95,6 +119,7 @@ export class MembershipCheckoutService {
           status: pendingChange.order.status.toUpperCase(),
         },
       } : null,
+      expiringGraceCourses,
     };
   }
 
@@ -128,7 +153,7 @@ export class MembershipCheckoutService {
     await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${input.versionId}::uuid FOR SHARE`);
     const version = await tx.membershipPlanVersion.findFirst({
       where: { id: input.versionId, status: MembershipPlanVersionStatus.published, plan: { status: MembershipPlanStatus.active } },
-      include: { plan: true, durationOptions: true },
+      include: { plan: true, durationOptions: true, includedCourses: { include: { course: { select: { id: true, title: true, slug: true } } } } },
     });
     if (!version || (version.salesStartAt && version.salesStartAt > now) || (version.salesEndAt && version.salesEndAt <= now)) {
       throw new NotFoundException({ error: 'MEMBERSHIP_UNAVAILABLE', message: 'Membership version is not available.' });
@@ -136,7 +161,7 @@ export class MembershipCheckoutService {
     const duration = version.durationOptions.find((item) => item.id === input.durationOptionId);
     if (!duration) throw new BadRequestException({ error: 'DURATION_UNAVAILABLE', message: 'Duration is not available for this membership version.' });
     const current = await tx.membershipSubscription.findFirst({
-      where: { userId: learnerId, status: MembershipSubscriptionStatus.active }, orderBy: { expiresAt: 'desc' }, include: { version: true },
+      where: { userId: learnerId, status: MembershipSubscriptionStatus.active }, orderBy: { expiresAt: 'desc' }, include: { version: { include: { includedCourses: { include: { course: { select: { id: true, title: true, slug: true } } } } } } },
     });
     const hasActiveMembership = Boolean(current && current.expiresAt > now);
     const action: MembershipCheckoutAction = !current ? MembershipCheckoutAction.purchase
@@ -146,7 +171,23 @@ export class MembershipCheckoutService {
     if (hasActiveMembership && current!.version.planId !== version.planId && !input.requestedChange) {
       throw new BadRequestException({ error: 'CHANGE_KIND_REQUIRED', message: 'An upgrade or downgrade must be selected explicitly.' });
     }
+    const latestVersion = await tx.membershipPlanVersion.findFirst({
+      where: { planId: version.planId, status: MembershipPlanVersionStatus.published },
+      orderBy: { versionNumber: 'desc' },
+      select: { id: true },
+    });
+    if (!latestVersion || latestVersion.id !== version.id) {
+      throw new ConflictException({ error: 'MEMBERSHIP_VERSION_SUPERSEDED', message: 'The latest published membership version must be selected.' });
+    }
     const term = resolveMembershipChange({ action: action.toUpperCase() as 'PURCHASE' | 'RENEW' | 'UPGRADE' | 'DOWNGRADE', months: duration.months, paymentAt: now, activeExpiresAt: current?.expiresAt ?? null });
+    const removedCourses = await this.continuity.resolveRemovedCourses(
+      tx,
+      learnerId,
+      current?.version ?? null,
+      version,
+      current?.expiresAt ?? null,
+      now,
+    );
     const amount = calculateDurationPrice({ baseMonthlyPriceAmountMinor: version.baseMonthlyPriceAmountMinor, months: duration.months, priceAmountMinor: duration.priceAmountMinor, discountPercent: duration.discountPercent });
     const baseAmount = version.baseMonthlyPriceAmountMinor * BigInt(duration.months);
     const listAmount = duration.discountPercent === null ? amount : baseAmount;
@@ -158,21 +199,26 @@ export class MembershipCheckoutService {
     );
     const orderId = randomUUID();
     const order = await tx.commerceOrder.create({ data: { id: orderId, orderNumber: `EDU-M-${now.getTime().toString(36).toUpperCase()}-${orderId.slice(0, 8).toUpperCase()}`, buyerId: learnerId, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, payableAmountMinor: amount, currency: CURRENCY, pricingPolicyVersion: 'MEMBERSHIP_V1' } });
-    await tx.membershipCheckoutIntent.create({ data: { orderId, userId: learnerId, versionId: version.id, durationOptionId: duration.id, action, startsAt: term.startsAt, endsAt: term.endsAt, activatesImmediately: term.activatesImmediately } });
+    const checkoutIntent = await tx.membershipCheckoutIntent.create({ data: { orderId, userId: learnerId, versionId: version.id, durationOptionId: duration.id, action, startsAt: term.startsAt, endsAt: term.endsAt, activatesImmediately: term.activatesImmediately } });
+    await this.continuity.persistSnapshots(tx, checkoutIntent.id, learnerId, removedCourses);
     await tx.commerceOrderLine.create({ data: { orderId, productId: product.id, productType: CommerceProductType.membership, productReferenceId: version.id, sellerId: product.sellerId, displayTitle: version.displayName, unitListPriceAmountMinor: listAmount, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, finalAmountMinor: amount, currency: CURRENCY } });
     await tx.commerceIdempotencyRecord.update({ where: { id: idempotency.id }, data: { status: CommerceIdempotencyStatus.completed, resourceType: 'commerce_order', resourceId: orderId, completedAt: now, lockedUntil: now } });
-    await this.audit.record({ actorId: learnerId, action: AuditAction.MembershipCheckoutCreated, target: { type: 'membership_checkout_intent', id: orderId }, metadata: { orderNumber: order.orderNumber, versionId: version.id, durationMonths: duration.months, action, startsAt: term.startsAt.toISOString(), endsAt: term.endsAt.toISOString() } }, tx);
+    await this.audit.record({ actorId: learnerId, action: AuditAction.MembershipCheckoutCreated, target: { type: 'membership_checkout_intent', id: orderId }, metadata: { orderNumber: order.orderNumber, versionId: version.id, durationMonths: duration.months, action, startsAt: term.startsAt.toISOString(), endsAt: term.endsAt.toISOString(), removedCourseCount: removedCourses.length } }, tx);
     return this.checkoutResponse(tx, orderId);
   }
 
   private async checkoutResponse(tx: Prisma.TransactionClient, orderId: string) {
-    const intent = await tx.membershipCheckoutIntent.findUnique({ where: { orderId }, include: { order: true, version: { include: { plan: true } }, durationOption: true } });
+    const intent = await tx.membershipCheckoutIntent.findUnique({ where: { orderId }, include: { order: true, version: { include: { plan: true } }, durationOption: true, removedCourses: { orderBy: { courseTitle: 'asc' } } } });
     if (!intent) throw new NotFoundException('Membership checkout was not found.');
-    return { order: { id: intent.order.id, orderNumber: intent.order.orderNumber, status: intent.order.status.toUpperCase(), payable: { amountMinor: intent.order.payableAmountMinor.toString(), currency: intent.order.currency } }, action: intent.action.toUpperCase(), plan: { id: intent.version.plan.id, code: intent.version.plan.code, versionId: intent.versionId, displayName: intent.version.displayName }, durationMonths: intent.durationOption.months, startsAt: intent.startsAt, endsAt: intent.endsAt, activatesImmediately: intent.activatesImmediately, paymentRequired: intent.order.payableAmountMinor > 0n };
+    return { order: { id: intent.order.id, orderNumber: intent.order.orderNumber, status: intent.order.status.toUpperCase(), payable: { amountMinor: intent.order.payableAmountMinor.toString(), currency: intent.order.currency } }, action: intent.action.toUpperCase(), plan: { id: intent.version.plan.id, code: intent.version.plan.code, versionId: intent.versionId, displayName: intent.version.displayName }, durationMonths: intent.durationOption.months, startsAt: intent.startsAt, endsAt: intent.endsAt, activatesImmediately: intent.activatesImmediately, removedCourses: intent.removedCourses.map((item) => this.removedCourseResponse(item)), paymentRequired: intent.order.payableAmountMinor > 0n };
   }
 
-  private catalogItem(version: any) {
-    return { id: version.id, plan: version.plan, versionNumber: version.versionNumber, displayName: version.displayName, description: version.description, currency: version.currency, baseMonthlyPriceAmountMinor: version.baseMonthlyPriceAmountMinor.toString(), durations: version.durationOptions.map((duration: any) => ({ id: duration.id, months: duration.months, basePriceAmountMinor: (version.baseMonthlyPriceAmountMinor * BigInt(duration.months)).toString(), discountPercent: duration.discountPercent, finalPriceAmountMinor: calculateDurationPrice({ baseMonthlyPriceAmountMinor: version.baseMonthlyPriceAmountMinor, months: duration.months, priceAmountMinor: duration.priceAmountMinor, discountPercent: duration.discountPercent }).toString() })), services: version.serviceEntitlements.map((item: any) => ({ code: item.definition.code, displayName: item.definition.displayName, valueType: item.valueType.toUpperCase(), booleanValue: item.booleanValue, quota: item.quota?.toString() ?? null, unitLabel: item.definition.unitLabel })), includedCourses: version.includedCourses.map((item: any) => ({ ...item.course, graceDays: item.graceDays })) };
+  private catalogItem(version: any, removedCourses: RemovedCourseContinuity[]) {
+    return { id: version.id, plan: version.plan, versionNumber: version.versionNumber, displayName: version.displayName, description: version.description, currency: version.currency, baseMonthlyPriceAmountMinor: version.baseMonthlyPriceAmountMinor.toString(), durations: version.durationOptions.map((duration: any) => ({ id: duration.id, months: duration.months, basePriceAmountMinor: (version.baseMonthlyPriceAmountMinor * BigInt(duration.months)).toString(), discountPercent: duration.discountPercent, finalPriceAmountMinor: calculateDurationPrice({ baseMonthlyPriceAmountMinor: version.baseMonthlyPriceAmountMinor, months: duration.months, priceAmountMinor: duration.priceAmountMinor, discountPercent: duration.discountPercent }).toString() })), services: version.serviceEntitlements.map((item: any) => ({ code: item.definition.code, displayName: item.definition.displayName, valueType: item.valueType.toUpperCase(), booleanValue: item.booleanValue, quota: item.quota?.toString() ?? null, unitLabel: item.definition.unitLabel })), includedCourses: version.includedCourses.map((item: any) => ({ ...item.course, graceDays: item.graceDays })), removedCourses: removedCourses.map((item) => this.removedCourseResponse(item)) };
+  }
+
+  private removedCourseResponse(item: { courseId: string; title?: string; courseTitle?: string; slug?: string; courseSlug?: string; startedBeforeRemoval: boolean; graceDays: number; graceStartsAt: Date | null; graceEndsAt: Date | null }) {
+    return { id: item.courseId, title: item.title ?? item.courseTitle!, slug: item.slug ?? item.courseSlug!, startedBeforeRemoval: item.startedBeforeRemoval, graceDays: item.graceDays, graceStartsAt: item.graceStartsAt, graceEndsAt: item.graceEndsAt };
   }
 
   private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {

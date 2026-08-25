@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { CourseStatus, CourseVisibility, ModerationStatus, RoleName } from '../../../generated/prisma/client';
+import { CourseAccessSourceType, CourseStatus, CourseVisibility, ModerationStatus, RoleName } from '../../../generated/prisma/client';
 import { CourseAccessService } from './course-access.service';
 
 function harness(overrides: Record<string, unknown> = {}) {
@@ -64,6 +64,19 @@ describe('CourseAccessService', () => {
     prisma.courseAccessGrant.findFirst.mockResolvedValueOnce(null);
     await expect(service.decide({ user: student, courseId: 'course-id', operation: 'FULL_LEARNING', at }))
       .resolves.toMatchObject({ allowed: false, reason: 'COURSE_ACCESS_REQUIRED' });
+  });
+
+  it('classifies an explicit membership-grace source as grace rather than active membership access', async () => {
+    const { service, prisma } = harness();
+    const at = new Date('2026-08-24T12:00:00.000Z');
+    prisma.courseAccessGrant.findFirst.mockResolvedValueOnce({
+      id: 'membership-grace-id',
+      sourceType: CourseAccessSourceType.membership_grace,
+      endsAt: new Date('2026-08-25T12:00:00.000Z'),
+      graceEndsAt: null,
+    });
+    await expect(service.decide({ user: student, courseId: 'course-id', operation: 'FULL_LEARNING', at }))
+      .resolves.toMatchObject({ allowed: true, mode: 'LEARNER' });
   });
 
   it('does not treat compatibility enrollment rows as runtime authorization', async () => {

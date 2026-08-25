@@ -183,3 +183,21 @@ export class CreateMembershipCheckoutDto {
   @IsBoolean()
   changedBenefitsConfirmed!: boolean;
 }
+
+export class EmergencyMembershipCourseRevocationDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsString() @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  learnerId!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsString() @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  courseId!: string;
+
+  @ApiProperty({ enum: ['LEGAL', 'SECURITY'] })
+  @IsIn(['LEGAL', 'SECURITY'])
+  kind!: 'LEGAL' | 'SECURITY';
+
+  @ApiProperty({ minLength: 1, maxLength: 500 })
+  @Transform(trim) @IsString() @MinLength(1) @MaxLength(500)
+  reason!: string;
+}

@@ -1,6 +1,7 @@
 enum CourseAccessSourceType {
   course_purchase
   membership
+  membership_grace
   scholarship
   tmi_reward
   admin
@@ -8,6 +9,28 @@ enum CourseAccessSourceType {
   legacy_enrollment
 
   @@map("course_access_source_type")
+}
+
+model MembershipRemovedCourseSnapshot {
+  id                    String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkoutIntentId      String                   @map("checkout_intent_id") @db.Uuid
+  userId                String                   @map("user_id") @db.Uuid
+  courseId              String                   @map("course_id") @db.Uuid
+  courseTitle           String                   @map("course_title") @db.VarChar(200)
+  courseSlug            String                   @map("course_slug") @db.VarChar(200)
+  startedBeforeRemoval  Boolean                  @map("started_before_removal")
+  graceDays             Int                      @map("grace_days")
+  graceStartsAt         DateTime?                @map("grace_starts_at")
+  graceEndsAt           DateTime?                @map("grace_ends_at")
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  checkoutIntent        MembershipCheckoutIntent @relation(fields: [checkoutIntentId], references: [id], onDelete: Restrict)
+  user                  User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  course                Course                   @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  @@unique([checkoutIntentId, courseId], map: "membership_removed_course_snapshots_intent_course_key")
+  @@index([userId, graceEndsAt])
+  @@index([courseId, createdAt])
+  @@map("membership_removed_course_snapshots")
 }
 
 enum CourseAccessGrantStatus {

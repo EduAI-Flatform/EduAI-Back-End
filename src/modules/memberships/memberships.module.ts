@@ -9,11 +9,12 @@ import { MembershipCheckoutService } from './membership-checkout.service';
 import { MembershipCheckoutController } from './membership-checkout.controller';
 import { ServiceEntitlementController } from './service-entitlement.controller';
 import { ServiceEntitlementService } from './service-entitlement.service';
+import { MembershipContinuityService } from './membership-continuity.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, AuditModule, CommerceModule],
   controllers: [MembershipAdminController, ServiceEntitlementController, MembershipCheckoutController],
-  providers: [MembershipAdminService, MembershipCheckoutService, ServiceEntitlementService],
-  exports: [MembershipAdminService, ServiceEntitlementService],
+  providers: [MembershipAdminService, MembershipCheckoutService, MembershipContinuityService, ServiceEntitlementService],
+  exports: [MembershipAdminService, MembershipContinuityService, ServiceEntitlementService],
 })
 export class MembershipsModule {}

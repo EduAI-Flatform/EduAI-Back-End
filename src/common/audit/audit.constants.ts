@@ -30,6 +30,7 @@ export const AuditAction = {
   MembershipPlanEntitlementConfigured: 'MEMBERSHIP_PLAN_ENTITLEMENT_CONFIGURED',
   MembershipPlanCourseIncluded: 'MEMBERSHIP_PLAN_COURSE_INCLUDED',
   MembershipCheckoutCreated: 'MEMBERSHIP_CHECKOUT_CREATED',
+  MembershipCourseAccessEmergencyRevoked: 'MEMBERSHIP_COURSE_ACCESS_EMERGENCY_REVOKED',
   ScholarshipCreated: 'SCHOLARSHIP_CREATED',
   ScholarshipUpdated: 'SCHOLARSHIP_UPDATED',
   ScholarshipApplied: 'SCHOLARSHIP_APPLIED',

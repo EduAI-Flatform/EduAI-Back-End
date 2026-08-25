@@ -22,7 +22,7 @@ describe('Sprint 24 centralized course access on PostgreSQL', () => {
   beforeAll(async () => {
     db = new PGlite({ extensions: { pgcrypto, vector } });
     for (const directory of readdirSync(migrationsRoot).sort()) {
-      if (directory === accessMigration) continue;
+      if (directory >= accessMigration) continue;
       const path = join(migrationsRoot, directory, 'migration.sql');
       if (existsSync(path)) await db.exec(readFileSync(path, 'utf8'));
     }

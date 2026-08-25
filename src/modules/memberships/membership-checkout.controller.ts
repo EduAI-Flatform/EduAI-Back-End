@@ -18,7 +18,7 @@ export class MembershipCheckoutController {
 
   @Get('catalog')
   @ApiOkResponse({ description: 'Published membership versions and authoritative duration pricing.' })
-  catalog() { return this.checkout.catalog(); }
+  catalog(@CurrentUser('id') learnerId: string) { return this.checkout.catalog(learnerId); }
 
   @Get('current')
   @ApiOkResponse({ description: 'The learner latest membership state and any pending plan change.' })

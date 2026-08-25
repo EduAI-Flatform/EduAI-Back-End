@@ -36,6 +36,7 @@ model Course {
   commerceProduct CommerceProduct?
   membershipPlanInclusions MembershipPlanIncludedCourse[]
   accessGrants CourseAccessGrant[]
+  membershipRemovedCourseSnapshots MembershipRemovedCourseSnapshot[]
 
   @@index([instructorId])
   @@index([status])

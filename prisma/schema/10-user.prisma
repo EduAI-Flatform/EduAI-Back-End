@@ -84,6 +84,7 @@ model User {
   memberships MembershipSubscription[]
   membershipCheckoutIntents MembershipCheckoutIntent[]
   courseAccessGrants CourseAccessGrant[]
+  membershipRemovedCourseSnapshots MembershipRemovedCourseSnapshot[]
 
   @@index([status])
   @@index([deletedAt])

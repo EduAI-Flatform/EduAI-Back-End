@@ -205,4 +205,40 @@ describe('Sprint 24 membership plans on PostgreSQL', () => {
     `);
     expect(result.rows[0]).toEqual({ line_count: 1, intent_count: 1 });
   });
+
+  it('stores immutable removed-course snapshots and explicit bounded membership-grace grants', async () => {
+    const adminId = '10000000-0000-4000-8000-000000000001';
+    const buyerId = '10000000-0000-4000-8000-000000000009';
+    const orderId = '10000000-0000-4000-8000-000000000010';
+    const courseId = '10000000-0000-4000-8000-000000000011';
+    const snapshotId = '10000000-0000-4000-8000-000000000012';
+
+    await db.exec(`
+      INSERT INTO courses (id, instructor_id, title, slug, level, status, updated_at)
+      VALUES ('${courseId}', '${adminId}', 'Continuity course', 'continuity-course', 'beginner', 'published', CURRENT_TIMESTAMP);
+      INSERT INTO membership_removed_course_snapshots (
+        id, checkout_intent_id, user_id, course_id, course_title, course_slug,
+        started_before_removal, grace_days, grace_starts_at, grace_ends_at
+      ) SELECT
+        '${snapshotId}', id, '${buyerId}', '${courseId}', 'Continuity course',
+        'continuity-course', true, 7, CURRENT_TIMESTAMP + INTERVAL '1 day',
+        CURRENT_TIMESTAMP + INTERVAL '8 days'
+      FROM membership_checkout_intents WHERE order_id = '${orderId}';
+      INSERT INTO course_access_grants (
+        user_id, course_id, source_type, source_id, starts_at, ends_at
+      ) VALUES (
+        '${buyerId}', '${courseId}', 'membership_grace', '${snapshotId}',
+        CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP + INTERVAL '8 days'
+      );
+    `);
+
+    const result = await db.query<{ snapshot_count: number; grace_grant_count: number }>(`
+      SELECT
+        (SELECT COUNT(*) FROM membership_removed_course_snapshots WHERE id = '${snapshotId}') AS snapshot_count,
+        (SELECT COUNT(*) FROM course_access_grants WHERE source_type = 'membership_grace' AND source_id = '${snapshotId}') AS grace_grant_count
+    `);
+    expect(result.rows[0]).toEqual({ snapshot_count: 1, grace_grant_count: 1 });
+    await expect(db.exec(`UPDATE membership_removed_course_snapshots SET grace_days = 30 WHERE id = '${snapshotId}'`))
+      .rejects.toThrow(/immutable commerce record membership_removed_course_snapshots/);
+  });
 });

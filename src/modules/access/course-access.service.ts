@@ -85,10 +85,11 @@ export class CourseAccessService {
           OR: [{ endsAt: null }, { endsAt: { gt: at } }, { graceEndsAt: { gt: at } }],
         },
         orderBy: [{ endsAt: { sort: 'desc', nulls: 'first' } }, { graceEndsAt: 'desc' }, { id: 'asc' }],
-        select: { id: true, endsAt: true, graceEndsAt: true },
+        select: { id: true, sourceType: true, endsAt: true, graceEndsAt: true },
       });
-      hasActiveGrant = Boolean(grant && (grant.endsAt === null || grant.endsAt > at));
-      hasGraceGrant = Boolean(grant && !hasActiveGrant && grant.graceEndsAt && grant.graceEndsAt > at);
+      const explicitGrace = grant?.sourceType === CourseAccessSourceType.membership_grace;
+      hasActiveGrant = Boolean(grant && !explicitGrace && (grant.endsAt === null || grant.endsAt > at));
+      hasGraceGrant = Boolean(grant && (explicitGrace || (!hasActiveGrant && grant.graceEndsAt && grant.graceEndsAt > at)));
     }
 
     return resolveCourseAccessFacts(input.operation, {

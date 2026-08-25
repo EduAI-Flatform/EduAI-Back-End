@@ -248,6 +248,7 @@ model MembershipCheckoutIntent {
   user             User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
   version          MembershipPlanVersion    @relation(fields: [versionId], references: [id], onDelete: Restrict)
   durationOption   MembershipDurationOption @relation(fields: [durationOptionId], references: [id], onDelete: Restrict)
+  removedCourses  MembershipRemovedCourseSnapshot[]
 
   @@index([userId, createdAt])
   @@index([versionId])
