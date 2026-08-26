@@ -33,6 +33,7 @@ import { MonitoringModule } from './common/monitoring/monitoring.module';
 import { CommerceModule } from './modules/commerce/commerce.module';
 import { MembershipsModule } from './modules/memberships/memberships.module';
 import { AccessModule } from './modules/access/access.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { AccessModule } from './modules/access/access.module';
     AiModule,
     CommerceModule,
     MembershipsModule,
+    PaymentsModule,
     VouchersModule,
     ScholarshipsModule,
     TmiModule,

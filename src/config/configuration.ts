@@ -61,6 +61,17 @@ export interface BackendConfig {
   commerce: {
     idempotencySecret?: string;
   };
+  payos: {
+    environment: ValidatedEnv['PAYOS_ENVIRONMENT'];
+    clientId?: string;
+    apiKey?: string;
+    checksumKey?: string;
+    apiBaseUrl: string;
+    returnUrl?: string;
+    cancelUrl?: string;
+    webhookUrl?: string;
+    timeoutMs: number;
+  };
 }
 
 export default function configuration(): BackendConfig {
@@ -128,6 +139,17 @@ export default function configuration(): BackendConfig {
     },
     commerce: {
       idempotencySecret: env.COMMERCE_IDEMPOTENCY_SECRET,
+    },
+    payos: {
+      environment: env.PAYOS_ENVIRONMENT,
+      clientId: env.PAYOS_CLIENT_ID,
+      apiKey: env.PAYOS_API_KEY,
+      checksumKey: env.PAYOS_CHECKSUM_KEY,
+      apiBaseUrl: env.PAYOS_API_BASE_URL,
+      returnUrl: env.PAYOS_RETURN_URL,
+      cancelUrl: env.PAYOS_CANCEL_URL,
+      webhookUrl: env.PAYOS_WEBHOOK_URL,
+      timeoutMs: env.PAYOS_TIMEOUT_MS,
     },
   };
 }

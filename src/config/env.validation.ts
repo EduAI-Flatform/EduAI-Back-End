@@ -1,6 +1,9 @@
 export type NodeEnvironment = 'development' | 'test' | 'production';
 export type AiProviderName = 'gemini' | 'openai' | 'mock';
 export type EmailProviderName = 'disabled' | 'preview' | 'resend';
+export type PayosEnvironment = 'disabled' | 'production';
+
+const OFFICIAL_PAYOS_API_BASE_URL = 'https://api-merchant.payos.vn';
 
 export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
@@ -38,6 +41,15 @@ export interface ValidatedEnv {
   MONITORING_ENABLED: boolean;
   MONITORING_ENDPOINT?: string;
   COMMERCE_IDEMPOTENCY_SECRET?: string;
+  PAYOS_ENVIRONMENT: PayosEnvironment;
+  PAYOS_CLIENT_ID?: string;
+  PAYOS_API_KEY?: string;
+  PAYOS_CHECKSUM_KEY?: string;
+  PAYOS_API_BASE_URL: string;
+  PAYOS_RETURN_URL?: string;
+  PAYOS_CANCEL_URL?: string;
+  PAYOS_WEBHOOK_URL?: string;
+  PAYOS_TIMEOUT_MS: number;
 }
 
 export function loadBackendEnv(): ValidatedEnv {
@@ -71,6 +83,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 
   const aiProvider = parseAiProvider(config.AI_PROVIDER);
   const emailProvider = parseEmailProvider(config.EMAIL_PROVIDER);
+  const payosEnvironment = parsePayosEnvironment(config.PAYOS_ENVIRONMENT);
   const resendApiKey = optionalString(config.RESEND_API_KEY);
   const emailFrom = optionalString(config.EMAIL_FROM);
   const aiApiKey = optionalString(config.AI_API_KEY);
@@ -141,6 +154,23 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     MONITORING_ENABLED: parseBoolean(config.MONITORING_ENABLED, false, 'MONITORING_ENABLED'),
     MONITORING_ENDPOINT: optionalUrl(config.MONITORING_ENDPOINT, 'MONITORING_ENDPOINT'),
     COMMERCE_IDEMPOTENCY_SECRET: optionalString(config.COMMERCE_IDEMPOTENCY_SECRET),
+    PAYOS_ENVIRONMENT: payosEnvironment,
+    PAYOS_CLIENT_ID: optionalString(config.PAYOS_CLIENT_ID),
+    PAYOS_API_KEY: optionalString(config.PAYOS_API_KEY),
+    PAYOS_CHECKSUM_KEY: optionalString(config.PAYOS_CHECKSUM_KEY),
+    PAYOS_API_BASE_URL:
+      optionalUrl(config.PAYOS_API_BASE_URL, 'PAYOS_API_BASE_URL') ??
+      OFFICIAL_PAYOS_API_BASE_URL,
+    PAYOS_RETURN_URL: optionalUrl(config.PAYOS_RETURN_URL, 'PAYOS_RETURN_URL'),
+    PAYOS_CANCEL_URL: optionalUrl(config.PAYOS_CANCEL_URL, 'PAYOS_CANCEL_URL'),
+    PAYOS_WEBHOOK_URL: optionalUrl(config.PAYOS_WEBHOOK_URL, 'PAYOS_WEBHOOK_URL'),
+    PAYOS_TIMEOUT_MS: parseBoundedInteger(
+      config.PAYOS_TIMEOUT_MS,
+      'PAYOS_TIMEOUT_MS',
+      10000,
+      1000,
+      60000,
+    ),
   };
 
   if (validated.NODE_ENV === 'production' && validated.AI_PROVIDER === 'mock') {
@@ -171,6 +201,46 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     throw new Error(
       'COMMERCE_IDEMPOTENCY_SECRET must be at least 32 characters in production',
     );
+  }
+
+  if (validated.PAYOS_ENVIRONMENT === 'production') {
+    const requiredPayosVariables: Array<keyof ValidatedEnv> = [
+      'PAYOS_CLIENT_ID',
+      'PAYOS_API_KEY',
+      'PAYOS_CHECKSUM_KEY',
+      'PAYOS_RETURN_URL',
+      'PAYOS_CANCEL_URL',
+      'PAYOS_WEBHOOK_URL',
+    ];
+    const missing = requiredPayosVariables.filter((name) => !validated[name]);
+
+    if (missing.length > 0) {
+      throw new Error(
+        `PAYOS production configuration requires ${missing.join(', ')}`,
+      );
+    }
+    if (validated.NODE_ENV !== 'production') {
+      throw new Error('PAYOS_ENVIRONMENT=production requires NODE_ENV=production');
+    }
+    if (validated.PAYOS_API_BASE_URL !== OFFICIAL_PAYOS_API_BASE_URL) {
+      throw new Error(
+        `PAYOS_API_BASE_URL must be ${OFFICIAL_PAYOS_API_BASE_URL}`,
+      );
+    }
+    for (const name of [
+      'PAYOS_RETURN_URL',
+      'PAYOS_CANCEL_URL',
+      'PAYOS_WEBHOOK_URL',
+    ] as const) {
+      const url = new URL(validated[name] as string);
+      if (
+        url.protocol !== 'https:' ||
+        url.username.length > 0 ||
+        url.password.length > 0
+      ) {
+        throw new Error(`${name} must use https in PayOS production mode`);
+      }
+    }
   }
 
   return validated;
@@ -234,6 +304,16 @@ function parseEmailProvider(value: unknown): EmailProviderName {
   return provider;
 }
 
+function parsePayosEnvironment(value: unknown): PayosEnvironment {
+  const environment = optionalString(value) ?? 'disabled';
+
+  if (environment !== 'disabled' && environment !== 'production') {
+    throw new Error('PAYOS_ENVIRONMENT must be disabled or production');
+  }
+
+  return environment;
+}
+
 function parsePositiveInteger(value: unknown, name: string, fallback: number): number {
   const raw = optionalString(value);
   const parsed = raw === undefined ? fallback : Number(raw);
@@ -255,6 +335,23 @@ function parseNonNegativeInteger(
 
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error(`${name} must be a non-negative integer`);
+  }
+
+  return parsed;
+}
+
+function parseBoundedInteger(
+  value: unknown,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const raw = optionalString(value);
+  const parsed = raw === undefined ? fallback : Number(raw);
+
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
   }
 
   return parsed;

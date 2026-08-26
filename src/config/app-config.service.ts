@@ -58,6 +58,10 @@ export class AppConfigService {
     return this.getConfigValue('commerce');
   }
 
+  get payos(): BackendConfig['payos'] {
+    return this.getConfigValue('payos');
+  }
+
   private getConfigValue<T extends keyof BackendConfig>(key: T): BackendConfig[T] {
     const value = this.configService.get<BackendConfig[T]>(key);
 

@@ -1,6 +1,69 @@
 import { validateEnv } from './env.validation';
 
 describe('validateEnv', () => {
+  const paymentBase = {
+    DATABASE_URL: 'postgresql://user:pass@localhost:5432/eduai',
+    JWT_ACCESS_SECRET: 'access-secret',
+    JWT_REFRESH_SECRET: 'refresh-secret',
+  };
+
+  it('keeps PayOS disabled by default without requiring provider secrets', () => {
+    expect(validateEnv(paymentBase)).toMatchObject({
+      PAYOS_API_BASE_URL: 'https://api-merchant.payos.vn',
+      PAYOS_ENVIRONMENT: 'disabled',
+      PAYOS_TIMEOUT_MS: 10000,
+    });
+  });
+
+  it('requires complete production-only PayOS configuration when activated', () => {
+    expect(() =>
+      validateEnv({ ...paymentBase, PAYOS_ENVIRONMENT: 'production' }),
+    ).toThrow('PAYOS production configuration requires');
+
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        NODE_ENV: 'development',
+        PAYOS_ENVIRONMENT: 'production',
+        PAYOS_CLIENT_ID: 'client',
+        PAYOS_API_KEY: 'api-key',
+        PAYOS_CHECKSUM_KEY: 'checksum-key',
+        PAYOS_RETURN_URL: 'https://app.example/payments/return',
+        PAYOS_CANCEL_URL: 'https://app.example/payments/cancel',
+        PAYOS_WEBHOOK_URL: 'https://api.example/api/v1/payments/webhooks/payos',
+      }),
+    ).toThrow('PAYOS_ENVIRONMENT=production requires NODE_ENV=production');
+  });
+
+  it('accepts only the official PayOS API origin and HTTPS callback URLs', () => {
+    const active = {
+      ...paymentBase,
+      NODE_ENV: 'production',
+      COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+      PAYOS_ENVIRONMENT: 'production',
+      PAYOS_CLIENT_ID: 'client',
+      PAYOS_API_KEY: 'api-key',
+      PAYOS_CHECKSUM_KEY: 'checksum-key',
+      PAYOS_RETURN_URL: 'https://app.example/payments/return',
+      PAYOS_CANCEL_URL: 'https://app.example/payments/cancel',
+      PAYOS_WEBHOOK_URL: 'https://api.example/api/v1/payments/webhooks/payos',
+    };
+
+    expect(validateEnv(active)).toMatchObject({
+      PAYOS_ENVIRONMENT: 'production',
+      PAYOS_TIMEOUT_MS: 10000,
+    });
+    expect(() =>
+      validateEnv({ ...active, PAYOS_RETURN_URL: 'http://app.example/return' }),
+    ).toThrow('PAYOS_RETURN_URL must use https');
+    expect(() =>
+      validateEnv({ ...active, PAYOS_API_BASE_URL: 'https://proxy.example' }),
+    ).toThrow('PAYOS_API_BASE_URL must be https://api-merchant.payos.vn');
+    expect(() => validateEnv({ ...active, PAYOS_TIMEOUT_MS: '999' })).toThrow(
+      'PAYOS_TIMEOUT_MS must be an integer between 1000 and 60000',
+    );
+  });
+
   it('requires a dedicated idempotency secret for permanent production Commerce', () => {
     const base = {
       NODE_ENV: 'production',
