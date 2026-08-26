@@ -317,6 +317,9 @@ model CommercePaymentAttempt {
   provider                        String                @db.VarChar(32)
   localRequestIdentity            String                @unique @map("local_request_identity") @db.Uuid
   providerPaymentIdentity         String?               @map("provider_payment_identity") @db.VarChar(128)
+  providerOrderCode               BigInt?                @map("provider_order_code")
+  providerExpiresAt               DateTime?              @map("provider_expires_at")
+  providerRequestStartedAt        DateTime?              @map("provider_request_started_at")
   status                          CommercePaymentStatus @default(created)
   statusOperationId               String?                @map("status_operation_id") @db.Uuid
   amountMinor                     BigInt                @map("amount_minor")
@@ -332,6 +335,7 @@ model CommercePaymentAttempt {
   settlements                     CommerceSettlement[]
 
   @@unique([provider, providerPaymentIdentity])
+  @@unique([provider, providerOrderCode])
   @@index([orderId, status])
   @@index([status, updatedAt])
   @@map("commerce_payment_attempts")
