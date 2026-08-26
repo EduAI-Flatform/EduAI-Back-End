@@ -116,6 +116,7 @@ function harness(options: {
         status: 'PENDING' as const,
         checkoutUrl: 'https://pay.payos.vn/web/example',
         qrPayload: '00020101021238570010A000000727012700069704220113TESTPAYMENT',
+        receivingAccount: 'receiving-account',
         expiresAt: new Date(now.getTime() + 10 * 60_000),
       };
     }),

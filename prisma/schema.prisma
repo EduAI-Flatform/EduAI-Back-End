@@ -605,6 +605,7 @@ model CommercePaymentAttempt {
   provider                        String                @db.VarChar(32)
   localRequestIdentity            String                @unique @map("local_request_identity") @db.Uuid
   providerPaymentIdentity         String?               @map("provider_payment_identity") @db.VarChar(128)
+  providerReceivingAccountHash    String?               @map("provider_receiving_account_hash") @db.VarChar(128)
   providerOrderCode               BigInt?                @map("provider_order_code")
   providerExpiresAt               DateTime?              @map("provider_expires_at")
   providerRequestStartedAt        DateTime?              @map("provider_request_started_at")
@@ -2245,15 +2246,24 @@ model AiFlashcard {
   @@map("ai_flashcards")
 }
 
+enum AuditActorKind {
+  USER
+  SYSTEM
+  PROVIDER
+
+  @@map("audit_actor_kind")
+}
+
 model AuditLog {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  actorId      String   @map("actor_id") @db.Uuid
+  actorKind    AuditActorKind @default(USER) @map("actor_kind")
+  actorId      String?  @map("actor_id") @db.Uuid
   action       String
   targetType   String   @map("target_type")
   targetId     String   @map("target_id")
   metadataJson Json     @default("{}") @map("metadata_json")
   occurredAt   DateTime @default(now()) @map("occurred_at")
-  actor        User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  actor        User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([occurredAt])
   @@index([action, occurredAt])

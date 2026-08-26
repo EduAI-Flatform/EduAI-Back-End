@@ -179,6 +179,7 @@ function normalizeCreated(value: unknown): CreatedPaymentRequest {
     status,
     checkoutUrl,
     qrPayload: requireString(item.qrCode, 8192),
+    receivingAccount: requireString(item.accountNumber, 128),
     ...(item.expiredAt === undefined
       ? {}
       : { expiresAt: requireUnixDate(item.expiredAt) }),
@@ -216,6 +217,7 @@ function normalizeWebhook(value: unknown): VerifiedPaymentWebhook {
     currency: requireVnd(item.currency),
     occurredAt: requireProviderDate(item.transactionDateTime),
     providerCode: requireString(item.code, 32),
+    receivingAccount: requireString(item.accountNumber, 128),
   };
 }
 
@@ -228,7 +230,7 @@ function mapProviderError(error: unknown): PaymentProviderError {
     return new PaymentProviderError('invalid_signature', false);
   }
   if (error instanceof WebhookError) {
-    return new PaymentProviderError('malformed_response', false);
+    return new PaymentProviderError('invalid_signature', false);
   }
   if (error instanceof ConnectionError) {
     return new PaymentProviderError('unavailable', true);

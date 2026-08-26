@@ -10,14 +10,17 @@ import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider';
 import { PayosClientPort, PayosPaymentProvider } from './payos-payment.provider';
 import { PaymentRequestController } from './payment-request.controller';
 import { PaymentRequestService } from './payment-request.service';
+import { PaymentWebhookController } from './payment-webhook.controller';
+import { PaymentWebhookService } from './payment-webhook.service';
 
 const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
 
 @Module({
   imports: [AppConfigModule, AuditModule, AuthModule, PrismaModule],
-  controllers: [PaymentRequestController],
+  controllers: [PaymentRequestController, PaymentWebhookController],
   providers: [
     PaymentRequestService,
+    PaymentWebhookService,
     DisabledPaymentProvider,
     {
       provide: PAYOS_CLIENT,

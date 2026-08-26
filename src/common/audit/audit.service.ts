@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '../../../generated/prisma/client';
+import { AuditActorKind, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditAction, AuditActionValue } from './audit.constants';
 
 export { AuditAction } from './audit.constants';
 
 export interface AuditWriteInput {
-  actorId: string;
+  actorKind?: AuditActorKind;
+  actorId?: string;
   action: AuditActionValue;
   target: {
     type: string;
@@ -19,6 +20,7 @@ type AuditWriterClient = Pick<Prisma.TransactionClient, 'auditLog'>;
 
 const auditLogSelect = {
   id: true,
+  actorKind: true,
   actorId: true,
   action: true,
   targetType: true,
@@ -67,8 +69,16 @@ export class AuditService {
     input: AuditWriteInput,
     client: AuditWriterClient = this.prisma,
   ): Promise<void> {
+    const actorKind = input.actorKind ?? AuditActorKind.USER;
+    if (
+      (actorKind === AuditActorKind.USER && !input.actorId) ||
+      (actorKind !== AuditActorKind.USER && input.actorId)
+    ) {
+      throw new Error('Audit actor kind and identity do not match.');
+    }
     await client.auditLog.create({
       data: {
+        actorKind,
         actorId: input.actorId,
         action: input.action,
         targetType: input.target.type,

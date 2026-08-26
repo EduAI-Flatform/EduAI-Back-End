@@ -1,12 +1,15 @@
+import { createHmac } from 'node:crypto';
 import {
   APIError,
   ConnectionTimeoutError,
   InvalidSignatureError,
+  PayOS,
 } from '@payos/node';
 import { PayosPaymentProvider } from './payos-payment.provider';
 
 describe('PayosPaymentProvider', () => {
   const validCreated = {
+    accountNumber: 'receiving-account',
     amount: 125000,
     checkoutUrl: 'https://pay.payos.vn/web/example',
     currency: 'VND',
@@ -70,6 +73,7 @@ describe('PayosPaymentProvider', () => {
       amountMinor: 125000n,
       currency: 'VND',
       providerPaymentIdentity: 'payment-link-id',
+      receivingAccount: 'receiving-account',
       status: 'PENDING',
     });
     await expect(provider.retrievePaymentRequest('payment-link-id')).resolves.toMatchObject({
@@ -135,6 +139,7 @@ describe('PayosPaymentProvider', () => {
   it('verifies and normalizes webhook data without retaining the raw envelope', async () => {
     const { client, provider } = setup();
     client.webhooks.verify.mockResolvedValue({
+      accountNumber: 'receiving-account',
       amount: 125000,
       code: '00',
       currency: 'VND',
@@ -158,7 +163,51 @@ describe('PayosPaymentProvider', () => {
       providerEventIdentity: 'settlement-reference',
       providerPaymentIdentity: 'payment-link-id',
       providerSettlementReference: 'settlement-reference',
+      receivingAccount: 'receiving-account',
     });
+  });
+
+  it('uses the official SDK verifier for a canonical signature and altered field', async () => {
+    const checksumKey = 'test-checksum-key-not-a-production-secret';
+    const data = {
+      accountNumber: 'receiving-account',
+      amount: 125000,
+      code: '00',
+      currency: 'VND',
+      orderCode: 123,
+      paymentLinkId: 'payment-link-id',
+      reference: 'settlement-reference',
+      transactionDateTime: '2026-08-26 17:00:00',
+    };
+    const canonical = Object.keys(data)
+      .sort()
+      .map((key) => `${key}=${data[key as keyof typeof data]}`)
+      .join('&');
+    const signature = createHmac('sha256', checksumKey)
+      .update(canonical)
+      .digest('hex');
+    const client = new PayOS({
+      apiKey: 'test-api-key',
+      checksumKey,
+      clientId: 'test-client-id',
+      logger: null,
+      logLevel: 'off',
+      maxRetries: 0,
+    });
+    const provider = new PayosPaymentProvider(client);
+
+    await expect(
+      provider.verifyWebhook({ body: { data, signature }, headers: {} }),
+    ).resolves.toMatchObject({
+      amountMinor: 125000n,
+      providerSettlementReference: 'settlement-reference',
+    });
+    await expect(
+      provider.verifyWebhook({
+        body: { data: { ...data, amount: 125001 }, signature },
+        headers: {},
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_signature', retryable: false });
   });
 
   it('maps timeouts, provider rejection, and invalid signatures to sanitized errors', async () => {

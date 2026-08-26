@@ -126,12 +126,12 @@ describe('Sprint 23 commerce persistence on PostgreSQL', () => {
       BEGIN;
       INSERT INTO commerce_payment_attempts (
         id, order_id, provider, local_request_identity, provider_payment_identity,
-        provider_order_code, provider_expires_at, provider_request_started_at,
+        provider_receiving_account_hash, provider_order_code, provider_expires_at, provider_request_started_at,
         status, amount_minor, currency, updated_at
       ) VALUES (
         '${firstAttemptId}', '${orderId}', 'payos',
         '00000000-0000-4000-8000-000000000012',
-        'provider-payment-1', 1001, CURRENT_TIMESTAMP + INTERVAL '15 minutes',
+        'provider-payment-1', 'test-receiving-account-hash-1', 1001, CURRENT_TIMESTAMP + INTERVAL '15 minutes',
         CURRENT_TIMESTAMP, 'created', 1000, 'VND', CURRENT_TIMESTAMP
       );
       COMMIT;
@@ -205,12 +205,12 @@ describe('Sprint 23 commerce persistence on PostgreSQL', () => {
     await db.exec(`
       INSERT INTO commerce_payment_attempts (
         id, order_id, provider, local_request_identity, provider_payment_identity,
-        provider_order_code, provider_expires_at, provider_request_started_at,
+        provider_receiving_account_hash, provider_order_code, provider_expires_at, provider_request_started_at,
         status, amount_minor, currency, updated_at
       ) VALUES (
         '${paidAttemptId}', '${orderId}', 'payos',
         '00000000-0000-4000-8000-000000000023',
-        'provider-payment-2', 1003, CURRENT_TIMESTAMP + INTERVAL '15 minutes',
+        'provider-payment-2', 'test-receiving-account-hash-2', 1003, CURRENT_TIMESTAMP + INTERVAL '15 minutes',
         CURRENT_TIMESTAMP, 'created', 1000, 'VND', CURRENT_TIMESTAMP
       );
       BEGIN;

@@ -1,3 +1,4 @@
+import { AuditActorKind } from '../../../generated/prisma/client';
 import { AuditAction, AuditService } from './audit.service';
 
 describe('AuditService', () => {
@@ -53,6 +54,7 @@ describe('AuditService', () => {
 
     expect(prisma.auditLog.create).toHaveBeenCalledWith({
       data: {
+        actorKind: AuditActorKind.USER,
         actorId: 'actor-id',
         action: AuditAction.AuthLogin,
         targetType: 'user',
@@ -66,6 +68,28 @@ describe('AuditService', () => {
     });
     expect('update' in service).toBe(false);
     expect('delete' in service).toBe(false);
+  });
+
+  it('records provider actors without inventing a user identity', async () => {
+    const { prisma, service } = createHarness();
+
+    await service.record({
+      actorKind: AuditActorKind.PROVIDER,
+      action: AuditAction.PaymentWebhookSettled,
+      target: { type: 'commerce_order', id: 'order-id' },
+    });
+
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorKind: AuditActorKind.PROVIDER,
+        actorId: undefined,
+        action: AuditAction.PaymentWebhookSettled,
+        targetType: 'commerce_order',
+        targetId: 'order-id',
+        metadataJson: {},
+      },
+      select: { id: true },
+    });
   });
 
   it('returns newest-first paginated records with bounded filters', async () => {

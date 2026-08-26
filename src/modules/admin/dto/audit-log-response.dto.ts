@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { AuditActorKind } from '../../../../generated/prisma/client';
 
 class AuditActorResponseDto {
   @ApiProperty({ format: 'uuid' })
@@ -15,8 +16,11 @@ export class AuditLogItemResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ format: 'uuid' })
-  actorId!: string;
+  @ApiProperty({ enum: AuditActorKind })
+  actorKind!: AuditActorKind;
+
+  @ApiProperty({ format: 'uuid', nullable: true })
+  actorId!: string | null;
 
   @ApiProperty({ example: 'COURSE_PUBLISHED' })
   action!: string;
@@ -33,8 +37,8 @@ export class AuditLogItemResponseDto {
   @ApiProperty({ format: 'date-time' })
   occurredAt!: Date;
 
-  @ApiProperty({ type: AuditActorResponseDto })
-  actor!: AuditActorResponseDto;
+  @ApiProperty({ type: AuditActorResponseDto, nullable: true })
+  actor!: AuditActorResponseDto | null;
 }
 
 export class PaginatedAuditLogResponseDto {

@@ -1,12 +1,21 @@
+enum AuditActorKind {
+  USER
+  SYSTEM
+  PROVIDER
+
+  @@map("audit_actor_kind")
+}
+
 model AuditLog {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  actorId      String   @map("actor_id") @db.Uuid
+  actorKind    AuditActorKind @default(USER) @map("actor_kind")
+  actorId      String?  @map("actor_id") @db.Uuid
   action       String
   targetType   String   @map("target_type")
   targetId     String   @map("target_id")
   metadataJson Json     @default("{}") @map("metadata_json")
   occurredAt   DateTime @default(now()) @map("occurred_at")
-  actor        User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  actor        User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([occurredAt])
   @@index([action, occurredAt])

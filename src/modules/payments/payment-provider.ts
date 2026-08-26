@@ -47,6 +47,7 @@ export interface CreatedPaymentRequest {
   status: PaymentProviderStatus;
   checkoutUrl: string;
   qrPayload: string;
+  receivingAccount: string;
   expiresAt?: Date;
 }
 
@@ -75,6 +76,7 @@ export interface VerifiedPaymentWebhook {
   currency: 'VND';
   occurredAt: Date;
   providerCode: string;
+  receivingAccount: string;
 }
 
 export interface PaymentProvider {

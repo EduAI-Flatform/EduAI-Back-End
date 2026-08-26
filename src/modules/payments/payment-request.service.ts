@@ -261,6 +261,7 @@ export class PaymentRequestService {
       where: { id: attempt.id },
       data: {
         providerPaymentIdentity: created.providerPaymentIdentity,
+        providerReceivingAccountHash: this.receivingAccountHash(created.receivingAccount),
         status: CommercePaymentStatus.pending,
         statusOperationId: operationId,
       },
@@ -514,6 +515,13 @@ export class PaymentRequestService {
 
   private description(orderNumber: string): string {
     return `EDUAI ${orderNumber.slice(-19)}`;
+  }
+
+  private receivingAccountHash(value: string): string {
+    return createHmac(
+      'sha256',
+      this.config.commerce.idempotencySecret as string,
+    ).update(`payos-receiving-account:${value}`).digest('hex');
   }
 
   private toHttpError(error: unknown): Error {
