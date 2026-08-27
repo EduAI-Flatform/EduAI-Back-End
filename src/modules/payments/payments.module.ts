@@ -16,6 +16,7 @@ import { PaymentWebhookController } from './payment-webhook.controller';
 import { PaymentWebhookService } from './payment-webhook.service';
 import { PaymentReconciliationController } from './payment-reconciliation.controller';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
+import { PaymentLifecycleService } from './payment-lifecycle.service';
 
 const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
 
@@ -27,6 +28,7 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
     PaymentWebhookService,
     CommerceFulfillmentService,
     PaymentReconciliationService,
+    PaymentLifecycleService,
     DisabledPaymentProvider,
     {
       provide: PAYOS_CLIENT,

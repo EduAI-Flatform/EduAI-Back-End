@@ -78,7 +78,7 @@ export class PaymentReconciliationService {
         );
         const reason = this.factMismatch(attempt, status);
         if (reason) {
-          await this.openCase(attempt, CommerceReconciliationKind.provider_fact_mismatch, reason);
+          await this.flagAttempt(attempt, CommerceReconciliationKind.provider_fact_mismatch, reason);
           reviewRequired += 1;
           continue;
         }
@@ -86,7 +86,7 @@ export class PaymentReconciliationService {
         if (status.status === 'PAID') {
           const verified = this.toVerified(attempt, status);
           if (!verified) {
-            await this.openCase(
+            await this.flagAttempt(
               attempt,
               CommerceReconciliationKind.provider_fact_mismatch,
               'PROVIDER_PAID_FACTS_INCOMPLETE',
@@ -98,7 +98,7 @@ export class PaymentReconciliationService {
             await this.webhook.ingestVerified(verified);
             recovered += 1;
           } catch {
-            await this.openCase(
+            await this.flagAttempt(
               attempt,
               CommerceReconciliationKind.paid_not_fulfilled,
               'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED',
@@ -106,7 +106,7 @@ export class PaymentReconciliationService {
             reviewRequired += 1;
           }
         } else if (status.status === 'UNDERPAID' || status.status === 'FAILED') {
-          await this.openCase(
+          await this.flagAttempt(
             attempt,
             CommerceReconciliationKind.provider_fact_mismatch,
             status.status === 'UNDERPAID' ? 'PROVIDER_AMOUNT_UNDERPAID' : 'PROVIDER_PAYMENT_FAILED',
@@ -122,7 +122,7 @@ export class PaymentReconciliationService {
           kind === CommerceReconciliationKind.unknown_provider_status
             ? 'PROVIDER_STATUS_MALFORMED'
             : 'PROVIDER_STATUS_UNAVAILABLE';
-        await this.openCase(attempt, kind, reason);
+        await this.flagAttempt(attempt, kind, reason);
         reviewRequired += 1;
       }
     }
@@ -323,7 +323,7 @@ export class PaymentReconciliationService {
     });
   }
 
-  private async openCase(
+  async flagAttempt(
     attempt: { id: string; orderId: string },
     kind: CommerceReconciliationKind,
     reasonCode: string,

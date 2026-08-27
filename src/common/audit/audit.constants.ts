@@ -23,6 +23,8 @@ export const AuditAction = {
   CommerceProductStatusChanged: 'COMMERCE_PRODUCT_STATUS_CHANGED',
   PaymentRequestCreated: 'PAYMENT_REQUEST_CREATED',
   PaymentRequestFailed: 'PAYMENT_REQUEST_FAILED',
+  PaymentRequestCancelled: 'PAYMENT_REQUEST_CANCELLED',
+  PaymentRequestExpired: 'PAYMENT_REQUEST_EXPIRED',
   PaymentNotRequiredConfirmed: 'PAYMENT_NOT_REQUIRED_CONFIRMED',
   PaymentWebhookSettled: 'PAYMENT_WEBHOOK_SETTLED',
   PaymentWebhookReconciliationRequired: 'PAYMENT_WEBHOOK_RECONCILIATION_REQUIRED',
