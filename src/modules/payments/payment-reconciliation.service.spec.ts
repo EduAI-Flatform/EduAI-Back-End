@@ -100,6 +100,7 @@ function harness() {
     fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
     dispatchPending: jest.fn().mockResolvedValue(undefined),
   };
+  const monitoring = { capture: jest.fn() };
   const service = new PaymentReconciliationService(
     prisma as never,
     audit as never,
@@ -107,8 +108,9 @@ function harness() {
     provider as never,
     webhook as never,
     fulfillment as never,
+    monitoring as never,
   );
-  return { service, prisma, provider, audit, webhook, fulfillment, tx, review };
+  return { service, prisma, provider, audit, webhook, fulfillment, monitoring, tx, review };
 }
 
 describe('PaymentReconciliationService', () => {
@@ -133,7 +135,7 @@ describe('PaymentReconciliationService', () => {
   });
 
   it('opens an idempotent safe review when provider facts mismatch', async () => {
-    const { service, provider, prisma, webhook } = harness();
+    const { service, provider, prisma, webhook, monitoring } = harness();
     provider.reconcilePaymentRequest.mockResolvedValue({
       ...(await provider.reconcilePaymentRequest('seed')),
       amountMinor: 125001n,
@@ -152,6 +154,14 @@ describe('PaymentReconciliationService', () => {
       }),
     );
     expect(webhook.ingestVerified).not.toHaveBeenCalled();
+    expect(monitoring.capture).toHaveBeenCalledWith({
+      code: 'PAYMENT_RECONCILIATION_REQUIRED',
+      path: '/admin/commerce/reconciliation/runs',
+      statusCode: 409,
+    });
+    expect(JSON.stringify(monitoring.capture.mock.calls)).not.toMatch(
+      /payment-link|settlement-reference|receiving-account/,
+    );
   });
 
   it('records only a sanitized outage reason and keeps a restart cursor', async () => {

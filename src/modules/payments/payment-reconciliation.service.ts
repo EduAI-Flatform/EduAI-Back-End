@@ -12,6 +12,7 @@ import {
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
+import { MonitoringService } from '../../common/monitoring/monitoring.service';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
@@ -35,6 +36,7 @@ export class PaymentReconciliationService {
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     private readonly webhook: PaymentWebhookService,
     private readonly fulfillment: CommerceFulfillmentService,
+    private readonly monitoring: MonitoringService,
   ) {}
 
   async run(actorId: string, input: RunPaymentReconciliationDto) {
@@ -136,6 +138,13 @@ export class PaymentReconciliationService {
         hasMore: attempts.length > input.limit,
       },
     });
+    if (reviewRequired > 0) {
+      this.monitoring.capture({
+        code: 'PAYMENT_RECONCILIATION_REQUIRED',
+        path: '/admin/commerce/reconciliation/runs',
+        statusCode: 409,
+      });
+    }
     return {
       checkedCount: page.length,
       recoveredCount: recovered,
