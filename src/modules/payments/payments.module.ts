@@ -18,18 +18,21 @@ import { PaymentReconciliationController } from './payment-reconciliation.contro
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentLifecycleService } from './payment-lifecycle.service';
 import { PaymentLifecycleController } from './payment-lifecycle.controller';
+import { PaymentRefundController } from './payment-refund.controller';
+import { PaymentRefundService } from './payment-refund.service';
 
 const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
 
 @Module({
   imports: [AppConfigModule, AuditModule, AuthModule, PrismaModule, NotificationsModule],
-  controllers: [PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController],
+  controllers: [PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController, PaymentRefundController],
   providers: [
     PaymentRequestService,
     PaymentWebhookService,
     CommerceFulfillmentService,
     PaymentReconciliationService,
     PaymentLifecycleService,
+    PaymentRefundService,
     DisabledPaymentProvider,
     {
       provide: PAYOS_CLIENT,
