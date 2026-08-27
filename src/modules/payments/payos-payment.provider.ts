@@ -193,6 +193,7 @@ function normalizeStatus(value: unknown): PaymentRequestStatus {
   const amountRemainingMinor = BigInt(requireNonNegativeInteger(item.amountRemaining));
   return {
     providerPaymentIdentity: requireString(item.id, 128),
+    receivingAccount: requireString(item.accountNumber, 128),
     localOrderReference: requireSafeInteger(item.orderCode),
     amountMinor,
     amountPaidMinor,

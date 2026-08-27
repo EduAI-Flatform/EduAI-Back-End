@@ -21,6 +21,7 @@ describe('PayosPaymentProvider', () => {
     status: 'PENDING',
   };
   const validStatus = {
+    accountNumber: 'receiving-account',
     amount: 125000,
     amountPaid: 0,
     amountRemaining: 125000,
@@ -80,6 +81,7 @@ describe('PayosPaymentProvider', () => {
       amountMinor: 125000n,
       amountPaidMinor: 0n,
       providerPaymentIdentity: 'payment-link-id',
+      receivingAccount: 'receiving-account',
       status: 'PENDING',
     });
     await expect(

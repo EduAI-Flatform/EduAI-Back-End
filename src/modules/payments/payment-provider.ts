@@ -53,6 +53,7 @@ export interface CreatedPaymentRequest {
 
 export interface PaymentRequestStatus {
   providerPaymentIdentity: string;
+  receivingAccount: string;
   localOrderReference: number;
   amountMinor: bigint;
   amountPaidMinor: bigint;

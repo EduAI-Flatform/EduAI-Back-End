@@ -46,6 +46,10 @@ function harness() {
   };
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
+    commercePaymentAttempt: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue(attempt),
+      update: jest.fn().mockResolvedValue(attempt),
+    },
     commerceReconciliationCase: {
       findUnique: jest.fn().mockResolvedValue({
         ...review,
@@ -80,6 +84,7 @@ function harness() {
   const provider = {
     reconcilePaymentRequest: jest.fn().mockResolvedValue({
       providerPaymentIdentity: attempt.providerPaymentIdentity,
+      receivingAccount: 'receiving-account',
       localOrderReference: 9001,
       amountMinor: 125000n,
       amountPaidMinor: 125000n,
@@ -115,7 +120,7 @@ function harness() {
 
 describe('PaymentReconciliationService', () => {
   it('recovers a missed webhook through the existing verified settlement path', async () => {
-    const { service, prisma, webhook } = harness();
+    const { service, webhook, tx } = harness();
     await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
       checkedCount: 1,
       recoveredCount: 1,
@@ -129,9 +134,43 @@ describe('PaymentReconciliationService', () => {
         providerCode: '00',
       }),
     );
-    expect(prisma.commercePaymentAttempt.update).toHaveBeenCalledWith(
+    expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { providerStatusCheckedAt: expect.any(Date) } }),
     );
+  });
+
+  it('recovers an ambiguous create by stable provider order code before settlement', async () => {
+    const { service, prisma, provider, tx, webhook } = harness();
+    const ambiguous = {
+      ...attempt,
+      status: 'created',
+      providerPaymentIdentity: null,
+      providerReceivingAccountHash: null,
+    };
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([ambiguous]);
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(ambiguous);
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 1,
+      reviewRequiredCount: 0,
+    });
+
+    expect(provider.reconcilePaymentRequest).toHaveBeenCalledWith('9001');
+    expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerPaymentIdentity: 'payment-link',
+          providerReceivingAccountHash: expect.any(String),
+          status: 'pending',
+        }),
+      }),
+    );
+    expect(tx.commerceLifecycleEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ reasonCode: 'PROVIDER_REQUEST_RECOVERED' }),
+      }),
+    );
+    expect(webhook.ingestVerified).toHaveBeenCalled();
   });
 
   it('opens an idempotent safe review when provider facts mismatch', async () => {

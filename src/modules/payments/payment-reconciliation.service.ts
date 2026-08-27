@@ -44,7 +44,7 @@ export class PaymentReconciliationService {
       where: {
         id: input.cursor ? { gt: input.cursor } : undefined,
         provider: PROVIDER,
-        providerPaymentIdentity: { not: null },
+        providerOrderCode: { not: null },
         status: { in: [...ELIGIBLE_STATUSES] },
         OR: [
           { status: { in: [CommercePaymentStatus.created, CommercePaymentStatus.pending] } },
@@ -74,15 +74,15 @@ export class PaymentReconciliationService {
     for (const attempt of page) {
       try {
         const status = await this.provider.reconcilePaymentRequest(
-          attempt.providerPaymentIdentity as string,
+          attempt.providerPaymentIdentity ?? String(attempt.providerOrderCode),
         );
-        await this.markChecked(attempt.id);
         const reason = this.factMismatch(attempt, status);
         if (reason) {
           await this.openCase(attempt, CommerceReconciliationKind.provider_fact_mismatch, reason);
           reviewRequired += 1;
           continue;
         }
+        await this.persistCheckedFacts(attempt, status);
         if (status.status === 'PAID') {
           const verified = this.toVerified(attempt, status);
           if (!verified) {
@@ -269,10 +269,57 @@ export class PaymentReconciliationService {
     return { id: result.id, status: result.status.toUpperCase(), resolution: result.resolution?.toUpperCase(), resolvedAt: result.resolvedAt };
   }
 
-  private async markChecked(attemptId: string) {
-    await this.prisma.commercePaymentAttempt.update({
-      where: { id: attemptId },
-      data: { providerStatusCheckedAt: new Date() },
+  private async persistCheckedFacts(
+    attempt: {
+      id: string;
+      status: CommercePaymentStatus;
+      providerPaymentIdentity: string | null;
+    },
+    status: PaymentRequestStatus,
+  ) {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${attempt.id}::uuid FOR UPDATE`,
+      );
+      const current = await tx.commercePaymentAttempt.findUniqueOrThrow({
+        where: { id: attempt.id },
+      });
+      const recovered = current.status === CommercePaymentStatus.created;
+      const operationId = recovered ? randomUUID() : null;
+      await tx.commercePaymentAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          providerStatusCheckedAt: new Date(),
+          ...(!current.providerPaymentIdentity
+            ? {
+                providerPaymentIdentity: status.providerPaymentIdentity,
+                providerReceivingAccountHash: this.receivingAccountHash(
+                  status.receivingAccount,
+                ),
+              }
+            : {}),
+          ...(recovered
+            ? {
+                status: CommercePaymentStatus.pending,
+                statusOperationId: operationId,
+              }
+            : {}),
+        },
+      });
+      if (recovered) {
+        await tx.commerceLifecycleEvent.create({
+          data: {
+            entityType: 'payment',
+            entityId: attempt.id,
+            previousStatus: CommercePaymentStatus.created,
+            nextStatus: CommercePaymentStatus.pending,
+            actorKind: CommerceActorKind.system,
+            actorId: null,
+            operationId: operationId as string,
+            reasonCode: 'PROVIDER_REQUEST_RECOVERED',
+          },
+        });
+      }
     });
   }
 
@@ -308,7 +355,10 @@ export class PaymentReconciliationService {
     },
     status: PaymentRequestStatus,
   ): string | null {
-    if (attempt.providerPaymentIdentity !== status.providerPaymentIdentity) return 'PROVIDER_PAYMENT_IDENTITY_MISMATCH';
+    if (
+      attempt.providerPaymentIdentity &&
+      attempt.providerPaymentIdentity !== status.providerPaymentIdentity
+    ) return 'PROVIDER_PAYMENT_IDENTITY_MISMATCH';
     if (attempt.providerOrderCode !== BigInt(status.localOrderReference)) return 'PROVIDER_ORDER_REFERENCE_MISMATCH';
     if (attempt.amountMinor !== status.amountMinor || attempt.currency !== 'VND') return 'PROVIDER_AMOUNT_MISMATCH';
     return null;
@@ -327,12 +377,14 @@ export class PaymentReconciliationService {
     const transaction = status.transactions.find(
       (item) =>
         item.amountMinor === attempt.amountMinor &&
-        this.receivingAccountHash(item.receivingAccount) === attempt.providerReceivingAccountHash,
+        this.receivingAccountHash(item.receivingAccount) ===
+          (attempt.providerReceivingAccountHash ??
+            this.receivingAccountHash(status.receivingAccount)),
     );
-    if (!transaction || !attempt.providerPaymentIdentity || attempt.providerOrderCode === null) return null;
+    if (!transaction || attempt.providerOrderCode === null) return null;
     return {
       providerEventIdentity: transaction.reference,
-      providerPaymentIdentity: attempt.providerPaymentIdentity,
+      providerPaymentIdentity: status.providerPaymentIdentity,
       providerSettlementReference: transaction.reference,
       localOrderReference: Number(attempt.providerOrderCode),
       amountMinor: transaction.amountMinor,
