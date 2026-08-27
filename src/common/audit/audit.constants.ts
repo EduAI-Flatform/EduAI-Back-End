@@ -26,6 +26,8 @@ export const AuditAction = {
   PaymentNotRequiredConfirmed: 'PAYMENT_NOT_REQUIRED_CONFIRMED',
   PaymentWebhookSettled: 'PAYMENT_WEBHOOK_SETTLED',
   PaymentWebhookReconciliationRequired: 'PAYMENT_WEBHOOK_RECONCILIATION_REQUIRED',
+  PaymentReconciliationChecked: 'PAYMENT_RECONCILIATION_CHECKED',
+  PaymentReconciliationResolved: 'PAYMENT_RECONCILIATION_RESOLVED',
   CommerceOrderFulfilled: 'COMMERCE_ORDER_FULFILLED',
   MembershipPlanCreated: 'MEMBERSHIP_PLAN_CREATED',
   MembershipPlanVersionCreated: 'MEMBERSHIP_PLAN_VERSION_CREATED',

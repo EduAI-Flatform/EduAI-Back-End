@@ -88,6 +88,10 @@ enum CommerceSettlementDisposition {
 enum CommerceReconciliationKind {
   duplicate_collection
   late_payment
+  provider_outage
+  provider_fact_mismatch
+  unknown_provider_status
+  paid_not_fulfilled
 
   @@map("commerce_reconciliation_kind")
 }
@@ -102,6 +106,8 @@ enum CommerceReconciliationStatus {
 enum CommerceReconciliationResolution {
   accept
   refund
+  retry_succeeded
+  acknowledged
 
   @@map("commerce_reconciliation_resolution")
 }
@@ -382,6 +388,7 @@ model CommercePaymentAttempt {
   order                           CommerceOrder         @relation(fields: [orderId], references: [id], onDelete: Restrict)
   events                          CommercePaymentEvent[]
   settlements                     CommerceSettlement[]
+  reconciliationCases             CommerceReconciliationCase[]
 
   @@unique([provider, providerPaymentIdentity])
   @@unique([provider, providerOrderCode])
@@ -442,8 +449,11 @@ model CommerceSettlement {
 model CommerceReconciliationCase {
   id             String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderId        String                           @map("order_id") @db.Uuid
-  settlementId   String                           @unique @map("settlement_id") @db.Uuid
+  settlementId   String?                          @unique @map("settlement_id") @db.Uuid
+  paymentAttemptId String?                        @map("payment_attempt_id") @db.Uuid
   kind           CommerceReconciliationKind
+  reasonCode     String                           @map("reason_code") @db.VarChar(80)
+  sourceKey      String?                          @unique @map("source_key") @db.VarChar(160)
   status         CommerceReconciliationStatus     @default(open)
   statusOperationId String?                        @map("status_operation_id") @db.Uuid
   resolution     CommerceReconciliationResolution?
@@ -451,13 +461,17 @@ model CommerceReconciliationCase {
   openedAt       DateTime                         @default(now()) @map("opened_at")
   updatedAt      DateTime                         @updatedAt @map("updated_at")
   resolvedAt     DateTime?                        @map("resolved_at")
+  lastCheckedAt  DateTime?                        @map("last_checked_at")
+  checkCount     Int                              @default(1) @map("check_count")
   order          CommerceOrder                    @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  settlement     CommerceSettlement               @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  settlement     CommerceSettlement?              @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  paymentAttempt CommercePaymentAttempt?          @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
   resolvedBy     User?                            @relation("CommerceReconciliationResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
   refund         CommerceRefund?
 
   @@index([status, openedAt])
   @@index([orderId, status])
+  @@index([paymentAttemptId, status])
   @@map("commerce_reconciliation_cases")
 }
 

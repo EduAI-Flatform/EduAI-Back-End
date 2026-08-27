@@ -88,12 +88,39 @@ describe('PayosPaymentProvider', () => {
     await expect(provider.reconcilePaymentRequest('payment-link-id')).resolves.toMatchObject({
       providerPaymentIdentity: 'payment-link-id',
       status: 'PENDING',
+      transactions: [],
     });
 
     expect(client.paymentRequests.create).toHaveBeenCalledWith(
       expect.objectContaining({ amount: 125000, orderCode: 123 }),
       { maxRetries: 0 },
     );
+  });
+
+  it('normalizes bounded settlement facts used for missed-webhook recovery', async () => {
+    const { client, provider } = setup();
+    client.paymentRequests.get.mockResolvedValue({
+      ...validStatus,
+      amountPaid: 125000,
+      amountRemaining: 0,
+      status: 'PAID',
+      transactions: [{
+        accountNumber: 'receiving-account',
+        amount: 125000,
+        reference: 'settlement-reference',
+        transactionDateTime: '2026-08-26 17:00:00',
+      }],
+    });
+
+    await expect(provider.reconcilePaymentRequest('payment-link-id')).resolves.toMatchObject({
+      status: 'PAID',
+      transactions: [{
+        amountMinor: 125000n,
+        occurredAt: new Date('2026-08-26T17:00:00+07:00'),
+        receivingAccount: 'receiving-account',
+        reference: 'settlement-reference',
+      }],
+    });
   });
 
   it('rejects malformed provider responses before returning them', async () => {

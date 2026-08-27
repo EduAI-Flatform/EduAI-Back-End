@@ -60,6 +60,12 @@ export interface PaymentRequestStatus {
   status: PaymentProviderStatus;
   createdAt: Date;
   cancelledAt?: Date;
+  transactions: ReadonlyArray<{
+    reference: string;
+    amountMinor: bigint;
+    receivingAccount: string;
+    occurredAt: Date;
+  }>;
 }
 
 export interface VerifyPaymentWebhookInput {

@@ -81,6 +81,12 @@ export class PaymentWebhookService {
         message: 'Webhook does not describe an eligible settlement.',
       });
     }
+    return this.ingestVerified(verified);
+  }
+
+  async ingestVerified(
+    verified: VerifiedPaymentWebhook,
+  ): Promise<PaymentWebhookResponseDto> {
     const response = await this.runSerializable((tx) => this.applyVerified(tx, verified));
     await this.fulfillment.dispatchPending();
     return response;
@@ -297,7 +303,9 @@ export class PaymentWebhookService {
       data: {
         orderId: attempt.orderId,
         settlementId: settlement.id,
+        paymentAttemptId: attempt.id,
         kind: CommerceReconciliationKind.duplicate_collection,
+        reasonCode: 'DUPLICATE_COLLECTION',
       },
     });
     await this.recordReconciliationAudit(tx, attempt.orderId, 'DUPLICATE_COLLECTION');
@@ -355,7 +363,9 @@ export class PaymentWebhookService {
       data: {
         orderId: attempt.orderId,
         settlementId: settlement.id,
+        paymentAttemptId: attempt.id,
         kind: CommerceReconciliationKind.late_payment,
+        reasonCode: 'LATE_PAYMENT',
       },
     });
     await this.recordReconciliationAudit(tx, attempt.orderId, 'LATE_PAYMENT');

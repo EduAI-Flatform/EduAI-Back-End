@@ -199,10 +199,26 @@ function normalizeStatus(value: unknown): PaymentRequestStatus {
     amountRemainingMinor,
     status: requireStatus(item.status),
     createdAt: requireIsoDate(item.createdAt),
+    transactions: requireTransactions(item.transactions),
     ...(item.canceledAt === null
       ? {}
       : { cancelledAt: requireIsoDate(item.canceledAt) }),
   };
+}
+
+function requireTransactions(value: unknown): PaymentRequestStatus['transactions'] {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new PaymentProviderError('malformed_response', false);
+  }
+  return value.map((candidate) => {
+    const item = requireRecord(candidate);
+    return {
+      reference: requireString(item.reference, 128),
+      amountMinor: BigInt(requireNonNegativeInteger(item.amount)),
+      receivingAccount: requireString(item.accountNumber, 128),
+      occurredAt: requireProviderDate(item.transactionDateTime),
+    };
+  });
 }
 
 function normalizeWebhook(value: unknown): VerifiedPaymentWebhook {
