@@ -122,6 +122,45 @@ describe('CommerceFulfillmentService', () => {
     }));
   });
 
+  it('fulfills course and membership lines together before completing a mixed order', async () => {
+    const startsAt = new Date('2026-09-01T00:00:00.000Z');
+    const endsAt = new Date('2026-10-01T00:00:00.000Z');
+    tx.commerceOrder.findUnique.mockResolvedValue({
+      ...order,
+      lines: [
+        {
+          id: 'course-line', productType: CommerceProductType.course,
+          productReferenceId: 'course-id',
+        },
+        {
+          id: 'membership-line', productType: CommerceProductType.membership,
+          productReferenceId: 'version-id',
+        },
+      ],
+      membershipCheckoutIntent: {
+        versionId: 'version-id', startsAt, endsAt,
+        version: { includedCourses: [], serviceEntitlements: [] },
+        removedCourses: [],
+      },
+    });
+    tx.membershipSubscription.findUnique.mockResolvedValue(null);
+    tx.membershipSubscription.findFirst.mockResolvedValue(null);
+    tx.membershipSubscription.create.mockResolvedValue({ id: 'subscription-id' });
+
+    await service.fulfillConfirmedOrder(tx, order.id, CommerceActorKind.provider, null);
+
+    expect(courseAccess.ensureGrant).toHaveBeenCalledWith(expect.objectContaining({
+      sourceType: CourseAccessSourceType.course_purchase,
+      sourceId: 'course-line',
+    }), tx);
+    expect(tx.membershipSubscription.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ sourceOrderLineId: 'membership-line' }),
+    });
+    expect(tx.commerceOrder.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ fulfillmentStatus: CommerceFulfillmentStatus.fulfilled }),
+    }));
+  });
+
   it('does not enqueue or complete fulfillment when an access effect fails', async () => {
     courseAccess.ensureGrant.mockRejectedValueOnce(new Error('simulated grant failure'));
 
