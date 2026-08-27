@@ -25,6 +25,7 @@ export const AuditAction = {
   PaymentRequestFailed: 'PAYMENT_REQUEST_FAILED',
   PaymentRequestCancelled: 'PAYMENT_REQUEST_CANCELLED',
   PaymentRequestExpired: 'PAYMENT_REQUEST_EXPIRED',
+  PaymentExpiryChecked: 'PAYMENT_EXPIRY_CHECKED',
   PaymentNotRequiredConfirmed: 'PAYMENT_NOT_REQUIRED_CONFIRMED',
   PaymentWebhookSettled: 'PAYMENT_WEBHOOK_SETTLED',
   PaymentWebhookReconciliationRequired: 'PAYMENT_WEBHOOK_RECONCILIATION_REQUIRED',

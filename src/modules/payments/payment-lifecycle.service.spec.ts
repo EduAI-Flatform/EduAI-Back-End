@@ -46,6 +46,7 @@ function setup(initial = order()) {
   const prisma: any = {
     $transaction: jest.fn((fn: any) => fn(tx)),
     commerceOrder: { findFirst: jest.fn() },
+    commercePaymentAttempt: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const provider: any = { cancelPaymentRequest: jest.fn().mockResolvedValue(providerStatus()) };
   const audit: any = { record: jest.fn() };
@@ -112,5 +113,42 @@ describe('PaymentLifecycleService cancellation', () => {
     tx.commerceIdempotencyRecord.findUnique.mockResolvedValue({ requestHash: 'different' });
     await expect(service.cancel('learner-id', 'order-id', 'cancel-key-123')).rejects.toBeInstanceOf(ConflictException);
     expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+  });
+
+  it('expires a bounded page only after provider closure and returns a stable cursor', async () => {
+    const { service, prisma, provider, tx, audit } = setup();
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([attempt, { ...attempt, id: 'next-id' }]);
+    tx.commerceOrder.findUniqueOrThrow.mockResolvedValue(order({
+      status: CommerceOrderStatus.pending_payment,
+    }));
+    tx.commerceOrder.findUniqueOrThrow
+      .mockResolvedValueOnce(order({ status: CommerceOrderStatus.pending_payment }))
+      .mockResolvedValueOnce(order({
+        status: CommerceOrderStatus.expired,
+        paymentAttempts: [{ ...attempt, status: CommercePaymentStatus.cancelled }],
+        reservations: [],
+      }));
+    await expect(service.runExpiry('admin-id', { limit: 1 })).resolves.toEqual({
+      checkedCount: 1, expiredCount: 1, settledCount: 0,
+      reviewRequiredCount: 0, hasMore: true, nextCursor: 'attempt-id',
+    });
+    expect(provider.cancelPaymentRequest).toHaveBeenCalledWith('provider-id', 'payment window expired');
+    expect(tx.commerceOrder.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: CommerceOrderStatus.expired }),
+    }));
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ checkedCount: 1, expiredCount: 1 }),
+    }));
+  });
+
+  it('settles a paid expiry race and never expires the order', async () => {
+    const { service, prisma, provider, webhook, tx } = setup();
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([attempt]);
+    provider.cancelPaymentRequest.mockResolvedValue(providerStatus('PAID'));
+    await expect(service.runExpiry('admin-id', { limit: 20 })).resolves.toEqual(expect.objectContaining({
+      checkedCount: 1, expiredCount: 0, settledCount: 1, reviewRequiredCount: 0,
+    }));
+    expect(webhook.ingestVerified).toHaveBeenCalled();
+    expect(tx.commerceOrder.update).not.toHaveBeenCalled();
   });
 });

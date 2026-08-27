@@ -10,6 +10,7 @@ import { AuditService } from '../../common/audit/audit.service';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentLifecycleResponseDto } from './dto/payment-lifecycle.dto';
+import { RunPaymentExpiryDto } from './dto/payment-lifecycle.dto';
 import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus, VerifiedPaymentWebhook } from './payment-provider';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentWebhookService } from './payment-webhook.service';
@@ -97,6 +98,86 @@ export class PaymentLifecycleService {
     return this.project(await this.serializable((tx) => this.finish(tx, learnerId, prepared.attempt.id, status)));
   }
 
+  async runExpiry(actorId: string, input: RunPaymentExpiryDto) {
+    const attempts = await this.prisma.commercePaymentAttempt.findMany({
+      where: {
+        id: input.cursor ? { gt: input.cursor } : undefined,
+        status: CommercePaymentStatus.pending,
+        providerExpiresAt: { lte: new Date() },
+        providerPaymentIdentity: { not: null },
+        order: { status: CommerceOrderStatus.pending_payment },
+      },
+      select: {
+        id: true, orderId: true, providerPaymentIdentity: true,
+        providerReceivingAccountHash: true, providerOrderCode: true,
+        amountMinor: true, currency: true, status: true,
+      },
+      orderBy: { id: 'asc' },
+      take: input.limit + 1,
+    });
+    const page = attempts.slice(0, input.limit);
+    let expiredCount = 0;
+    let settledCount = 0;
+    let reviewRequiredCount = 0;
+    for (const attempt of page) {
+      try {
+        const status = await this.provider.cancelPaymentRequest(
+          attempt.providerPaymentIdentity as string,
+          'payment window expired',
+        );
+        const concern = this.factConcern(attempt as Attempt, status);
+        if (concern) {
+          await this.reconciliation.flagAttempt(attempt, CommerceReconciliationKind.provider_fact_mismatch, concern);
+          reviewRequiredCount += 1;
+          continue;
+        }
+        if (status.status === 'PAID') {
+          const verified = this.toVerified(attempt as Attempt, status);
+          if (!verified) {
+            await this.reconciliation.flagAttempt(attempt, CommerceReconciliationKind.provider_fact_mismatch, 'PROVIDER_PAID_FACTS_INCOMPLETE');
+            reviewRequiredCount += 1;
+            continue;
+          }
+          await this.webhook.ingestVerified(verified);
+          settledCount += 1;
+          continue;
+        }
+        if (!['CANCELLED', 'EXPIRED', 'FAILED'].includes(status.status)) {
+          await this.reconciliation.flagAttempt(attempt, CommerceReconciliationKind.unknown_provider_status, 'PAYMENT_NOT_CLOSED_BY_PROVIDER');
+          reviewRequiredCount += 1;
+          continue;
+        }
+        await this.serializable((tx) => this.finishExpiry(tx, actorId, attempt.id, status));
+        expiredCount += 1;
+      } catch (error) {
+        await this.reconciliation.flagAttempt(
+          attempt,
+          error instanceof ConflictException
+            ? CommerceReconciliationKind.unknown_provider_status
+            : CommerceReconciliationKind.provider_outage,
+          error instanceof ConflictException
+            ? 'PAYMENT_STATE_CHANGED_DURING_EXPIRY'
+            : 'PROVIDER_STATUS_UNAVAILABLE',
+        );
+        reviewRequiredCount += 1;
+      }
+    }
+    await this.audit.record({
+      actorId,
+      action: AuditAction.PaymentExpiryChecked,
+      target: { type: 'commerce_payment_expiry_run', id: randomUUID() },
+      metadata: {
+        operationId: randomUUID(), checkedCount: page.length, expiredCount,
+        settledCount, reviewRequiredCount, hasMore: attempts.length > input.limit,
+      },
+    });
+    return {
+      checkedCount: page.length, expiredCount, settledCount, reviewRequiredCount,
+      hasMore: attempts.length > input.limit,
+      nextCursor: attempts.length > input.limit ? page.at(-1)?.id ?? null : null,
+    };
+  }
+
   private async prepare(tx: Prisma.TransactionClient, learnerId: string, orderId: string, keyHash: string, requestHash: string) {
     const existing = await tx.commerceIdempotencyRecord.findUnique({
       where: { actorId_operation_keyHashVersion_keyHash: {
@@ -158,6 +239,31 @@ export class PaymentLifecycleService {
     return this.closeOrder(tx, order, learnerId,
       status.status === 'EXPIRED' ? CommerceOrderStatus.expired : CommerceOrderStatus.cancelled,
       attempt.id);
+  }
+
+  private async finishExpiry(tx: Prisma.TransactionClient, actorId: string, attemptId: string, status: PaymentRequestStatus): Promise<Order> {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${attemptId}::uuid FOR UPDATE`);
+    const attempt = await tx.commercePaymentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+    const order = await tx.commerceOrder.findUniqueOrThrow({ where: { id: attempt.orderId }, include });
+    if (order.status === CommerceOrderStatus.expired) return order;
+    if (attempt.status !== CommercePaymentStatus.pending || order.status !== CommerceOrderStatus.pending_payment) {
+      throw new ConflictException({ error: 'PAYMENT_RECONCILIATION_REQUIRED', message: 'Payment state changed during expiry.' });
+    }
+    const now = new Date();
+    const operationId = randomUUID();
+    const nextPayment = status.status === 'FAILED' ? CommercePaymentStatus.failed
+      : status.status === 'EXPIRED' ? CommercePaymentStatus.expired : CommercePaymentStatus.cancelled;
+    await tx.commercePaymentAttempt.update({ where: { id: attempt.id }, data: {
+      status: nextPayment, statusOperationId: operationId, providerStatusCheckedAt: now,
+      providerCancellationRequestedAt: now, closedAt: now,
+    } });
+    await tx.commerceLifecycleEvent.create({ data: {
+      entityType: CommerceLifecycleEntityType.payment, entityId: attempt.id,
+      previousStatus: CommercePaymentStatus.pending, nextStatus: nextPayment,
+      actorKind: CommerceActorKind.user, actorId, operationId,
+      reasonCode: 'PAYMENT_WINDOW_EXPIRED_PROVIDER_CONFIRMED',
+    } });
+    return this.closeOrder(tx, order, actorId, CommerceOrderStatus.expired, attempt.id);
   }
 
   private async closeOrder(tx: Prisma.TransactionClient, order: Order, learnerId: string,
