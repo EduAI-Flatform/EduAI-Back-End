@@ -212,7 +212,11 @@ describe('MembershipCheckoutService', () => {
 
     expect(tx.membershipSubscription.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { userId: learnerId, status: MembershipSubscriptionStatus.active },
+        where: expect.objectContaining({
+          userId: learnerId,
+          status: MembershipSubscriptionStatus.active,
+          startsAt: { lte: now },
+        }),
       }),
     );
     expect(tx.membershipCheckoutIntent.create).toHaveBeenCalledWith({
@@ -332,5 +336,19 @@ describe('MembershipCheckoutService', () => {
     expect(tx.commerceOrder.create).toHaveBeenCalledTimes(1);
     expect(audit.record).toHaveBeenCalledTimes(1);
     expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects a second pending membership checkout under the learner lock', async () => {
+    const { service, tx } = harness();
+    tx.membershipCheckoutIntent.findFirst.mockResolvedValue({ id: 'pending-intent' });
+
+    await expect(
+      service.createCheckout(learnerId, 'membership-key-pending', input),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'MEMBERSHIP_CHANGE_PENDING' }),
+    });
+
+    expect(tx.$queryRaw).toHaveBeenCalled();
+    expect(tx.commerceOrder.create).not.toHaveBeenCalled();
   });
 });

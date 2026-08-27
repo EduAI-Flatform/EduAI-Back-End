@@ -32,6 +32,7 @@ import {
   PaymentProviderError,
   VerifiedPaymentWebhook,
 } from './payment-provider';
+import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 
 const PROVIDER = 'payos';
 
@@ -64,6 +65,7 @@ export class PaymentWebhookService {
     private readonly audit: AuditService,
     private readonly config: AppConfigService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
+    private readonly fulfillment: CommerceFulfillmentService,
   ) {}
 
   async ingest(body: unknown): Promise<PaymentWebhookResponseDto> {
@@ -79,7 +81,9 @@ export class PaymentWebhookService {
         message: 'Webhook does not describe an eligible settlement.',
       });
     }
-    return this.runSerializable((tx) => this.applyVerified(tx, verified));
+    const response = await this.runSerializable((tx) => this.applyVerified(tx, verified));
+    await this.fulfillment.dispatchPending();
+    return response;
   }
 
   private async applyVerified(
@@ -95,7 +99,17 @@ export class PaymentWebhookService {
       },
       include: { settlement: true },
     });
-    if (priorEvent?.settlement) return this.resultFor(priorEvent.settlement.disposition);
+    if (priorEvent?.settlement) {
+      if (priorEvent.settlement.disposition === CommerceSettlementDisposition.matched) {
+        await this.fulfillment.fulfillConfirmedOrder(
+          tx,
+          priorEvent.settlement.orderId,
+          CommerceActorKind.provider,
+          null,
+        );
+      }
+      return this.resultFor(priorEvent.settlement.disposition);
+    }
 
     const attempt = await tx.commercePaymentAttempt.findUnique({
       where: {
@@ -132,7 +146,17 @@ export class PaymentWebhookService {
         },
       },
     });
-    if (existingSettlement) return this.resultFor(existingSettlement.disposition);
+    if (existingSettlement) {
+      if (existingSettlement.disposition === CommerceSettlementDisposition.matched) {
+        await this.fulfillment.fulfillConfirmedOrder(
+          tx,
+          existingSettlement.orderId,
+          CommerceActorKind.provider,
+          null,
+        );
+      }
+      return this.resultFor(existingSettlement.disposition);
+    }
 
     if (
       locked.status === CommercePaymentStatus.pending &&
@@ -247,6 +271,12 @@ export class PaymentWebhookService {
         provider: PROVIDER,
       },
     }, tx);
+    await this.fulfillment.fulfillConfirmedOrder(
+      tx,
+      attempt.orderId,
+      CommerceActorKind.provider,
+      null,
+    );
     return { accepted: true, result: 'CONFIRMED' };
   }
 

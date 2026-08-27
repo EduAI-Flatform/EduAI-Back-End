@@ -48,7 +48,11 @@ export class MembershipCheckoutService {
         },
       }),
       this.prisma.membershipSubscription.findFirst({
-        where: { userId: learnerId, status: MembershipSubscriptionStatus.active },
+        where: {
+          userId: learnerId,
+          status: MembershipSubscriptionStatus.active,
+          startsAt: { lte: now },
+        },
         orderBy: { expiresAt: 'desc' },
         include: { version: { include: { includedCourses: { include: { course: { select: { id: true, title: true, slug: true } } } } } } },
       }),
@@ -74,7 +78,11 @@ export class MembershipCheckoutService {
     const now = new Date();
     const [subscription, pendingChange, expiringGraceCourses] = await Promise.all([
       this.prisma.membershipSubscription.findFirst({
-        where: { userId: learnerId, status: MembershipSubscriptionStatus.active },
+        where: {
+          userId: learnerId,
+          status: MembershipSubscriptionStatus.active,
+          startsAt: { lte: now },
+        },
         orderBy: { expiresAt: 'desc' },
         include: { version: { include: { plan: { select: { id: true, code: true } } } } },
       }),
@@ -150,6 +158,20 @@ export class MembershipCheckoutService {
     const idempotency = await tx.commerceIdempotencyRecord.create({
       data: { actorId: learnerId, operation: 'membership_checkout', keyHash, keyHashVersion: 1, requestHash, requestCanonicalizationVersion: 1, status: CommerceIdempotencyStatus.in_progress, lockedUntil: new Date(now.getTime() + 30_000) },
     });
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id = ${learnerId}::uuid FOR UPDATE`);
+    const pendingIntent = await tx.membershipCheckoutIntent.findFirst({
+      where: {
+        userId: learnerId,
+        order: { status: CommerceOrderStatus.pending_payment },
+      },
+      select: { id: true },
+    });
+    if (pendingIntent) {
+      throw new ConflictException({
+        error: 'MEMBERSHIP_CHANGE_PENDING',
+        message: 'A membership checkout is already pending.',
+      });
+    }
     await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${input.versionId}::uuid FOR SHARE`);
     const version = await tx.membershipPlanVersion.findFirst({
       where: { id: input.versionId, status: MembershipPlanVersionStatus.published, plan: { status: MembershipPlanStatus.active } },
@@ -161,7 +183,11 @@ export class MembershipCheckoutService {
     const duration = version.durationOptions.find((item) => item.id === input.durationOptionId);
     if (!duration) throw new BadRequestException({ error: 'DURATION_UNAVAILABLE', message: 'Duration is not available for this membership version.' });
     const current = await tx.membershipSubscription.findFirst({
-      where: { userId: learnerId, status: MembershipSubscriptionStatus.active }, orderBy: { expiresAt: 'desc' }, include: { version: { include: { includedCourses: { include: { course: { select: { id: true, title: true, slug: true } } } } } } },
+      where: {
+        userId: learnerId,
+        status: MembershipSubscriptionStatus.active,
+        startsAt: { lte: now },
+      }, orderBy: { expiresAt: 'desc' }, include: { version: { include: { includedCourses: { include: { course: { select: { id: true, title: true, slug: true } } } } } } },
     });
     const hasActiveMembership = Boolean(current && current.expiresAt > now);
     const action: MembershipCheckoutAction = !current ? MembershipCheckoutAction.purchase

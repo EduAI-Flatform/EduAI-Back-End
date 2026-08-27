@@ -80,13 +80,18 @@ function harness() {
     verifyWebhook: jest.fn().mockResolvedValue(verified),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const fulfillment = {
+    fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
+    dispatchPending: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new PaymentWebhookService(
     prisma as unknown as PrismaService,
     audit as unknown as AuditService,
     { commerce: { idempotencySecret: TEST_SECRET } } as never,
     provider as unknown as PaymentProvider,
+    fulfillment as never,
   );
-  return { audit, prisma, provider, service, tx };
+  return { audit, fulfillment, prisma, provider, service, tx };
 }
 
 describe('PaymentWebhookService', () => {
@@ -104,7 +109,7 @@ describe('PaymentWebhookService', () => {
   });
 
   it('atomically records a matched settlement and confirms the order', async () => {
-    const { audit, provider, service, tx } = harness();
+    const { audit, fulfillment, provider, service, tx } = harness();
 
     await expect(service.ingest({ data: {}, signature: 'signed' })).resolves.toEqual({
       accepted: true,
@@ -133,6 +138,12 @@ describe('PaymentWebhookService', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ actorKind: AuditActorKind.PROVIDER }),
       tx,
+    );
+    expect(fulfillment.fulfillConfirmedOrder).toHaveBeenCalledWith(
+      tx,
+      'order-id',
+      'provider',
+      null,
     );
   });
 
@@ -171,9 +182,12 @@ describe('PaymentWebhookService', () => {
   });
 
   it('returns the stable original result for a duplicate provider event', async () => {
-    const { service, tx } = harness();
+    const { fulfillment, service, tx } = harness();
     tx.commercePaymentEvent.findUnique.mockResolvedValue({
-      settlement: { disposition: CommerceSettlementDisposition.matched },
+      settlement: {
+        orderId: 'order-id',
+        disposition: CommerceSettlementDisposition.matched,
+      },
     });
 
     await expect(service.ingest({ data: {}, signature: 'signed' })).resolves.toEqual({
@@ -182,6 +196,12 @@ describe('PaymentWebhookService', () => {
     });
     expect(tx.commercePaymentAttempt.findUnique).not.toHaveBeenCalled();
     expect(tx.commercePaymentEvent.create).not.toHaveBeenCalled();
+    expect(fulfillment.fulfillConfirmedOrder).toHaveBeenCalledWith(
+      tx,
+      'order-id',
+      'provider',
+      null,
+    );
   });
 
   it('rejects altered authoritative payment facts without recording an event', async () => {

@@ -133,6 +133,8 @@ describe('production database role separation', () => {
       'membership_subscriptions',
       'service_entitlement_grants',
       'course_access_grants',
+      'commerce_fulfillment_effects',
+      'commerce_notification_outbox',
     ]));
     expect(statement).toContain('GRANT SELECT, INSERT, UPDATE ON TABLE');
     expect(statement).toContain('TO "runtime""role"');

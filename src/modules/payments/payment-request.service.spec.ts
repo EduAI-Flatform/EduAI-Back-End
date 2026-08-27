@@ -122,6 +122,10 @@ function harness(options: {
     }),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const fulfillment = {
+    fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
+    dispatchPending: jest.fn().mockResolvedValue(undefined),
+  };
   const config = {
     commerce: { idempotencySecret: 's'.repeat(32) },
     payos: {
@@ -136,11 +140,13 @@ function harness(options: {
       config as never,
       audit as never,
       provider as never,
+      fulfillment as never,
     ),
     prisma,
     tx,
     provider,
     audit,
+    fulfillment,
     events,
     initialOrder,
     createdAttempt,
@@ -252,7 +258,7 @@ describe('PaymentRequestService', () => {
   });
 
   it('confirms a zero-payable membership without requiring or calling PayOS', async () => {
-    const { service, provider, tx } = harness({
+    const { fulfillment, service, provider, tx } = harness({
       environment: 'disabled',
       payableAmountMinor: 0n,
     });
@@ -265,6 +271,12 @@ describe('PaymentRequestService', () => {
     expect(provider.createPaymentRequest).not.toHaveBeenCalled();
     expect(tx.commerceSettlement.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ amountMinor: 0n }) }),
+    );
+    expect(fulfillment.fulfillConfirmedOrder).toHaveBeenCalledWith(
+      tx,
+      orderId,
+      'user',
+      'student-id',
     );
   });
 

@@ -5,6 +5,8 @@ import { AppConfigService } from '../../config/app-config.service';
 import { AuditModule } from '../../common/audit/audit.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { DisabledPaymentProvider } from './disabled-payment.provider';
 import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider';
 import { PayosClientPort, PayosPaymentProvider } from './payos-payment.provider';
@@ -16,11 +18,12 @@ import { PaymentWebhookService } from './payment-webhook.service';
 const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
 
 @Module({
-  imports: [AppConfigModule, AuditModule, AuthModule, PrismaModule],
+  imports: [AppConfigModule, AuditModule, AuthModule, PrismaModule, NotificationsModule],
   controllers: [PaymentRequestController, PaymentWebhookController],
   providers: [
     PaymentRequestService,
     PaymentWebhookService,
+    CommerceFulfillmentService,
     DisabledPaymentProvider,
     {
       provide: PAYOS_CLIENT,

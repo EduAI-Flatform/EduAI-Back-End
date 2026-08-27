@@ -1,6 +1,8 @@
 const { Client } = require('pg');
 
 const MEMBERSHIP_RUNTIME_TABLES = Object.freeze([
+  'commerce_fulfillment_effects',
+  'commerce_notification_outbox',
   'course_access_grants',
   'membership_checkout_intents',
   'membership_duration_options',

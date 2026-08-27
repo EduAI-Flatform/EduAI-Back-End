@@ -31,6 +31,7 @@ import {
   PaymentProvider,
   PaymentProviderError,
 } from './payment-provider';
+import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 
 const CURRENCY = 'VND';
 const IDEMPOTENCY_OPERATION = 'payment.create-request';
@@ -66,6 +67,7 @@ export class PaymentRequestService {
     private readonly config: AppConfigService,
     private readonly audit: AuditService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
+    private readonly fulfillment: CommerceFulfillmentService,
   ) {}
 
   async create(
@@ -94,6 +96,7 @@ export class PaymentRequestService {
     const prepared = await this.runSerializable((tx) =>
       this.prepare(tx, learnerId, orderId, keyHash, requestHash),
     );
+    await this.fulfillment.dispatchPending();
 
     if (!prepared.attempt || !prepared.shouldCallProvider) {
       return this.toResponse(prepared.order, prepared.attempt);
@@ -406,6 +409,12 @@ export class PaymentRequestService {
         metadata: { operationId, amountMinor: '0', currency: CURRENCY },
       },
       tx,
+    );
+    await this.fulfillment.fulfillConfirmedOrder(
+      tx,
+      order.id,
+      CommerceActorKind.user,
+      learnerId,
     );
     return this.requireOwnedOrder(tx, learnerId, order.id);
   }

@@ -221,6 +221,7 @@ model MembershipSubscription {
   id        String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String                       @map("user_id") @db.Uuid
   versionId String                       @map("version_id") @db.Uuid
+  sourceOrderLineId String?              @unique @map("source_order_line_id") @db.Uuid
   status    MembershipSubscriptionStatus @default(active)
   startsAt  DateTime                     @map("starts_at")
   expiresAt DateTime                     @map("expires_at")
@@ -228,6 +229,7 @@ model MembershipSubscription {
   updatedAt DateTime                     @updatedAt @map("updated_at")
   user      User                         @relation(fields: [userId], references: [id], onDelete: Restrict)
   version   MembershipPlanVersion        @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  sourceOrderLine CommerceOrderLine?      @relation(fields: [sourceOrderLineId], references: [id], onDelete: Restrict)
 
   @@index([userId, status, expiresAt])
   @@map("membership_subscriptions")
