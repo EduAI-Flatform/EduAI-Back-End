@@ -34,6 +34,45 @@ separately approved payment release gate. Rollback restores
 environment-loading path. It does not delete or rewrite payment, settlement,
 order, audit, or reconciliation records.
 
+The approved production activation checklist is:
+
+1. Keep the existing `NODE_ENV=production` and configured
+   `COMMERCE_IDEMPOTENCY_SECRET`. Set `PAYOS_ENVIRONMENT=production`.
+2. Supply `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, and `PAYOS_CHECKSUM_KEY`
+   only through the production secret store.
+3. Set the non-secret callback contract exactly to
+   `PAYOS_RETURN_URL=https://eduai.giaoducso.org.vn/payments/return`,
+   `PAYOS_CANCEL_URL=https://eduai.giaoducso.org.vn/payments/cancel`, and
+   `PAYOS_WEBHOOK_URL=https://api.eduai.giaoducso.org.vn/api/v1/payments/webhooks/payos`.
+   `PAYOS_API_BASE_URL` defaults to and may only equal
+   `https://api-merchant.payos.vn`; `PAYOS_TIMEOUT_MS` defaults to
+   `10000` and is optional within the validated 1,000-60,000 ms range.
+4. Run `npm run config:verify:production-commerce`. Sanitized output must
+   report the Commerce idempotency secret configured, provider activation
+   true, and provider disabled false. It never emits a value.
+5. Run `npm run process:restart:production`. This loads the fixed environment,
+   runs `pm2 restart eduai-backend --update-env`, then `pm2 save`.
+6. Confirm readiness returns HTTP 200 before any UAT. The Frontend return and
+   cancel routes are presentation only: the Backend adds the local `orderId`
+   to each callback URL, and the authenticated page re-reads the learner-owned
+   payment request. PayOS query fields never transition payment or cancellation
+   state.
+
+No additional PayOS variable is mandatory. The existing production database,
+runtime-role, migration-role, CORS, monitoring, and application configuration
+remain prerequisites but are not provider activation inputs.
+
+After UAT, set `PAYOS_ENVIRONMENT=disabled`, rerun the same preflight and
+require provider activation false plus provider disabled true, run
+`npm run process:restart:production`, and confirm readiness HTTP 200. A
+body-discarding malformed webhook check must again fail closed with HTTP 503.
+Do not infer activation or settlement from a browser redirect.
+
+Course and membership checkout create separate immutable orders. Production
+coverage therefore requires two explicitly authorized low-value transactions:
+one course order and one membership order. A mixed course-and-membership order
+is not a supported checkout shape.
+
 ## Reconciliation operations
 
 Platform administrators use the Commerce administration review queue. A run

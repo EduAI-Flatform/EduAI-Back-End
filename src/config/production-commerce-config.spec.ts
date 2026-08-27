@@ -7,6 +7,8 @@ const {
 } = require('../../scripts/verify-production-commerce-config.cjs') as {
   commerceConfigReadiness: (environment: NodeJS.ProcessEnv) => {
     commerceIdempotencySecretConfigured: boolean;
+    paymentProviderActivated: boolean;
+    paymentProviderDisabled: boolean;
   };
   verifyProductionCommerceConfig: (
     environment: NodeJS.ProcessEnv,
@@ -27,15 +29,25 @@ describe('production Commerce configuration verifier', () => {
   it('requires a secret of at least 32 characters without returning its value', () => {
     expect(commerceConfigReadiness({})).toEqual({
       commerceIdempotencySecretConfigured: false,
+      paymentProviderActivated: false,
+      paymentProviderDisabled: true,
     });
     expect(
       commerceConfigReadiness({ COMMERCE_IDEMPOTENCY_SECRET: 'short' }),
-    ).toEqual({ commerceIdempotencySecretConfigured: false });
+    ).toEqual({
+      commerceIdempotencySecretConfigured: false,
+      paymentProviderActivated: false,
+      paymentProviderDisabled: true,
+    });
     expect(
       commerceConfigReadiness({
         COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
       }),
-    ).toEqual({ commerceIdempotencySecretConfigured: true });
+    ).toEqual({
+      commerceIdempotencySecretConfigured: true,
+      paymentProviderActivated: false,
+      paymentProviderDisabled: true,
+    });
   });
 
   it('logs only sanitized readiness and fails closed', () => {
@@ -47,7 +59,32 @@ describe('production Commerce configuration verifier', () => {
     expect(logger.log).toHaveBeenCalledWith(
       'commerceIdempotencySecretConfigured: false',
     );
+    expect(logger.log).toHaveBeenCalledWith('paymentProviderActivated: false');
+    expect(logger.log).toHaveBeenCalledWith('paymentProviderDisabled: true');
     expect(logger.log).not.toHaveBeenCalledWith(expect.stringContaining('short'));
+  });
+
+  it('reports provider mode as sanitized booleans and rejects unknown modes', () => {
+    expect(
+      commerceConfigReadiness({
+        COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+        PAYOS_ENVIRONMENT: 'production',
+      }),
+    ).toEqual({
+      commerceIdempotencySecretConfigured: true,
+      paymentProviderActivated: true,
+      paymentProviderDisabled: false,
+    });
+
+    expect(() =>
+      verifyProductionCommerceConfig(
+        {
+          COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+          PAYOS_ENVIRONMENT: 'unexpected',
+        },
+        { log: jest.fn() },
+      ),
+    ).toThrow('Production Commerce configuration verification failed');
   });
 
   it('is wired into production deployment before PM2 restart', () => {

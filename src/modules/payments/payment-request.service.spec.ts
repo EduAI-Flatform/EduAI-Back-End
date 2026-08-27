@@ -54,6 +54,8 @@ function harness(options: {
   environment?: 'disabled' | 'production';
   payableAmountMinor?: bigint;
   existingAttempt?: ReturnType<typeof attempt> | null;
+  returnUrl?: string;
+  cancelUrl?: string;
 } = {}) {
   const payableAmountMinor = options.payableAmountMinor ?? 125000n;
   const initialOrder = order({
@@ -130,8 +132,8 @@ function harness(options: {
     commerce: { idempotencySecret: 's'.repeat(32) },
     payos: {
       environment: options.environment ?? 'production',
-      returnUrl: 'https://app.example/payments/return',
-      cancelUrl: 'https://app.example/payments/cancel',
+      returnUrl: options.returnUrl ?? 'https://app.example/payments/return',
+      cancelUrl: options.cancelUrl ?? 'https://app.example/payments/cancel',
     },
   };
   return {
@@ -183,8 +185,8 @@ describe('PaymentRequestService', () => {
         amountMinor: 125000n,
         currency: 'VND',
         returnUrls: {
-          success: 'https://app.example/payments/return',
-          cancel: 'https://app.example/payments/cancel',
+          success: `https://app.example/payments/return?orderId=${orderId}`,
+          cancel: `https://app.example/payments/cancel?orderId=${orderId}`,
         },
       }),
     );
@@ -201,6 +203,24 @@ describe('PaymentRequestService', () => {
         }),
       }),
       tx,
+    );
+  });
+
+  it('preserves configured query parameters while adding only local order identity', async () => {
+    const { service, provider } = harness({
+      returnUrl: 'https://app.example/payments/return?source=payos',
+      cancelUrl: 'https://app.example/payments/cancel?source=payos',
+    });
+
+    await service.create('student-id', orderId, 'payment-key-return-url');
+
+    expect(provider.createPaymentRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        returnUrls: {
+          success: `https://app.example/payments/return?source=payos&orderId=${orderId}`,
+          cancel: `https://app.example/payments/cancel?source=payos&orderId=${orderId}`,
+        },
+      }),
     );
   });
 

@@ -111,8 +111,8 @@ export class PaymentRequestService {
         currency: CURRENCY,
         description: this.description(prepared.order.orderNumber),
         returnUrls: {
-          success: this.config.payos.returnUrl as string,
-          cancel: this.config.payos.cancelUrl as string,
+          success: this.withOrderIdentity(this.config.payos.returnUrl as string, orderId),
+          cancel: this.withOrderIdentity(this.config.payos.cancelUrl as string, orderId),
         },
         expiresAt: prepared.attempt.providerExpiresAt as Date,
       });
@@ -142,6 +142,12 @@ export class PaymentRequestService {
       checkoutUrl: created.checkoutUrl,
       qrCodeDataUrl,
     });
+  }
+
+  private withOrderIdentity(callbackUrl: string, orderId: string): string {
+    const url = new URL(callbackUrl);
+    url.searchParams.set('orderId', orderId);
+    return url.toString();
   }
 
   async status(learnerId: string, orderId: string): Promise<PaymentRequestResponseDto> {

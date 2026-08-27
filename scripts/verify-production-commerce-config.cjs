@@ -2,9 +2,16 @@ const dotenv = require('dotenv');
 
 function commerceConfigReadiness(environment) {
   const secret = environment.COMMERCE_IDEMPOTENCY_SECRET;
+  const providerEnvironment =
+    typeof environment.PAYOS_ENVIRONMENT === 'string' &&
+    environment.PAYOS_ENVIRONMENT.trim().length > 0
+      ? environment.PAYOS_ENVIRONMENT.trim()
+      : 'disabled';
   return {
     commerceIdempotencySecretConfigured:
       typeof secret === 'string' && secret.trim().length >= 32,
+    paymentProviderActivated: providerEnvironment === 'production',
+    paymentProviderDisabled: providerEnvironment === 'disabled',
   };
 }
 
@@ -13,7 +20,12 @@ function verifyProductionCommerceConfig(environment, logger = console) {
   logger.log(
     `commerceIdempotencySecretConfigured: ${readiness.commerceIdempotencySecretConfigured}`,
   );
-  if (!readiness.commerceIdempotencySecretConfigured) {
+  logger.log(`paymentProviderActivated: ${readiness.paymentProviderActivated}`);
+  logger.log(`paymentProviderDisabled: ${readiness.paymentProviderDisabled}`);
+  if (
+    !readiness.commerceIdempotencySecretConfigured ||
+    (!readiness.paymentProviderActivated && !readiness.paymentProviderDisabled)
+  ) {
     throw new Error('Production Commerce configuration verification failed');
   }
 }
