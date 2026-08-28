@@ -7,12 +7,15 @@ response before it can reach Commerce. Commerce services depend only on the
 ## Embedded checkout presentation
 
 Normal course-cart and membership checkout flows use the official payOS
-Embedded Checkout inside an EduAI Radix dialog. The Frontend loads the web SDK
-directly from
+Embedded Checkout inside an EduAI Radix dialog. Only after the Backend has
+returned an allowlisted payOS checkout URL and the learner opens that dialog,
+the Frontend loads the web SDK from
 `https://cdn.payos.vn/payos-checkout/v1/stable/payos-initialize.js`, passes
 only the sanitized Backend `checkoutUrl`, and sets the SDK `RETURN_URL` to
 the exact current EduAI page URL that hosts the iframe. It does not open or
-navigate the browser to the hosted payOS page.
+navigate the browser to the hosted payOS page. The global application shell
+does not load or execute payOS code on unrelated pages or while no eligible
+provider-created checkout exists.
 
 The existing Backend callback contract remains a safe fallback:
 
