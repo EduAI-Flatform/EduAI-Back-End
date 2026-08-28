@@ -11,8 +11,8 @@ on:
       - develop
 
 jobs:
-  build:
-    name: Build backend
+  quality:
+    name: Test and build backend
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: postgresql://ci_user:ci_password@localhost:5432/eduai_ci
@@ -31,6 +31,20 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Payment security tests
+        run: >-
+          npm test -- --runInBand
+          modules/payments/payment-request.service.spec.ts
+          modules/payments/payos-payment.provider.spec.ts
+          modules/payments/payment-webhook.service.spec.ts
+          modules/payments/payment-webhook.controller.spec.ts
+          modules/payments/payment-lifecycle.service.spec.ts
+          modules/payments/payment-reconciliation.service.spec.ts
+          modules/payments/commerce-fulfillment.service.spec.ts
+
+      - name: Audit endpoint authorization
+        run: npm run security:audit-endpoints
 
       - name: Build
         run: npm run build

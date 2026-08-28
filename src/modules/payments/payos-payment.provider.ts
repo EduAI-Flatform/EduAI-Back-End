@@ -38,6 +38,7 @@ const STATUSES = new Set<PaymentProviderStatus>([
   'PROCESSING',
   'FAILED',
 ]);
+const PAYOS_CHECKOUT_HOSTS = new Set(['pay.payos.vn', 'next.pay.payos.vn']);
 
 export class PayosPaymentProvider implements PaymentProvider {
   constructor(private readonly client: PayosClientPort | null) {}
@@ -307,8 +308,10 @@ function requireHttpsUrl(value: unknown): string {
     const parsed = new URL(url);
     if (
       parsed.protocol !== 'https:' ||
+      parsed.port.length > 0 ||
       parsed.username.length > 0 ||
-      parsed.password.length > 0
+      parsed.password.length > 0 ||
+      !PAYOS_CHECKOUT_HOSTS.has(parsed.hostname.toLowerCase())
     ) {
       throw new Error();
     }

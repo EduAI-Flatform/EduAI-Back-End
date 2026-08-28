@@ -4,6 +4,46 @@ The Payments module owns PayOS configuration and normalizes every provider
 response before it can reach Commerce. Commerce services depend only on the
 `PaymentProvider` token and must not import PayOS SDK types.
 
+## Embedded checkout presentation
+
+Normal course-cart and membership checkout flows use the official payOS
+Embedded Checkout inside an EduAI Radix dialog. The Frontend loads the web SDK
+directly from
+`https://cdn.payos.vn/payos-checkout/v1/stable/payos-initialize.js`, passes
+only the sanitized Backend `checkoutUrl`, and sets the SDK `RETURN_URL` to
+the exact current EduAI page URL that hosts the iframe. It does not open or
+navigate the browser to the hosted payOS page.
+
+The existing Backend callback contract remains a safe fallback:
+
+- `PAYOS_RETURN_URL=https://eduai.giaoducso.org.vn/payments/return`
+- `PAYOS_CANCEL_URL=https://eduai.giaoducso.org.vn/payments/cancel`
+- the Backend appends its learner-owned local `orderId` to both URLs
+
+The SDK `onSuccess`, `onCancel`, and `onExit` callbacks are presentation
+signals only. Every callback re-reads the authenticated canonical payment
+request from the EduAI Backend. A success callback closes the dialog only after
+that response reports `PAID`. The webhook remains the provider settlement
+authority, and browser query parameters never mutate payment state.
+
+The component exits the SDK instance and clears the embedded container on
+close, route unmount, and React StrictMode replay. Closing and reopening the
+dialog reuses the existing Frontend payment response and does not call the
+payment-request creation API again.
+
+Production currently sends no Frontend CSP header. If nginx or another reverse
+proxy enables CSP, allow only the official payOS origins required by the SDK:
+
+```text
+script-src https://cdn.payos.vn
+frame-src https://pay.payos.vn https://next.pay.payos.vn
+connect-src https://payos.vn
+```
+
+Merge these origins into the existing directives rather than replacing the
+site policy or adding wildcards. Verify the deployed checkout with zero CSP and
+mixed-content errors.
+
 ## Runtime configuration
 
 PayOS currently exposes only its production Merchant API; it does not provide
@@ -107,3 +147,4 @@ Official references:
 - https://payos.vn/docs/moi-truong-test/
 - https://payos.vn/docs/api/
 - https://github.com/payOSHQ/payos-lib-node
+- https://payos.vn/docs/sdks/front-end/script-js/

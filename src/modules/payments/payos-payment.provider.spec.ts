@@ -148,6 +148,24 @@ describe('PayosPaymentProvider', () => {
 
     client.paymentRequests.create.mockResolvedValue({
       ...validCreated,
+      checkoutUrl: 'https://malicious.example/checkout',
+    });
+    await expect(
+      provider.createPaymentRequest({
+        amountMinor: 125000n,
+        currency: 'VND',
+        description: 'EDUAI 123',
+        localOrderReference: 123,
+        paymentAttemptIdentity: 'attempt-id',
+        returnUrls: {
+          cancel: 'https://app.example/cancel',
+          success: 'https://app.example/return',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'malformed_response', retryable: false });
+
+    client.paymentRequests.create.mockResolvedValue({
+      ...validCreated,
       amount: 124999,
     });
     await expect(
