@@ -65,6 +65,31 @@ timeout or ambiguous network failure is returned as a sanitized retryable
 provider error so the application reconciliation flow can decide the next
 action using the stable local payment-attempt identity.
 
+## Webhook registration and unknown transactions
+
+PayOS verifies a webhook URL by sending a signed sample transaction. EduAI
+therefore acknowledges a structurally valid, SDK-verified webhook only when
+neither its `orderCode` nor `paymentLinkId` identifies a local PayOS
+`CommercePaymentAttempt`. A known `paymentLinkId` paired with another
+`orderCode` fails closed. This acknowledgement is not a settlement decision:
+it creates no payment attempt, order, payment
+event, settlement, reconciliation case, lifecycle transition, reservation or
+entitlement, and it does not run the fulfillment dispatcher.
+
+The unknown event writes provider-actor audit evidence using HMAC-hashed
+provider event, payment, and `orderCode` identities plus bounded canonical
+facts (amount and currency). Raw `orderCode` values, webhook bodies,
+signatures, receiving accounts, credentials, and provider identifiers are
+never retained. The
+response is HTTP 200 with `UNKNOWN_PAYMENT_ACKNOWLEDGED`, which satisfies the
+PayOS 2xx acknowledgement contract without treating the sample as paid.
+
+Malformed envelopes remain HTTP 400, invalid signatures remain HTTP 401, and
+verified non-settlement provider codes remain HTTP 400. Known settlements keep
+the existing authoritative fact checks, serializable transition, duplicate
+handling, and idempotent fulfillment behavior. Do not replace these branches
+with an unconditional success response or add sample-specific identifiers.
+
 ## Activation and rollback
 
 Deployments remain safe with `PAYOS_ENVIRONMENT=disabled`; permanent Commerce
@@ -146,5 +171,7 @@ Official references:
 
 - https://payos.vn/docs/moi-truong-test/
 - https://payos.vn/docs/api/
+- https://payos.vn/docs/du-lieu-tra-ve/webhook/
+- https://payos.vn/docs/tich-hop-webhook/kiem-tra-du-lieu-voi-signature/
 - https://github.com/payOSHQ/payos-lib-node
 - https://payos.vn/docs/sdks/front-end/script-js/

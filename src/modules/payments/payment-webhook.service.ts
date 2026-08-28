@@ -5,7 +5,6 @@ import {
   ConflictException,
   Inject,
   Injectable,
-  NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -45,6 +44,7 @@ const attemptInclude = {
           benefitSnapshot: { select: { allocatedDiscountAmountMinor: true } },
           orderLine: {
             select: {
+              orderId: true,
               productReferenceId: true,
               unitListPriceAmountMinor: true,
               finalAmountMinor: true,
@@ -57,6 +57,29 @@ const attemptInclude = {
 } satisfies Prisma.CommercePaymentAttemptInclude;
 
 type AttemptRecord = Prisma.CommercePaymentAttemptGetPayload<{ include: typeof attemptInclude }>;
+
+const priorEventInclude = {
+  settlement: true,
+  paymentAttempt: { include: attemptInclude },
+} satisfies Prisma.CommercePaymentEventInclude;
+
+type PriorEventRecord = Prisma.CommercePaymentEventGetPayload<{
+  include: typeof priorEventInclude;
+}>;
+
+type IdentityMismatchCode =
+  | 'PAYMENT_EVENT_IDENTITY_MISMATCH'
+  | 'PAYMENT_REFERENCE_MISMATCH'
+  | 'PAYMENT_FACT_MISMATCH'
+  | 'PAYMENT_STATE_MISMATCH';
+
+type WebhookTransactionResult =
+  | PaymentWebhookResponseDto
+  | {
+      rejected: true;
+      error: IdentityMismatchCode;
+      message: string;
+    };
 
 @Injectable()
 export class PaymentWebhookService {
@@ -88,14 +111,22 @@ export class PaymentWebhookService {
     verified: VerifiedPaymentWebhook,
   ): Promise<PaymentWebhookResponseDto> {
     const response = await this.runSerializable((tx) => this.applyVerified(tx, verified));
-    await this.fulfillment.dispatchPending();
+    if ('rejected' in response) {
+      throw new ConflictException({
+        error: response.error,
+        message: response.message,
+      });
+    }
+    if (response.result !== 'UNKNOWN_PAYMENT_ACKNOWLEDGED') {
+      await this.fulfillment.dispatchPending();
+    }
     return response;
   }
 
   private async applyVerified(
     tx: Prisma.TransactionClient,
     verified: VerifiedPaymentWebhook,
-  ): Promise<PaymentWebhookResponseDto> {
+  ): Promise<WebhookTransactionResult> {
     const priorEvent = await tx.commercePaymentEvent.findUnique({
       where: {
         provider_providerEventIdentity: {
@@ -103,18 +134,43 @@ export class PaymentWebhookService {
           providerEventIdentity: verified.providerEventIdentity,
         },
       },
-      include: { settlement: true },
+      include: priorEventInclude,
     });
-    if (priorEvent?.settlement) {
-      if (priorEvent.settlement.disposition === CommerceSettlementDisposition.matched) {
+    if (priorEvent) {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM commerce_payment_events WHERE id = ${priorEvent.id}::uuid FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${priorEvent.paymentAttemptId}::uuid FOR UPDATE`,
+      );
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${priorEvent.paymentAttempt.orderId}::uuid FOR UPDATE`,
+      );
+      if (priorEvent.settlement) {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM commerce_settlements WHERE id = ${priorEvent.settlement.id}::uuid FOR UPDATE`,
+        );
+      }
+      const lockedPriorEvent = await tx.commercePaymentEvent.findUniqueOrThrow({
+        where: { id: priorEvent.id },
+        include: priorEventInclude,
+      });
+      if (!lockedPriorEvent.settlement || !this.priorEventMatches(lockedPriorEvent, verified)) {
+        return this.recordIdentityMismatch(
+          tx,
+          lockedPriorEvent.paymentAttempt,
+          'PAYMENT_EVENT_IDENTITY_MISMATCH',
+        );
+      }
+      if (lockedPriorEvent.settlement.disposition === CommerceSettlementDisposition.matched) {
         await this.fulfillment.fulfillConfirmedOrder(
           tx,
-          priorEvent.settlement.orderId,
+          lockedPriorEvent.settlement.orderId,
           CommerceActorKind.provider,
           null,
         );
       }
-      return this.resultFor(priorEvent.settlement.disposition);
+      return this.resultFor(lockedPriorEvent.settlement.disposition);
     }
 
     const attempt = await tx.commercePaymentAttempt.findUnique({
@@ -127,10 +183,24 @@ export class PaymentWebhookService {
       include: attemptInclude,
     });
     if (!attempt) {
-      throw new NotFoundException({
-        error: 'PAYMENT_ATTEMPT_NOT_FOUND',
-        message: 'Payment attempt was not found.',
+      const identityAttempt = await tx.commercePaymentAttempt.findUnique({
+        where: {
+          provider_providerPaymentIdentity: {
+            provider: PROVIDER,
+            providerPaymentIdentity: verified.providerPaymentIdentity,
+          },
+        },
+        select: { id: true, orderId: true },
       });
+      if (identityAttempt) {
+        return this.recordIdentityMismatch(
+          tx,
+          identityAttempt,
+          'PAYMENT_REFERENCE_MISMATCH',
+        );
+      }
+      await this.recordUnknownPaymentAudit(tx, verified);
+      return { accepted: true, result: 'UNKNOWN_PAYMENT_ACKNOWLEDGED' };
     }
     await tx.$queryRaw(
       Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${attempt.id}::uuid FOR UPDATE`,
@@ -142,7 +212,9 @@ export class PaymentWebhookService {
       where: { id: attempt.id },
       include: attemptInclude,
     });
-    this.assertMatches(locked, verified);
+    if (!this.paymentFactsMatch(locked, verified)) {
+      return this.recordIdentityMismatch(tx, locked, 'PAYMENT_FACT_MISMATCH');
+    }
 
     const existingSettlement = await tx.commerceSettlement.findUnique({
       where: {
@@ -151,8 +223,16 @@ export class PaymentWebhookService {
           providerSettlementReference: verified.providerSettlementReference,
         },
       },
+      include: { paymentEvent: true },
     });
     if (existingSettlement) {
+      if (!this.existingSettlementMatches(existingSettlement, locked, verified)) {
+        return this.recordIdentityMismatch(
+          tx,
+          locked,
+          'PAYMENT_REFERENCE_MISMATCH',
+        );
+      }
       if (existingSettlement.disposition === CommerceSettlementDisposition.matched) {
         await this.fulfillment.fulfillConfirmedOrder(
           tx,
@@ -184,26 +264,104 @@ export class PaymentWebhookService {
     ) {
       return this.recordLate(tx, locked, verified);
     }
-    throw new ConflictException({
-      error: 'PAYMENT_STATE_MISMATCH',
-      message: 'Payment attempt is not eligible for this settlement transition.',
-    });
+    return this.recordIdentityMismatch(tx, locked, 'PAYMENT_STATE_MISMATCH');
   }
 
-  private assertMatches(attempt: AttemptRecord, verified: VerifiedPaymentWebhook): void {
-    if (
-      !attempt.providerPaymentIdentity ||
-      attempt.providerPaymentIdentity !== verified.providerPaymentIdentity ||
-      attempt.amountMinor !== verified.amountMinor ||
-      attempt.currency !== verified.currency
-      || !attempt.providerReceivingAccountHash
-      || attempt.providerReceivingAccountHash !== this.receivingAccountHash(verified.receivingAccount)
-    ) {
-      throw new ConflictException({
-        error: 'PAYMENT_FACT_MISMATCH',
-        message: 'Verified settlement does not match authoritative payment facts.',
-      });
-    }
+  private priorEventMatches(
+    event: PriorEventRecord,
+    verified: VerifiedPaymentWebhook,
+  ): boolean {
+    const settlement = event.settlement;
+    if (!settlement) return false;
+    return (
+      event.provider === PROVIDER &&
+      event.providerEventIdentity === verified.providerEventIdentity &&
+      event.providerPaymentIdentity === verified.providerPaymentIdentity &&
+      event.providerSettlementReference === verified.providerSettlementReference &&
+      event.amountMinor === verified.amountMinor &&
+      event.currency === verified.currency &&
+      event.paymentAttemptId === event.paymentAttempt.id &&
+      event.providerOccurredAt?.getTime() === verified.occurredAt.getTime() &&
+      this.paymentFactsMatch(event.paymentAttempt, verified) &&
+      settlement.orderId === event.paymentAttempt.orderId &&
+      settlement.paymentAttemptId === event.paymentAttempt.id &&
+      settlement.paymentEventId === event.id &&
+      settlement.kind === CommerceSettlementKind.provider_collection &&
+      settlement.provider === PROVIDER &&
+      settlement.providerSettlementReference === verified.providerSettlementReference &&
+      settlement.amountMinor === verified.amountMinor &&
+      settlement.currency === verified.currency &&
+      settlement.settledAt.getTime() === verified.occurredAt.getTime() &&
+      (settlement.disposition !== CommerceSettlementDisposition.matched ||
+        this.matchedSettlementIsCanonical(event.paymentAttempt, settlement.id))
+    );
+  }
+
+  private existingSettlementMatches(
+    settlement: Prisma.CommerceSettlementGetPayload<{ include: { paymentEvent: true } }>,
+    attempt: AttemptRecord,
+    verified: VerifiedPaymentWebhook,
+  ): boolean {
+    const event = settlement.paymentEvent;
+    if (!event) return false;
+    return (
+      settlement.orderId === attempt.orderId &&
+      settlement.paymentAttemptId === attempt.id &&
+      settlement.paymentEventId === event.id &&
+      settlement.kind === CommerceSettlementKind.provider_collection &&
+      settlement.provider === PROVIDER &&
+      settlement.providerSettlementReference === verified.providerSettlementReference &&
+      settlement.amountMinor === verified.amountMinor &&
+      settlement.currency === verified.currency &&
+      settlement.settledAt.getTime() === verified.occurredAt.getTime() &&
+      event.paymentAttemptId === attempt.id &&
+      event.provider === PROVIDER &&
+      event.providerEventIdentity === verified.providerEventIdentity &&
+      event.providerPaymentIdentity === verified.providerPaymentIdentity &&
+      event.providerSettlementReference === verified.providerSettlementReference &&
+      event.amountMinor === verified.amountMinor &&
+      event.currency === verified.currency &&
+      event.providerOccurredAt?.getTime() === verified.occurredAt.getTime() &&
+      (settlement.disposition !== CommerceSettlementDisposition.matched ||
+        this.matchedSettlementIsCanonical(attempt, settlement.id))
+    );
+  }
+
+  private matchedSettlementIsCanonical(
+    attempt: AttemptRecord,
+    settlementId: string,
+  ): boolean {
+    return (
+      attempt.status === CommercePaymentStatus.paid &&
+      attempt.order.status === CommerceOrderStatus.confirmed &&
+      attempt.order.confirmedSettlementId === settlementId
+    );
+  }
+
+  private paymentFactsMatch(
+    attempt: AttemptRecord,
+    verified: VerifiedPaymentWebhook,
+  ): boolean {
+    return (
+      attempt.provider === PROVIDER &&
+      attempt.providerPaymentIdentity === verified.providerPaymentIdentity &&
+      attempt.providerOrderCode === BigInt(verified.localOrderReference) &&
+      attempt.amountMinor === verified.amountMinor &&
+      attempt.currency === verified.currency &&
+      attempt.order.id === attempt.orderId &&
+      attempt.order.payableAmountMinor === verified.amountMinor &&
+      attempt.order.currency === verified.currency &&
+      !!attempt.order.buyerId &&
+      attempt.order.reservations.every(
+        (reservation) =>
+          reservation.orderId === attempt.orderId &&
+          reservation.buyerId === attempt.order.buyerId &&
+          reservation.orderLine.orderId === attempt.orderId,
+      ) &&
+      !!attempt.providerReceivingAccountHash &&
+      attempt.providerReceivingAccountHash ===
+        this.receivingAccountHash(verified.receivingAccount)
+    );
   }
 
   private receivingAccountHash(value: string): string {
@@ -497,6 +655,74 @@ export class PaymentWebhookService {
       target: { type: 'commerce_order', id: orderId },
       metadata: { operationId: randomUUID(), reasonCode, provider: PROVIDER },
     }, tx);
+  }
+
+  private async recordIdentityMismatch(
+    tx: Prisma.TransactionClient,
+    attempt: { id: string; orderId: string },
+    reasonCode: IdentityMismatchCode,
+  ): Promise<Extract<WebhookTransactionResult, { rejected: true }>> {
+    const now = new Date();
+    const sourceKey = `${attempt.id}:${reasonCode}`;
+    await tx.commerceReconciliationCase.upsert({
+      where: { sourceKey },
+      create: {
+        orderId: attempt.orderId,
+        paymentAttemptId: attempt.id,
+        kind: CommerceReconciliationKind.provider_fact_mismatch,
+        reasonCode,
+        sourceKey,
+        lastCheckedAt: now,
+      },
+      update: {
+        reasonCode,
+        lastCheckedAt: now,
+        checkCount: { increment: 1 },
+      },
+    });
+    await this.recordReconciliationAudit(tx, attempt.orderId, reasonCode);
+    return {
+      rejected: true,
+      error: reasonCode,
+      message: 'Verified payment references conflict with canonical local records.',
+    };
+  }
+
+  private async recordUnknownPaymentAudit(
+    tx: Prisma.TransactionClient,
+    verified: VerifiedPaymentWebhook,
+  ): Promise<void> {
+    await this.audit.record({
+      actorKind: AuditActorKind.PROVIDER,
+      action: AuditAction.PaymentWebhookReconciliationRequired,
+      target: {
+        type: 'provider_payment_webhook',
+        id: this.webhookFingerprint('event', verified.providerEventIdentity),
+      },
+      metadata: {
+        reasonCode: 'PAYMENT_ATTEMPT_NOT_FOUND',
+        provider: PROVIDER,
+        orderCodeFingerprint: this.webhookFingerprint(
+          'order',
+          String(verified.localOrderReference),
+        ),
+        amountMinor: verified.amountMinor.toString(),
+        currency: verified.currency,
+        providerPaymentIdentityFingerprint: this.webhookFingerprint(
+          'payment',
+          verified.providerPaymentIdentity,
+        ),
+      },
+    }, tx);
+  }
+
+  private webhookFingerprint(
+    kind: 'event' | 'order' | 'payment',
+    value: string,
+  ): string {
+    return createHmac('sha256', this.config.commerce.idempotencySecret as string)
+      .update(`payos-webhook-${kind}:${value}`)
+      .digest('hex');
   }
 
   private resultFor(
