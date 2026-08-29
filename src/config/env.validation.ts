@@ -9,6 +9,7 @@ export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
   PORT: number;
   PUBLIC_APP_URL?: string;
+  CORS_ALLOWED_ORIGINS: string[];
   DATABASE_URL: string;
   REDIS_URL?: string;
   JWT_ACCESS_SECRET?: string;
@@ -97,6 +98,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     NODE_ENV: nodeEnv,
     PORT: parsePort(config.PORT),
     PUBLIC_APP_URL: optionalUrl(config.PUBLIC_APP_URL, 'PUBLIC_APP_URL'),
+    CORS_ALLOWED_ORIGINS: parseCorsOrigins(config.CORS_ALLOWED_ORIGINS),
     DATABASE_URL: requiredString(config.DATABASE_URL, 'DATABASE_URL'),
     REDIS_URL: optionalString(config.REDIS_URL),
     JWT_ACCESS_SECRET: requiredString(
@@ -372,6 +374,34 @@ function optionalUrl(value: unknown, name: string): string | undefined {
   } catch {
     throw new Error(`${name} must be a valid http or https URL`);
   }
+}
+
+function parseCorsOrigins(value: unknown): string[] {
+  const parsed = optionalString(value);
+  if (!parsed) {
+    return [];
+  }
+
+  return parsed.split(',').map((candidate) => {
+    const origin = candidate.trim();
+
+    try {
+      const url = new URL(origin);
+      if (
+        (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+        url.username.length > 0 ||
+        url.password.length > 0 ||
+        url.pathname !== '/' ||
+        url.search.length > 0 ||
+        url.hash.length > 0
+      ) {
+        throw new Error();
+      }
+      return url.origin;
+    } catch {
+      throw new Error('CORS_ALLOWED_ORIGINS must contain only origins');
+    }
+  });
 }
 
 function isNodeEnvironment(value: string): value is NodeEnvironment {

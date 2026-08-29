@@ -13,16 +13,14 @@ export function configureApp(
   nodeEnv: string,
   logger: AppLoggerService,
   legacyPublicMediaBaseUrl?: string,
+  corsAllowedOrigins: readonly string[] = [],
 ): void {
   if (nodeEnv === 'production') {
     app.getHttpAdapter().getInstance().set('trust proxy', 1);
   }
 
-  const configuredOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((o) =>
-    o.trim(),
-  ).filter(Boolean) ?? [];
-  const allowedOrigins = configuredOrigins.length > 0
-    ? configuredOrigins
+  const allowedOrigins = corsAllowedOrigins.length > 0
+    ? [...corsAllowedOrigins]
     : nodeEnv === 'development'
       ? ['http://localhost:5173', 'http://127.0.0.1:5173']
       : [];

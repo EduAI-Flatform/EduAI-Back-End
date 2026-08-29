@@ -87,6 +87,27 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...base, MONITORING_ENABLED: 'true' })).toThrow('MONITORING_ENDPOINT is required');
     expect(validateEnv({ ...base, MONITORING_ENABLED: 'true', MONITORING_ENDPOINT: 'https://monitor.example/events' }).MONITORING_ENDPOINT).toBe('https://monitor.example/events');
   });
+
+  it('validates and normalizes the exact CORS origin allowlist', () => {
+    expect(
+      validateEnv({
+        ...paymentBase,
+        CORS_ALLOWED_ORIGINS:
+          'https://eduai.giaoducso.org.vn, http://localhost:5173/',
+      }).CORS_ALLOWED_ORIGINS,
+    ).toEqual([
+      'https://eduai.giaoducso.org.vn',
+      'http://localhost:5173',
+    ]);
+
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        CORS_ALLOWED_ORIGINS: 'https://eduai.giaoducso.org.vn/login',
+      }),
+    ).toThrow('CORS_ALLOWED_ORIGINS must contain only origins');
+  });
+
   it('fails fast when DATABASE_URL is missing', () => {
     expect(() => validateEnv({})).toThrow('DATABASE_URL is required');
   });

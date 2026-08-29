@@ -19,4 +19,4 @@ services:
       - key: REDIS_URL
         sync: false
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        value: https://eduai.giaoducso.org.vn

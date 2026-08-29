@@ -9,6 +9,7 @@ export interface BackendConfig {
     nodeEnv: NodeEnvironment;
     port: number;
     publicAppUrl?: string;
+    corsAllowedOrigins: string[];
   };
   database: {
     url: string;
@@ -82,6 +83,7 @@ export default function configuration(): BackendConfig {
       nodeEnv: env.NODE_ENV,
       port: env.PORT,
       publicAppUrl: env.PUBLIC_APP_URL,
+      corsAllowedOrigins: env.CORS_ALLOWED_ORIGINS,
     },
     database: {
       url: env.DATABASE_URL,
