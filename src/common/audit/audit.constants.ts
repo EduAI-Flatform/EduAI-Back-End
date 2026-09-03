@@ -1,5 +1,10 @@
 export const AuditAction = {
   AuthLogin: 'AUTH_LOGIN',
+  SocialLoginSucceeded: 'SOCIAL_LOGIN_SUCCEEDED',
+  SocialLoginFailed: 'SOCIAL_LOGIN_FAILED',
+  SocialAccountCreated: 'SOCIAL_ACCOUNT_CREATED',
+  SocialAccountLinked: 'SOCIAL_ACCOUNT_LINKED',
+  SocialAccountLinkFailed: 'SOCIAL_ACCOUNT_LINK_FAILED',
   UserRoleChanged: 'USER_ROLE_CHANGED',
   UserStatusChanged: 'USER_STATUS_CHANGED',
   CoursePublished: 'COURSE_PUBLISHED',

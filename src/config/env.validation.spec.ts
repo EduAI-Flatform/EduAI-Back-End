@@ -301,4 +301,152 @@ describe('validateEnv', () => {
       }),
     ).toThrow('EMAIL_PROVIDER=preview is not allowed in production');
   });
+
+  it('keeps Facebook and Zalo OAuth disabled without provider credentials', () => {
+    expect(validateEnv(paymentBase)).toMatchObject({
+      OAUTH_STATE_SECRET: undefined,
+      OAUTH_FRONTEND_CALLBACK_URL: undefined,
+      FACEBOOK_OAUTH_ENABLED: false,
+      ZALO_OAUTH_ENABLED: false,
+    });
+  });
+
+  it('requires complete OAuth configuration before enabling a provider', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        FACEBOOK_OAUTH_ENABLED: 'true',
+        OAUTH_STATE_SECRET: 's'.repeat(32),
+        OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback',
+      }),
+    ).toThrow('Facebook OAuth configuration requires');
+
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        ZALO_OAUTH_ENABLED: 'true',
+        OAUTH_STATE_SECRET: 's'.repeat(32),
+        OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback',
+        ZALO_APP_ID: 'zalo-app-id',
+        ZALO_APP_SECRET: 'zalo-app-secret',
+      }),
+    ).toThrow('Zalo OAuth configuration requires');
+  });
+
+  it('accepts local OAuth configuration and normalizes safe callback URLs', () => {
+    const env = validateEnv({
+      ...paymentBase,
+      FACEBOOK_OAUTH_ENABLED: 'true',
+      FACEBOOK_CLIENT_ID: 'facebook-client-id',
+      FACEBOOK_CLIENT_SECRET: 'facebook-client-secret',
+      FACEBOOK_REDIRECT_URI:
+        'http://localhost:3000/api/v1/auth/oauth/facebook/callback',
+      FACEBOOK_GRAPH_API_VERSION: 'v26.0',
+      ZALO_OAUTH_ENABLED: 'true',
+      ZALO_APP_ID: 'zalo-app-id',
+      ZALO_APP_SECRET: 'zalo-app-secret',
+      ZALO_REDIRECT_URI:
+        'http://localhost:3000/api/v1/auth/oauth/zalo/callback',
+      ZALO_AUTH_VERSION: 'v4',
+      OAUTH_STATE_SECRET: 's'.repeat(32),
+      OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback/',
+    });
+
+    expect(env).toMatchObject({
+      FACEBOOK_OAUTH_ENABLED: true,
+      FACEBOOK_GRAPH_API_VERSION: 'v26.0',
+      ZALO_OAUTH_ENABLED: true,
+      ZALO_AUTH_VERSION: 'v4',
+      OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback',
+    });
+  });
+
+  it('rejects OAuth redirect URLs that can escape the fixed callback routes', () => {
+    const base = {
+      ...paymentBase,
+      FACEBOOK_OAUTH_ENABLED: 'true',
+      FACEBOOK_CLIENT_ID: 'facebook-client-id',
+      FACEBOOK_CLIENT_SECRET: 'facebook-client-secret',
+      FACEBOOK_GRAPH_API_VERSION: 'v26.0',
+      OAUTH_STATE_SECRET: 's'.repeat(32),
+      OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback',
+    };
+
+    expect(() =>
+      validateEnv({
+        ...base,
+        FACEBOOK_REDIRECT_URI:
+          'http://localhost:3000/api/v1/auth/oauth/facebook/callback?next=https://evil.example',
+      }),
+    ).toThrow('FACEBOOK_REDIRECT_URI must be an exact callback URL');
+
+    expect(() =>
+      validateEnv({
+        ...base,
+        FACEBOOK_REDIRECT_URI:
+          'http://localhost:3000/api/v1/auth/oauth/other/callback',
+      }),
+    ).toThrow('FACEBOOK_REDIRECT_URI must be an exact callback URL');
+
+    expect(() =>
+      validateEnv({
+        ...base,
+        FACEBOOK_REDIRECT_URI:
+          'http://localhost:3000/api/v1/auth/oauth/facebook/callback',
+        OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/login?next=/admin',
+      }),
+    ).toThrow('OAUTH_FRONTEND_CALLBACK_URL must be the fixed /auth/callback path');
+  });
+
+  it('requires HTTPS for OAuth callbacks in production', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        NODE_ENV: 'production',
+        COMMERCE_IDEMPOTENCY_SECRET: 'c'.repeat(32),
+        FACEBOOK_OAUTH_ENABLED: 'true',
+        FACEBOOK_CLIENT_ID: 'facebook-client-id',
+        FACEBOOK_CLIENT_SECRET: 'facebook-client-secret',
+        FACEBOOK_REDIRECT_URI:
+          'http://localhost:3000/api/v1/auth/oauth/facebook/callback',
+        FACEBOOK_GRAPH_API_VERSION: 'v26.0',
+        OAUTH_STATE_SECRET: 's'.repeat(32),
+        OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback',
+      }),
+    ).toThrow('OAuth callback URLs must use https in production');
+  });
+
+  it('rejects malformed Zalo API versions before any provider request', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        ZALO_OAUTH_ENABLED: 'true',
+        ZALO_APP_ID: 'zalo-app-id',
+        ZALO_APP_SECRET: 'zalo-app-secret',
+        ZALO_REDIRECT_URI:
+          'http://localhost:3000/api/v1/auth/oauth/zalo/callback',
+        ZALO_AUTH_VERSION: 'v4',
+        ZALO_GRAPH_API_VERSION: 'https://evil.example',
+        OAUTH_STATE_SECRET: 's'.repeat(32),
+        OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback',
+      }),
+    ).toThrow('ZALO_GRAPH_API_VERSION must use a version');
+  });
+
+  it('rejects the legacy Zalo OAuth version that does not implement the V4 PKCE flow', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        ZALO_OAUTH_ENABLED: 'true',
+        ZALO_APP_ID: 'zalo-app-id',
+        ZALO_APP_SECRET: 'zalo-app-secret',
+        ZALO_REDIRECT_URI:
+          'http://localhost:3000/api/v1/auth/oauth/zalo/callback',
+        ZALO_AUTH_VERSION: 'v3',
+        ZALO_GRAPH_API_VERSION: 'v2.0',
+        OAUTH_STATE_SECRET: 's'.repeat(32),
+        OAUTH_FRONTEND_CALLBACK_URL: 'http://localhost:5173/auth/callback',
+      }),
+    ).toThrow('ZALO_AUTH_VERSION must be v4');
+  });
 });

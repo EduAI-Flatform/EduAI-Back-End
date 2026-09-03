@@ -30,6 +30,10 @@ export class AppConfigService {
     return this.getConfigValue('firebase');
   }
 
+  get oauth(): BackendConfig['oauth'] {
+    return this.getConfigValue('oauth');
+  }
+
   get r2(): BackendConfig['r2'] {
     return this.getConfigValue('r2');
   }

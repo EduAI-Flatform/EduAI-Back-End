@@ -26,6 +26,29 @@ export interface BackendConfig {
     clientEmail?: string;
     privateKey?: string;
   };
+  oauth: {
+    stateSecret?: string;
+    frontendCallbackUrl?: string;
+    stateTtlSeconds: number;
+    ticketTtlSeconds: number;
+    httpTimeoutMs: number;
+    facebook: {
+      enabled: boolean;
+      clientId?: string;
+      clientSecret?: string;
+      redirectUri?: string;
+      graphApiVersion?: string;
+    };
+    zalo: {
+      enabled: boolean;
+      appId?: string;
+      appSecret?: string;
+      redirectUri?: string;
+      authVersion?: string;
+      graphApiVersion: string;
+      scopes: string[];
+    };
+  };
   r2: {
     accountId?: string;
     accessKeyId?: string;
@@ -99,6 +122,29 @@ export default function configuration(): BackendConfig {
       projectId: env.FIREBASE_PROJECT_ID,
       clientEmail: env.FIREBASE_CLIENT_EMAIL,
       privateKey: env.FIREBASE_PRIVATE_KEY,
+    },
+    oauth: {
+      stateSecret: env.OAUTH_STATE_SECRET,
+      frontendCallbackUrl: env.OAUTH_FRONTEND_CALLBACK_URL,
+      stateTtlSeconds: env.OAUTH_STATE_TTL_SECONDS,
+      ticketTtlSeconds: env.OAUTH_TICKET_TTL_SECONDS,
+      httpTimeoutMs: env.OAUTH_HTTP_TIMEOUT_MS,
+      facebook: {
+        enabled: env.FACEBOOK_OAUTH_ENABLED,
+        clientId: env.FACEBOOK_CLIENT_ID,
+        clientSecret: env.FACEBOOK_CLIENT_SECRET,
+        redirectUri: env.FACEBOOK_REDIRECT_URI,
+        graphApiVersion: env.FACEBOOK_GRAPH_API_VERSION,
+      },
+      zalo: {
+        enabled: env.ZALO_OAUTH_ENABLED,
+        appId: env.ZALO_APP_ID,
+        appSecret: env.ZALO_APP_SECRET,
+        redirectUri: env.ZALO_REDIRECT_URI,
+        authVersion: env.ZALO_AUTH_VERSION,
+        graphApiVersion: env.ZALO_GRAPH_API_VERSION,
+        scopes: env.ZALO_OAUTH_SCOPES,
+      },
     },
     r2: {
       accountId: env.R2_ACCOUNT_ID,

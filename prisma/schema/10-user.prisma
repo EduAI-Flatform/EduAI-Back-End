@@ -13,6 +13,7 @@ model User {
   updatedAt     DateTime           @updatedAt @map("updated_at")
   deletedAt     DateTime?          @map("deleted_at")
   roles         UserRole[]
+  externalIdentities ExternalIdentity[]
   refreshTokens RefreshToken[]
   profile       UserProfile?
   learningProfile LearningProfile?

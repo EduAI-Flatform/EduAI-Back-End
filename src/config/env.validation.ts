@@ -17,6 +17,23 @@ export interface ValidatedEnv {
   FIREBASE_PROJECT_ID?: string;
   FIREBASE_CLIENT_EMAIL?: string;
   FIREBASE_PRIVATE_KEY?: string;
+  OAUTH_STATE_SECRET?: string;
+  OAUTH_FRONTEND_CALLBACK_URL?: string;
+  OAUTH_STATE_TTL_SECONDS: number;
+  OAUTH_TICKET_TTL_SECONDS: number;
+  OAUTH_HTTP_TIMEOUT_MS: number;
+  FACEBOOK_OAUTH_ENABLED: boolean;
+  FACEBOOK_CLIENT_ID?: string;
+  FACEBOOK_CLIENT_SECRET?: string;
+  FACEBOOK_REDIRECT_URI?: string;
+  FACEBOOK_GRAPH_API_VERSION?: string;
+  ZALO_OAUTH_ENABLED: boolean;
+  ZALO_APP_ID?: string;
+  ZALO_APP_SECRET?: string;
+  ZALO_REDIRECT_URI?: string;
+  ZALO_AUTH_VERSION?: string;
+  ZALO_GRAPH_API_VERSION: string;
+  ZALO_OAUTH_SCOPES: string[];
   R2_ACCOUNT_ID?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
@@ -82,6 +99,62 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     );
   }
 
+  const facebookOAuthEnabled = parseBoolean(
+    config.FACEBOOK_OAUTH_ENABLED,
+    false,
+    'FACEBOOK_OAUTH_ENABLED',
+  );
+  const zaloOAuthEnabled = parseBoolean(
+    config.ZALO_OAUTH_ENABLED,
+    false,
+    'ZALO_OAUTH_ENABLED',
+  );
+  const oauthStateSecret = optionalString(config.OAUTH_STATE_SECRET);
+  const oauthFrontendCallbackUrl = optionalUrl(
+    config.OAUTH_FRONTEND_CALLBACK_URL,
+    'OAUTH_FRONTEND_CALLBACK_URL',
+  );
+  const facebookClientId = optionalString(config.FACEBOOK_CLIENT_ID);
+  const facebookClientSecret = optionalString(config.FACEBOOK_CLIENT_SECRET);
+  const facebookRedirectUri = optionalUrl(
+    config.FACEBOOK_REDIRECT_URI,
+    'FACEBOOK_REDIRECT_URI',
+  );
+  const facebookGraphApiVersion = optionalString(
+    config.FACEBOOK_GRAPH_API_VERSION,
+  );
+  const zaloAppId = optionalString(config.ZALO_APP_ID);
+  const zaloAppSecret = optionalString(config.ZALO_APP_SECRET);
+  const zaloRedirectUri = optionalUrl(
+    config.ZALO_REDIRECT_URI,
+    'ZALO_REDIRECT_URI',
+  );
+  const zaloAuthVersion = optionalString(config.ZALO_AUTH_VERSION);
+  const zaloGraphApiVersion =
+    optionalString(config.ZALO_GRAPH_API_VERSION) ?? 'v2.0';
+  const zaloOAuthScopes = parseOAuthScopes(config.ZALO_OAUTH_SCOPES);
+
+  validateOAuthConfiguration({
+    nodeEnv,
+    facebook: {
+      enabled: facebookOAuthEnabled,
+      clientId: facebookClientId,
+      clientSecret: facebookClientSecret,
+      redirectUri: facebookRedirectUri,
+      graphApiVersion: facebookGraphApiVersion,
+    },
+    frontendCallbackUrl: oauthFrontendCallbackUrl,
+    stateSecret: oauthStateSecret,
+    zalo: {
+      enabled: zaloOAuthEnabled,
+      appId: zaloAppId,
+      appSecret: zaloAppSecret,
+      redirectUri: zaloRedirectUri,
+      authVersion: zaloAuthVersion,
+      graphApiVersion: zaloGraphApiVersion,
+    },
+  });
+
   const aiProvider = parseAiProvider(config.AI_PROVIDER);
   const emailProvider = parseEmailProvider(config.EMAIL_PROVIDER);
   const payosEnvironment = parsePayosEnvironment(config.PAYOS_ENVIRONMENT);
@@ -112,6 +185,41 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     FIREBASE_PROJECT_ID: firebaseProjectId,
     FIREBASE_CLIENT_EMAIL: firebaseClientEmail,
     FIREBASE_PRIVATE_KEY: firebasePrivateKey,
+    OAUTH_STATE_SECRET: oauthStateSecret,
+    OAUTH_FRONTEND_CALLBACK_URL: oauthFrontendCallbackUrl,
+    OAUTH_STATE_TTL_SECONDS: parseBoundedInteger(
+      config.OAUTH_STATE_TTL_SECONDS,
+      'OAUTH_STATE_TTL_SECONDS',
+      300,
+      60,
+      900,
+    ),
+    OAUTH_TICKET_TTL_SECONDS: parseBoundedInteger(
+      config.OAUTH_TICKET_TTL_SECONDS,
+      'OAUTH_TICKET_TTL_SECONDS',
+      120,
+      60,
+      600,
+    ),
+    OAUTH_HTTP_TIMEOUT_MS: parseBoundedInteger(
+      config.OAUTH_HTTP_TIMEOUT_MS,
+      'OAUTH_HTTP_TIMEOUT_MS',
+      10000,
+      1000,
+      30000,
+    ),
+    FACEBOOK_OAUTH_ENABLED: facebookOAuthEnabled,
+    FACEBOOK_CLIENT_ID: facebookClientId,
+    FACEBOOK_CLIENT_SECRET: facebookClientSecret,
+    FACEBOOK_REDIRECT_URI: facebookRedirectUri,
+    FACEBOOK_GRAPH_API_VERSION: facebookGraphApiVersion,
+    ZALO_OAUTH_ENABLED: zaloOAuthEnabled,
+    ZALO_APP_ID: zaloAppId,
+    ZALO_APP_SECRET: zaloAppSecret,
+    ZALO_REDIRECT_URI: zaloRedirectUri,
+    ZALO_AUTH_VERSION: zaloAuthVersion,
+    ZALO_GRAPH_API_VERSION: zaloGraphApiVersion,
+    ZALO_OAUTH_SCOPES: zaloOAuthScopes,
     R2_ACCOUNT_ID: optionalString(config.R2_ACCOUNT_ID),
     R2_ACCESS_KEY_ID: optionalString(config.R2_ACCESS_KEY_ID),
     R2_SECRET_ACCESS_KEY: optionalString(config.R2_SECRET_ACCESS_KEY),
@@ -402,6 +510,162 @@ function parseCorsOrigins(value: unknown): string[] {
       throw new Error('CORS_ALLOWED_ORIGINS must contain only origins');
     }
   });
+}
+
+function parseOAuthScopes(value: unknown): string[] {
+  const parsed = optionalString(value) ?? 'id_name,picture';
+  const scopes = parsed
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  const allowedScopes = new Set(['id_name', 'picture', 'email']);
+
+  if (
+    scopes.length === 0 ||
+    scopes.some((scope) => !allowedScopes.has(scope)) ||
+    !scopes.includes('id_name')
+  ) {
+    throw new Error(
+      'ZALO_OAUTH_SCOPES must contain id_name and only id_name, picture, or email',
+    );
+  }
+
+  return [...new Set(scopes)];
+}
+
+function validateOAuthConfiguration(input: {
+  nodeEnv: NodeEnvironment;
+  stateSecret?: string;
+  frontendCallbackUrl?: string;
+  facebook: {
+    enabled: boolean;
+    clientId?: string;
+    clientSecret?: string;
+    redirectUri?: string;
+    graphApiVersion?: string;
+  };
+  zalo: {
+    enabled: boolean;
+    appId?: string;
+    appSecret?: string;
+    redirectUri?: string;
+    authVersion?: string;
+    graphApiVersion: string;
+  };
+}): void {
+  if (!input.facebook.enabled && !input.zalo.enabled) return;
+
+  if (!input.stateSecret || input.stateSecret.length < 32) {
+    throw new Error(
+      'OAUTH_STATE_SECRET must be at least 32 characters when social OAuth is enabled',
+    );
+  }
+
+  assertFixedFrontendCallbackUrl(input.frontendCallbackUrl);
+
+  if (input.facebook.enabled) {
+    const missing = [
+      !input.facebook.clientId ? 'FACEBOOK_CLIENT_ID' : undefined,
+      !input.facebook.clientSecret ? 'FACEBOOK_CLIENT_SECRET' : undefined,
+      !input.facebook.redirectUri ? 'FACEBOOK_REDIRECT_URI' : undefined,
+      !input.facebook.graphApiVersion ? 'FACEBOOK_GRAPH_API_VERSION' : undefined,
+    ].filter((value): value is string => Boolean(value));
+
+    if (missing.length > 0) {
+      throw new Error(`Facebook OAuth configuration requires ${missing.join(', ')}`);
+    }
+
+    assertFixedProviderCallbackUrl(
+      input.facebook.redirectUri,
+      '/api/v1/auth/oauth/facebook/callback',
+      'FACEBOOK_REDIRECT_URI',
+    );
+    assertOAuthVersion(input.facebook.graphApiVersion, 'FACEBOOK_GRAPH_API_VERSION');
+  }
+
+  if (input.zalo.enabled) {
+    const missing = [
+      !input.zalo.appId ? 'ZALO_APP_ID' : undefined,
+      !input.zalo.appSecret ? 'ZALO_APP_SECRET' : undefined,
+      !input.zalo.redirectUri ? 'ZALO_REDIRECT_URI' : undefined,
+      !input.zalo.authVersion ? 'ZALO_AUTH_VERSION' : undefined,
+    ].filter((value): value is string => Boolean(value));
+
+    if (missing.length > 0) {
+      throw new Error(`Zalo OAuth configuration requires ${missing.join(', ')}`);
+    }
+
+    assertFixedProviderCallbackUrl(
+      input.zalo.redirectUri,
+      '/api/v1/auth/oauth/zalo/callback',
+      'ZALO_REDIRECT_URI',
+    );
+    assertOAuthVersion(input.zalo.authVersion, 'ZALO_AUTH_VERSION');
+    if (input.zalo.authVersion !== 'v4') {
+      throw new Error('ZALO_AUTH_VERSION must be v4 for Zalo Social API');
+    }
+    assertOAuthVersion(input.zalo.graphApiVersion, 'ZALO_GRAPH_API_VERSION');
+  }
+
+  if (input.nodeEnv === 'production') {
+    const callbackUrls = [
+      input.frontendCallbackUrl,
+      input.facebook.enabled ? input.facebook.redirectUri : undefined,
+      input.zalo.enabled ? input.zalo.redirectUri : undefined,
+    ];
+
+    if (callbackUrls.some((url) => url && !url.startsWith('https://'))) {
+      throw new Error('OAuth callback URLs must use https in production');
+    }
+  }
+}
+
+function assertFixedFrontendCallbackUrl(value?: string): void {
+  if (!value) {
+    throw new Error(
+      'OAUTH_FRONTEND_CALLBACK_URL must be the fixed /auth/callback path',
+    );
+  }
+
+  const url = new URL(value);
+  if (
+    url.pathname !== '/auth/callback' ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error(
+      'OAUTH_FRONTEND_CALLBACK_URL must be the fixed /auth/callback path',
+    );
+  }
+}
+
+function assertFixedProviderCallbackUrl(
+  value: string | undefined,
+  pathname: string,
+  name: string,
+): void {
+  if (!value) {
+    throw new Error(`${name} must be an exact callback URL`);
+  }
+
+  const url = new URL(value);
+  if (
+    url.pathname !== pathname ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error(`${name} must be an exact callback URL`);
+  }
+}
+
+function assertOAuthVersion(value: string | undefined, name: string): void {
+  if (!value || !/^v\d+(?:\.\d+)?$/.test(value)) {
+    throw new Error(`${name} must use a version such as v4 or v26.0`);
+  }
 }
 
 function isNodeEnvironment(value: string): value is NodeEnvironment {

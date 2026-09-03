@@ -19,6 +19,13 @@ enum UserStatus {
 enum AuthProvider {
   local
   google
+  facebook
+  zalo
+}
+
+enum ExternalProvider {
+  facebook
+  zalo
 }
 
 enum RoleName {
@@ -208,6 +215,7 @@ model User {
   updatedAt     DateTime           @updatedAt @map("updated_at")
   deletedAt     DateTime?          @map("deleted_at")
   roles         UserRole[]
+  externalIdentities ExternalIdentity[]
   refreshTokens RefreshToken[]
   profile       UserProfile?
   learningProfile LearningProfile?
@@ -1226,6 +1234,26 @@ model RefreshToken {
   @@index([userId])
   @@index([expiresAt])
   @@map("refresh_tokens")
+}
+
+model ExternalIdentity {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider        ExternalProvider
+  providerUserId  String           @map("provider_user_id") @db.VarChar(255)
+  userId          String?          @map("user_id") @db.Uuid
+  providerEmail   String?          @map("provider_email") @db.VarChar(320)
+  providerName    String?          @map("provider_name") @db.VarChar(160)
+  providerAvatar  String?          @map("provider_avatar") @db.VarChar(2048)
+  emailVerified   Boolean          @default(false) @map("email_verified")
+  pendingExpiresAt DateTime?       @map("pending_expires_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  user            User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@index([pendingExpiresAt])
+  @@map("oauth_accounts")
 }
 
 model UserProfile {

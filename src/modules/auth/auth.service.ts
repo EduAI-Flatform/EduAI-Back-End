@@ -66,7 +66,7 @@ interface RefreshTokenWriter {
   };
 }
 
-interface AuthUserRecord {
+export interface AuthUserRecord {
   createdAt: Date;
   email: string;
   fullName: string;
@@ -515,6 +515,13 @@ export class AuthService {
     }
 
     return this.toRegisteredUserResponse(user);
+  }
+
+  async issueSessionForUser(
+    user: AuthUserRecord,
+    refreshTokenWriter: RefreshTokenWriter,
+  ): Promise<LoginResponse> {
+    return this.issueTokenResponse(user, refreshTokenWriter);
   }
 
   private getRequiredJwtSecret(key: 'accessSecret' | 'refreshSecret'): string {

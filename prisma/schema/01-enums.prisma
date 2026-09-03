@@ -7,6 +7,13 @@ enum UserStatus {
 enum AuthProvider {
   local
   google
+  facebook
+  zalo
+}
+
+enum ExternalProvider {
+  facebook
+  zalo
 }
 
 enum RoleName {
