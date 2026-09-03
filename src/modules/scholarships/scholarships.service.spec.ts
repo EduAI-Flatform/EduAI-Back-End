@@ -7,6 +7,10 @@ import {
 import { AuditAction } from '../../common/audit/audit.constants';
 import { ScholarshipsService } from './scholarships.service';
 
+const testNow = new Date();
+const activeWindowStart = new Date(testNow.getTime() - 24 * 60 * 60 * 1000);
+const activeWindowEnd = new Date(testNow.getTime() + 24 * 60 * 60 * 1000);
+
 const scholarship = {
   id: 'scholarship-id',
   title: 'AI Foundations Grant',
@@ -16,8 +20,8 @@ const scholarship = {
   benefitKind: ScholarshipBenefitKind.percentage_discount,
   benefitValue: 50,
   currency: 'VND',
-  startsAt: new Date('2026-08-01T00:00:00.000Z'),
-  endsAt: new Date('2026-09-01T00:00:00.000Z'),
+  startsAt: activeWindowStart,
+  endsAt: activeWindowEnd,
   quota: 1,
   awardedCount: 0,
   createdById: 'admin-id',

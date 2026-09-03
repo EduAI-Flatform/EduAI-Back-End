@@ -3,7 +3,9 @@ import { TmiRewardKind, TmiRewardStatus } from '../../../generated/prisma/client
 import { AuditAction } from '../../common/audit/audit.constants';
 import { TmiRedemptionService } from './tmi-redemption.service';
 
-const now = new Date('2026-08-18T14:00:00.000Z');
+const now = new Date();
+const redemptionWindowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+const redemptionWindowEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 const userId = '00000010-0000-4000-8000-000000000005';
 const rewardId = '00000020-0000-4000-8000-000000000001';
 const courseId = '00000030-0000-4000-8000-000000000001';
@@ -21,8 +23,8 @@ function createHarness() {
         status: TmiRewardStatus.active,
         quota: 10,
         redeemedCount: 1,
-        startsAt: new Date('2026-08-01T00:00:00.000Z'),
-        endsAt: new Date('2026-09-01T00:00:00.000Z'),
+        startsAt: redemptionWindowStart,
+        endsAt: redemptionWindowEnd,
         inventoryMetadata: { courseId },
       }),
       update: jest.fn().mockResolvedValue({ redeemedCount: 2 }),

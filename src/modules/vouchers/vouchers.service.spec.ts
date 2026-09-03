@@ -3,6 +3,10 @@ import { VoucherKind, VoucherStatus } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
 import { VouchersService } from './vouchers.service';
 
+const testNow = new Date();
+const activeWindowStart = new Date(testNow.getTime() - 24 * 60 * 60 * 1000);
+const activeWindowEnd = new Date(testNow.getTime() + 24 * 60 * 60 * 1000);
+
 const voucher = {
   id: 'voucher-id',
   code: 'EDUAI20',
@@ -10,8 +14,8 @@ const voucher = {
   kind: VoucherKind.percentage,
   value: 20,
   currency: 'VND',
-  startsAt: new Date('2026-08-01T00:00:00.000Z'),
-  endsAt: new Date('2026-09-01T00:00:00.000Z'),
+  startsAt: activeWindowStart,
+  endsAt: activeWindowEnd,
   minimumCoursePriceMinor: 500000,
   maximumDiscountMinor: 200000,
   usageLimit: 2,
