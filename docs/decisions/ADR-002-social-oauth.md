@@ -34,10 +34,11 @@ existing Google and local-password paths.
 - Providers are disabled by default. Enabling one requires complete backend
   configuration, production HTTPS callbacks, Redis, and provider-console
   review.
-- If a provider does not return an email, keep the external identity pending
-  until the user supplies an email. The supplied email is not treated as
-  provider-verified and is never used for implicit account linking or recovery;
-  email verification remains follow-up work.
+- Keep every first-time external identity pending until the user explicitly
+  selects a student or instructor role. If a provider does not return an
+  email, collect it during the same onboarding completion. The supplied email
+  is not treated as provider-verified and is never used for implicit account
+  linking or recovery; email verification remains follow-up work.
 
 ## Consequences
 
@@ -45,7 +46,8 @@ existing Google and local-password paths.
   without changing Google behavior.
 - OAuth callback URLs expose only a short-lived, one-time ticket to the
   frontend; they do not contain provider access tokens.
-- Login without a returned email has an additional profile-completion step.
+- First-time social login has an explicit role-onboarding step; providers
+  without an email have an additional profile-completion field.
 - Existing users must use an explicit linking flow when their provider email
   already belongs to another EduAI account.
 - Google identity normalization remains a separate migration decision and is

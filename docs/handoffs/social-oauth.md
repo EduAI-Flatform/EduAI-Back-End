@@ -33,13 +33,15 @@ All routes are under /api/v1:
 - GET /auth/oauth/:provider/callback consumes one-time state, exchanges the
   provider code, and redirects to /auth/callback?ticket=....
 - POST /auth/oauth/exchange consumes the ticket and returns either the
-  standard EduAI session or a short-lived profile-completion ticket.
-- POST /auth/oauth/complete-profile completes an identity with a missing
-  email and returns the standard EduAI session.
+  standard EduAI session or a short-lived `kind=onboarding` ticket.
+- POST /auth/oauth/complete-profile requires an explicit student/instructor
+  role and completes the pending identity, using a provider email when one
+  is available or collecting an email when it is not.
 
 login is the default mode. Registration sends the selected student or
-instructor role. Existing roles are preserved and an existing email collision
-is not silently linked.
+instructor role. Every first-time social identity remains pending until that
+role is explicitly completed; existing roles are preserved and an existing
+email collision is not silently linked.
 
 The Prisma migration is
 20260903000000_add_external_oauth_identities. It is additive and preserves
@@ -196,9 +198,10 @@ Zalo must remain disabled during this Facebook-first sequence.
 
 - The provider identity is unique by (provider, provider_user_id).
 - A provider email match does not merge accounts automatically.
-- A missing provider email creates a time-limited pending external identity;
-  the submitted email is unverified until the normal email-verification
-  capability exists.
+- Every first-time social identity creates a time-limited pending external
+  identity; no User or UserRole is created until explicit onboarding
+  completion. A submitted email is unverified until the normal
+  email-verification capability exists.
 - State and tickets are HMAC-keyed, one-time, TTL-bound, and never placed in
   logs. Redis uses `eduai:auth:oauth:{state|ticket}:<sha256>` keys, `SET EX NX`
   for writes, and atomic GET+DEL consumption. The in-memory fallback is
@@ -218,7 +221,8 @@ EduAI_Docs/docs/qa/social-oauth-qa-checklist.md:
 
 - provider capability flags hide disabled providers and show enabled providers;
 - capability response reports Google true, Facebook true, and Zalo false;
-- Facebook login and registration complete with the correct mode and role;
+- Facebook login and registration pause for explicit role onboarding and
+  complete with the correct mode and role;
 - cancel and deny return a safe Vietnamese error without a session;
 - expired, replayed, tampered, and cross-provider state/tickets fail safely;
 - an existing provider identity returns the normal EduAI session;
