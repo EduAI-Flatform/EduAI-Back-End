@@ -25,20 +25,23 @@ describe('OAuth contracts', () => {
 
   it('models missing-email onboarding without exposing provider credentials', () => {
     const ticket: OAuthTicketRecord = {
-      kind: 'profile',
+      kind: 'onboarding',
       mode: 'register',
       provider: 'zalo',
       externalIdentityId: 'external-identity-id',
       redirectTo: '/',
       role: RoleName.student,
       displayName: 'Zalo Learner',
+      requiresEmail: true,
       expiresAt: Date.now() + 120_000,
     };
     const response: OAuthExchangeResponse = {
-      kind: 'profile_required',
+      kind: 'onboarding',
       provider: ticket.provider,
       ticket: 'one-time-eduai-ticket',
       redirectTo: ticket.redirectTo,
+      requiresEmail: true,
+      role: RoleName.student,
       displayName: ticket.displayName,
     };
 

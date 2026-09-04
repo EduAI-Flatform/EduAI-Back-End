@@ -14,7 +14,9 @@ const SAFE_OAUTH_CODES = new Set([
   'OAUTH_PROVIDER_UNAVAILABLE',
   'OAUTH_PROVIDER_UNSUPPORTED',
   'OAUTH_REDIRECT_NOT_ALLOWED',
+  'OAUTH_ROLE_MISMATCH',
   'OAUTH_ROLE_NOT_ALLOWED',
+  'OAUTH_PROFILE_REQUIRED',
   'OAUTH_STATE_INVALID',
   'OAUTH_STATE_STORE_UNAVAILABLE',
   'OAUTH_TICKET_INVALID',
@@ -45,6 +47,10 @@ export function buildOAuthDiagnosticMetadata(
 
   const targetField = getPrismaTargetField(error);
   if (targetField) metadata.targetField = targetField;
+
+  const driverAdapter = getDriverAdapterMetadata(error);
+  if (driverAdapter.kind) metadata.driverAdapterKind = driverAdapter.kind;
+  if (driverAdapter.code) metadata.driverAdapterCode = driverAdapter.code;
 
   if (correlationId && /^[A-Za-z0-9._:-]{8,64}$/.test(correlationId)) {
     metadata.correlationId = correlationId;
@@ -89,6 +95,26 @@ function getPrismaTargetField(error: unknown): string | undefined {
   );
 
   return safeValues.length > 0 ? safeValues.join(',').slice(0, 128) : undefined;
+}
+
+function getDriverAdapterMetadata(error: unknown): {
+  kind?: string;
+  code?: string;
+} {
+  if (!isRecord(error) || error.name !== 'DriverAdapterError') {
+    return {};
+  }
+  if (!isRecord(error.cause)) return {};
+
+  const kind = readStringProperty(error.cause, 'kind');
+  const originalCode = readStringProperty(error.cause, 'originalCode');
+  const code = readStringProperty(error.cause, 'code');
+  return {
+    ...(kind ? { kind: sanitizeValue(kind, 64) } : {}),
+    ...((originalCode ?? code) && /^[A-Za-z0-9._-]{1,32}$/.test(originalCode ?? code ?? '')
+      ? { code: originalCode ?? code }
+      : {}),
+  };
 }
 
 function getExceptionClass(error: unknown): string {

@@ -32,7 +32,7 @@ import { OAuthStartDto } from '../dto/oauth-start.dto';
 import {
   OAuthExchangeResponse,
   OAuthIdentity,
-  OAuthProfileRequiredResponse,
+  OAuthOnboardingResponse,
   OAuthRegistrationRole,
   OAuthSessionResponse,
   OAuthStateRecord,
@@ -102,11 +102,12 @@ type OAuthUserRecord = Prisma.UserGetPayload<{
 type OAuthWriterClient = Prisma.TransactionClient;
 
 interface AccountResolution {
-  kind: 'session' | 'profile';
+  kind: 'session' | 'onboarding';
   displayName?: string;
   externalIdentityId?: string;
   userId?: string;
   role?: OAuthRegistrationRole;
+  requiresEmail?: boolean;
 }
 
 @Injectable()
@@ -288,6 +289,9 @@ export class OAuthService {
           ...(resolution.displayName
             ? { displayName: resolution.displayName }
             : {}),
+          ...(resolution.requiresEmail !== undefined
+            ? { requiresEmail: resolution.requiresEmail }
+            : {}),
           expiresAt: Date.now() + this.appConfig.oauth.ticketTtlSeconds * 1000,
         },
         this.appConfig.oauth.ticketTtlSeconds,
@@ -323,11 +327,14 @@ export class OAuthService {
     if (!record || record.expiresAt <= Date.now()) {
       throw this.ticketInvalidException();
     }
-    if (record.kind === 'profile') {
+    if (record.kind === 'onboarding' || record.kind === 'profile') {
       if (!record.externalIdentityId) throw this.ticketInvalidException();
+      const requiresEmail = record.requiresEmail ?? true;
       const nextTicket = this.generateOpaqueValue();
-      const nextRecord = {
+      const nextRecord: OAuthTicketRecord = {
         ...record,
+        kind: 'onboarding',
+        requiresEmail,
         expiresAt: Date.now() + PROFILE_TICKET_TTL_SECONDS * 1000,
       };
       try {
@@ -340,11 +347,13 @@ export class OAuthService {
         this.rethrowStoreError(error);
         throw this.ticketInvalidException();
       }
-      const response: OAuthProfileRequiredResponse = {
-        kind: 'profile_required',
+      const response: OAuthOnboardingResponse = {
+        kind: 'onboarding',
         provider: record.provider,
         ticket: nextTicket,
         redirectTo: record.redirectTo,
+        requiresEmail,
+        ...(record.role ? { role: record.role } : {}),
         ...(record.displayName ? { displayName: record.displayName } : {}),
       };
       return response;
@@ -376,15 +385,18 @@ export class OAuthService {
     ticketValue: string,
     input: OAuthProfileDto,
   ): Promise<OAuthSessionResponse> {
-    const email = input.email.trim().toLowerCase();
-    if (!this.isValidEmail(email)) {
+    const role = this.parseRole(input.role);
+    if (!role) throw this.roleRequiredException();
+
+    const submittedEmail = input.email?.trim().toLowerCase();
+    if (submittedEmail !== undefined && !this.isValidEmail(submittedEmail)) {
       throw new BadRequestException({
         error: 'INVALID_EMAIL',
         message: 'Địa chỉ email không hợp lệ.',
       });
     }
 
-    const record = await this.consumeProfileTicket(ticketValue);
+    const record = await this.consumeOnboardingTicket(ticketValue);
     if (!record.externalIdentityId) throw this.ticketInvalidException();
 
     return this.prisma.$transaction(async (tx) => {
@@ -405,6 +417,15 @@ export class OAuthService {
       if (record.mode === 'register' && !record.role) {
         throw this.roleRequiredException();
       }
+      if (record.role && record.role !== role) {
+        throw this.roleMismatchException();
+      }
+
+      const providerEmail = external.providerEmail?.trim().toLowerCase();
+      const email = providerEmail ?? submittedEmail;
+      if (!email || !this.isValidEmail(email)) {
+        throw this.profileRequiredException();
+      }
 
       const existingUser = await tx.user.findUnique({
         where: { email },
@@ -420,14 +441,13 @@ export class OAuthService {
         throw this.accountLinkRequiredException();
       }
 
-      const role = record.role ?? RoleName.student;
       const user = await this.createLinkedUser(
         tx,
         record.provider,
         {
           providerUserId: external.providerUserId,
           email,
-          emailVerified: false,
+          emailVerified: external.emailVerified,
           fullName:
             input.fullName?.trim() ||
             external.providerName?.trim() ||
@@ -484,15 +504,6 @@ export class OAuthService {
           throw this.accountLinkRequiredException();
         }
 
-        const role = this.resolveRole(state);
-        const user = await this.createLinkedUser(
-          tx,
-          provider,
-          identity,
-          role,
-          existingExternal?.id,
-        );
-        return { kind: 'session', userId: user.id };
       }
 
       const pendingExpiresAt = new Date(
@@ -502,20 +513,21 @@ export class OAuthService {
         ? await tx.externalIdentity.update({
             where: { id: existingExternal.id },
             data: {
-              emailVerified: false,
+              emailVerified: identity.emailVerified,
               pendingExpiresAt,
               providerAvatar: identity.avatarUrl,
+              providerEmail: identity.email ?? null,
               providerName: identity.fullName,
             },
             select: { id: true },
           })
         : await tx.externalIdentity.create({
             data: {
-              emailVerified: false,
+              emailVerified: identity.emailVerified,
               pendingExpiresAt,
               provider: externalProvider,
               providerAvatar: identity.avatarUrl,
-              providerEmail: null,
+              providerEmail: identity.email ?? null,
               providerName: identity.fullName,
               providerUserId: identity.providerUserId,
               userId: null,
@@ -524,10 +536,11 @@ export class OAuthService {
           });
 
       return {
-        kind: 'profile',
+        kind: 'onboarding',
         displayName: identity.fullName,
         externalIdentityId: pending.id,
         role: state.role,
+        requiresEmail: !identity.email,
       };
     });
   }
@@ -602,7 +615,7 @@ export class OAuthService {
     return user;
   }
 
-  private async consumeProfileTicket(
+  private async consumeOnboardingTicket(
     ticketValue: string,
   ): Promise<OAuthTicketRecord> {
     let record: OAuthTicketRecord | null;
@@ -614,12 +627,16 @@ export class OAuthService {
     }
     if (
       !record ||
-      record.kind !== 'profile' ||
+      (record.kind !== 'onboarding' && record.kind !== 'profile') ||
       record.expiresAt <= Date.now()
     ) {
       throw this.ticketInvalidException();
     }
-    return record;
+    return {
+      ...record,
+      kind: 'onboarding',
+      requiresEmail: record.requiresEmail ?? true,
+    };
   }
 
   private async findUserById(
@@ -641,16 +658,6 @@ export class OAuthService {
         message: OAUTH_MESSAGES.accountBlocked,
       });
     }
-  }
-
-  private resolveRole(
-    state: OAuthStateRecord,
-  ): OAuthRegistrationRole {
-    if (state.role === RoleName.student || state.role === RoleName.instructor) {
-      return state.role;
-    }
-    if (state.mode === 'register') throw this.roleRequiredException();
-    return RoleName.student;
   }
 
   private parseProvider(value: string): SocialOAuthProvider {
@@ -897,6 +904,20 @@ export class OAuthService {
     return new ConflictException({
       error: 'ACCOUNT_ROLE_REQUIRED',
       message: OAUTH_MESSAGES.roleRequired,
+    });
+  }
+
+  private roleMismatchException(): BadRequestException {
+    return new BadRequestException({
+      error: 'OAUTH_ROLE_MISMATCH',
+      message: OAUTH_MESSAGES.roleRequired,
+    });
+  }
+
+  private profileRequiredException(): BadRequestException {
+    return new BadRequestException({
+      error: 'OAUTH_PROFILE_REQUIRED',
+      message: OAUTH_MESSAGES.ticketInvalid,
     });
   }
 

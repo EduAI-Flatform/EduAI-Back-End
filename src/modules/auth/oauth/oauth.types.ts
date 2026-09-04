@@ -15,7 +15,9 @@ export interface OAuthStateRecord {
 }
 
 export interface OAuthTicketRecord {
-  kind: 'session' | 'profile';
+  // `profile` remains readable for the short-lived tickets issued by the
+  // previous deployment. New tickets always use the onboarding state.
+  kind: 'session' | 'onboarding' | 'profile';
   mode: OAuthMode;
   provider: SocialOAuthProvider;
   redirectTo: string;
@@ -23,6 +25,7 @@ export interface OAuthTicketRecord {
   externalIdentityId?: string;
   role?: OAuthRegistrationRole;
   displayName?: string;
+  requiresEmail?: boolean;
   expiresAt: number;
 }
 
@@ -40,6 +43,17 @@ export interface OAuthProviderCapabilities {
   zalo: boolean;
 }
 
+export interface OAuthOnboardingResponse {
+  kind: 'onboarding';
+  provider: SocialOAuthProvider;
+  ticket: string;
+  redirectTo: string;
+  requiresEmail: boolean;
+  role?: OAuthRegistrationRole;
+  displayName?: string;
+}
+
+/** Transitional response type for clients that still understand the old flow. */
 export interface OAuthProfileRequiredResponse {
   kind: 'profile_required';
   provider: SocialOAuthProvider;
@@ -55,10 +69,12 @@ export interface OAuthSessionResponse {
 }
 
 export type OAuthExchangeResponse =
+  | OAuthOnboardingResponse
   | OAuthProfileRequiredResponse
   | OAuthSessionResponse;
 
 export interface OAuthProfileCompletionInput {
-  email: string;
+  role: OAuthRegistrationRole;
+  email?: string;
   fullName?: string;
 }
