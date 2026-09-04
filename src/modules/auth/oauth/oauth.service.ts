@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -21,6 +22,7 @@ import {
   AuditActionValue,
 } from '../../../common/audit/audit.constants';
 import { AuditService } from '../../../common/audit/audit.service';
+import { AppLoggerService } from '../../../common/logging/app-logger.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuthService } from '../auth.service';
 import { OAuthCallbackDto } from '../dto/oauth-callback.dto';
@@ -42,6 +44,10 @@ import {
   OAuthProviderService,
 } from './oauth-provider.service';
 import { OAuthTransactionStore } from './oauth-transaction.store';
+import {
+  buildOAuthDiagnosticMetadata,
+  isSafeOAuthCode,
+} from './oauth-diagnostics';
 
 const PROFILE_TICKET_TTL_SECONDS = 10 * 60;
 
@@ -112,6 +118,7 @@ export class OAuthService {
     private readonly authService: AuthService,
     private readonly transactionStore: OAuthTransactionStore,
     private readonly providerService: OAuthProviderService,
+    @Optional() private readonly logger?: AppLoggerService,
   ) {}
 
   getProviderCapabilities() {
@@ -189,8 +196,9 @@ export class OAuthService {
     try {
       stateRecord = await this.transactionStore.consumeState(state);
     } catch (error) {
+      this.logCallbackDiagnostic(provider, 'state_consume', error);
       this.rethrowStoreError(error);
-      throw this.invalidStateException();
+      throw this.callbackFailedException();
     }
 
     if (!stateRecord || !this.isFreshState(stateRecord)) {
@@ -219,10 +227,15 @@ export class OAuthService {
         stateRecord.codeVerifier,
       );
     } catch (error) {
+      this.logCallbackDiagnostic(
+        provider,
+        error instanceof OAuthProviderError ? error.stage : 'provider_identity',
+        error,
+      );
       const code =
         error instanceof OAuthProviderError
           ? error.code
-          : 'OAUTH_PROVIDER_REQUEST_FAILED';
+          : 'OAUTH_CALLBACK_FAILED';
       await this.recordFailure(provider, code);
       throw new BadRequestException({
         error: code,
@@ -234,6 +247,7 @@ export class OAuthService {
     try {
       resolution = await this.resolveAccount(provider, identity, stateRecord);
     } catch (error) {
+      this.logCallbackDiagnostic(provider, 'account_resolution', error);
       if (this.isKnownOAuthException(error)) throw error;
       if (this.isUniqueConflict(error, 'email')) {
         await this.recordFailure(
@@ -263,6 +277,7 @@ export class OAuthService {
         ticket,
         {
           kind: resolution.kind,
+          mode: stateRecord.mode,
           provider,
           redirectTo: stateRecord.redirectTo,
           ...(resolution.externalIdentityId
@@ -278,18 +293,17 @@ export class OAuthService {
         this.appConfig.oauth.ticketTtlSeconds,
       );
     } catch (error) {
+      this.logCallbackDiagnostic(provider, 'ticket_store', error);
       this.rethrowStoreError(error);
-      throw this.ticketInvalidException();
+      throw this.callbackFailedException();
     }
 
-    return { redirectUrl: this.buildFrontendRedirect({ ticket }) };
+    return { redirectUrl: this.buildFrontendRedirect({ ticket, provider }) };
   }
 
   buildErrorRedirect(providerValue: string, code: string): string {
     const provider = this.parseProvider(providerValue);
-    const safeCode = /^[A-Z][A-Z0-9_]{2,64}$/.test(code)
-      ? code
-      : 'OAUTH_CALLBACK_FAILED';
+    const safeCode = isSafeOAuthCode(code) ? code : 'OAUTH_CALLBACK_FAILED';
     const url = new URL(this.getFrontendCallbackUrl());
     url.searchParams.set('provider', provider);
     url.searchParams.set('error', safeCode);
@@ -386,6 +400,10 @@ export class OAuthService {
         external.pendingExpiresAt.getTime() <= Date.now()
       ) {
         throw this.ticketInvalidException();
+      }
+
+      if (record.mode === 'register' && !record.role) {
+        throw this.roleRequiredException();
       }
 
       const existingUser = await tx.user.findUnique({
@@ -685,6 +703,7 @@ export class OAuthService {
       return false;
     }
     if (state.mode !== 'login' && state.mode !== 'register') return false;
+    if (state.mode === 'register' && !state.role) return false;
     if (state.provider !== 'facebook' && state.provider !== 'zalo') return false;
     if (
       state.role !== undefined &&
@@ -724,8 +743,12 @@ export class OAuthService {
     return `${publicAppUrl.replace(/\/$/, '')}/auth/callback`;
   }
 
-  private buildFrontendRedirect(params: { ticket: string }): string {
+  private buildFrontendRedirect(params: {
+    provider: SocialOAuthProvider;
+    ticket: string;
+  }): string {
     const url = new URL(this.getFrontendCallbackUrl());
+    url.searchParams.set('provider', params.provider);
     url.searchParams.set('ticket', params.ticket);
     return url.toString();
   }
@@ -807,6 +830,20 @@ export class OAuthService {
     }
   }
 
+  private logCallbackDiagnostic(
+    provider: SocialOAuthProvider,
+    stage: string,
+    error: unknown,
+  ): void {
+    if (this.isKnownOAuthException(error)) return;
+
+    this.logger?.error(
+      'OAuth callback failed',
+      'OAuthCallback',
+      buildOAuthDiagnosticMetadata(provider, stage, error),
+    );
+  }
+
   private isKnownOAuthException(error: unknown): boolean {
     if (
       error instanceof BadRequestException ||
@@ -846,6 +883,13 @@ export class OAuthService {
     return new ServiceUnavailableException({
       error: 'OAUTH_PROVIDER_UNAVAILABLE',
       message: OAUTH_MESSAGES.providerUnavailable,
+    });
+  }
+
+  private callbackFailedException(): BadRequestException {
+    return new BadRequestException({
+      error: 'OAUTH_CALLBACK_FAILED',
+      message: 'KhÃ´ng thá»ƒ hoÃ n táº¥t xÃ¡c thá»±c. Vui lÃ²ng thá»­ láº¡i.',
     });
   }
 

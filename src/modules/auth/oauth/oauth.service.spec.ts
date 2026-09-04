@@ -158,6 +158,16 @@ describe('OAuthService', () => {
     );
   });
 
+  it('requires an explicit role before starting registration OAuth', async () => {
+    const { service, store, provider } = createService();
+
+    await expect(
+      service.start('facebook', { mode: 'register', redirectTo: '/' }),
+    ).rejects.toMatchObject({ response: { error: 'ACCOUNT_ROLE_REQUIRED' } });
+    expect(store.setState).not.toHaveBeenCalled();
+    expect(provider.buildAuthorizationUrl).not.toHaveBeenCalled();
+  });
+
   it('stores and forwards a server-held PKCE verifier for Zalo authorization', async () => {
     const { service, store, provider } = createService();
 
@@ -270,13 +280,14 @@ describe('OAuthService', () => {
       expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
       expect.objectContaining({
         kind: 'profile',
+        mode: 'login',
         provider: 'zalo',
         externalIdentityId: 'external-id',
       }),
       120,
     );
     expect(result).toMatchObject({
-      redirectUrl: expect.stringContaining('/auth/callback?ticket='),
+      redirectUrl: expect.stringContaining('/auth/callback?provider=zalo&ticket='),
     });
   });
 
@@ -284,6 +295,7 @@ describe('OAuthService', () => {
     const { service, authService, store } = createService({
       ticket: {
         kind: 'session',
+        mode: 'login',
         provider: 'facebook',
         userId: 'user-id',
         redirectTo: '/',
@@ -304,6 +316,7 @@ describe('OAuthService', () => {
     const { service, tx } = createService({
       ticket: {
         kind: 'profile',
+        mode: 'login',
         provider: 'zalo',
         externalIdentityId: 'external-id',
         role: RoleName.student,
@@ -322,6 +335,39 @@ describe('OAuthService', () => {
       response: { error: 'SOCIAL_ACCOUNT_LINK_REQUIRED' },
     });
     expect(tx.user.create).not.toHaveBeenCalled();
+  });
+
+  it('does not silently assign a role to a register profile ticket', async () => {
+    const { service, tx } = createService({
+      ticket: {
+        kind: 'profile',
+        mode: 'register',
+        provider: 'facebook',
+        externalIdentityId: 'external-id',
+        redirectTo: '/',
+        expiresAt: Date.now() + 120_000,
+      },
+      externalIdentity: {
+        id: 'external-id',
+        provider: ExternalProvider.facebook,
+        providerUserId: 'facebook-user-id',
+        userId: null,
+        providerEmail: null,
+        providerName: 'Facebook User',
+        providerAvatar: null,
+        emailVerified: false,
+        pendingExpiresAt: new Date(Date.now() + 120_000),
+      },
+    });
+
+    await expect(
+      service.completeProfile({
+        ticket: 't'.repeat(43),
+        email: 'new@example.com',
+      }),
+    ).rejects.toMatchObject({ response: { error: 'ACCOUNT_ROLE_REQUIRED' } });
+    expect(tx.user.create).not.toHaveBeenCalled();
+    expect(tx.userRole.create).not.toHaveBeenCalled();
   });
 
   it('creates a first-time Facebook account with the requested non-privileged role', async () => {
@@ -353,6 +399,10 @@ describe('OAuthService', () => {
       }),
       select: { id: true },
     });
+    expect(tx.role.findUnique).toHaveBeenCalledWith({
+      where: { name: RoleName.instructor },
+      select: { id: true },
+    });
     expect(tx.userRole.create).toHaveBeenCalledWith({
       data: { roleId: 'role-id', userId: 'new-user-id' },
     });
@@ -360,6 +410,7 @@ describe('OAuthService', () => {
       expect.any(String),
       expect.objectContaining({
         kind: 'session',
+        mode: 'register',
         provider: 'facebook',
         redirectTo: '/instructor/dashboard',
         userId: 'new-user-id',
@@ -397,7 +448,11 @@ describe('OAuthService', () => {
     expect(tx.user.create).not.toHaveBeenCalled();
     expect(store.setTicket).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ kind: 'session', userId: 'new-user-id' }),
+      expect.objectContaining({
+        kind: 'session',
+        mode: 'login',
+        userId: 'new-user-id',
+      }),
       120,
     );
   });
@@ -508,6 +563,27 @@ describe('OAuthService', () => {
     });
   });
 
+  it('keeps unexpected provider callback exceptions on the generic public error', async () => {
+    const { service, provider } = createService({
+      state: {
+        provider: 'facebook',
+        mode: 'login',
+        redirectTo: '/',
+        createdAt: Date.now(),
+      },
+    });
+    provider.resolveIdentity.mockRejectedValueOnce(
+      new Error('provider response contains secret detail'),
+    );
+
+    await expect(
+      service.handleCallback('facebook', {
+        state: 's'.repeat(43),
+        code: 'provider-code',
+      }),
+    ).rejects.toMatchObject({ response: { error: 'OAUTH_CALLBACK_FAILED' } });
+  });
+
   it('maps callback ticket-store outages to a safe service error', async () => {
     const context = createService({
       state: {
@@ -532,6 +608,48 @@ describe('OAuthService', () => {
     ).rejects.toMatchObject({
       response: { error: 'OAUTH_STATE_STORE_UNAVAILABLE' },
     });
+  });
+
+  it('keeps unknown callback state-store exceptions on the generic public error', async () => {
+    const context = createService({
+      state: {
+        provider: 'facebook',
+        mode: 'login',
+        redirectTo: '/',
+        createdAt: Date.now(),
+      },
+    });
+    context.store.consumeState.mockRejectedValueOnce(
+      new Error('state store internal detail'),
+    );
+
+    await expect(
+      context.service.handleCallback('facebook', {
+        state: 's'.repeat(43),
+        code: 'provider-code',
+      }),
+    ).rejects.toMatchObject({ response: { error: 'OAUTH_CALLBACK_FAILED' } });
+  });
+
+  it('keeps unknown callback ticket-store exceptions on the generic public error', async () => {
+    const context = createService({
+      state: {
+        provider: 'facebook',
+        mode: 'login',
+        redirectTo: '/',
+        createdAt: Date.now(),
+      },
+    });
+    context.store.setTicket.mockRejectedValueOnce(
+      new Error('ticket store internal detail'),
+    );
+
+    await expect(
+      context.service.handleCallback('facebook', {
+        state: 's'.repeat(43),
+        code: 'provider-code',
+      }),
+    ).rejects.toMatchObject({ response: { error: 'OAUTH_CALLBACK_FAILED' } });
   });
 
   it('rejects unsafe redirects and refuses provider start when disabled', async () => {
@@ -582,6 +700,25 @@ describe('OAuthService', () => {
     expect(provider.resolveIdentity).not.toHaveBeenCalled();
   });
 
+  it('rejects a register callback state without a role', async () => {
+    const { service, provider } = createService({
+      state: {
+        provider: 'facebook',
+        mode: 'register',
+        redirectTo: '/',
+        createdAt: Date.now(),
+      },
+    });
+
+    await expect(
+      service.handleCallback('facebook', {
+        state: 's'.repeat(43),
+        code: 'code',
+      }),
+    ).rejects.toMatchObject({ response: { error: 'OAUTH_STATE_INVALID' } });
+    expect(provider.resolveIdentity).not.toHaveBeenCalled();
+  });
+
   it('maps an email uniqueness race to the explicit-linking policy', async () => {
     const { service, tx, auditService } = createService({
       state: {
@@ -613,6 +750,7 @@ describe('OAuthService', () => {
     const context = createService({
       ticket: {
         kind: 'session',
+        mode: 'login',
         provider: 'facebook',
         userId: 'user-id',
         redirectTo: '/',
@@ -621,6 +759,7 @@ describe('OAuthService', () => {
     });
     const sessionTicket = {
       kind: 'session' as const,
+      mode: 'login' as const,
       provider: 'facebook' as const,
       userId: 'user-id',
       redirectTo: '/',

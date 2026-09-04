@@ -16,6 +16,7 @@ export interface OAuthStateRecord {
 
 export interface OAuthTicketRecord {
   kind: 'session' | 'profile';
+  mode: OAuthMode;
   provider: SocialOAuthProvider;
   redirectTo: string;
   userId?: string;

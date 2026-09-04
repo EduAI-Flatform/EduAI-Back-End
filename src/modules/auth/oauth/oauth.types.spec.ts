@@ -26,6 +26,7 @@ describe('OAuth contracts', () => {
   it('models missing-email onboarding without exposing provider credentials', () => {
     const ticket: OAuthTicketRecord = {
       kind: 'profile',
+      mode: 'register',
       provider: 'zalo',
       externalIdentityId: 'external-identity-id',
       redirectTo: '/',

@@ -16,10 +16,12 @@ function createController() {
     exchange: jest.fn().mockResolvedValue({ kind: 'session' }),
     completeProfile: jest.fn().mockResolvedValue({ kind: 'session' }),
   };
+  const logger = { error: jest.fn() };
 
   return {
-    controller: new OAuthController(oauthService as never),
+    controller: new OAuthController(oauthService as never, logger as never),
     oauthService,
+    logger,
     response: {
       redirect: jest.fn(),
       setHeader: jest.fn(),
@@ -97,18 +99,40 @@ describe('OAuthController', () => {
   });
 
   it('does not expose arbitrary callback exception details', async () => {
-    const { controller, oauthService, response } = createController();
-    oauthService.handleCallback.mockRejectedValueOnce(new Error('provider secret detail'));
+    const { controller, oauthService, response, logger } = createController();
+    const failure = Object.assign(new Error('provider secret detail'), {
+      code: 'P2002',
+      meta: { target: ['email'] },
+    });
+    oauthService.handleCallback.mockRejectedValueOnce(failure);
 
     await controller.callback(
       'zalo',
       { state: 's'.repeat(43) },
       response as never,
+      { correlationId: 'request-12345678' } as never,
     );
 
     expect(oauthService.buildErrorRedirect).toHaveBeenCalledWith(
       'zalo',
       'OAUTH_CALLBACK_FAILED',
     );
+    expect(logger.error).toHaveBeenCalledWith(
+      'OAuth callback failed',
+      'OAuthCallback',
+      expect.objectContaining({
+        correlationId: 'request-12345678',
+        exceptionClass: 'Error',
+        prismaCode: 'P2002',
+        provider: 'zalo',
+        safeOAuthCode: 'OAUTH_CALLBACK_FAILED',
+        stage: 'callback',
+        targetField: 'email',
+      }),
+    );
+    const diagnosticLog = JSON.stringify(logger.error.mock.calls[0]);
+    expect(diagnosticLog).not.toContain('provider secret detail');
+    expect(diagnosticLog).not.toContain('authorization-code');
+    expect(diagnosticLog).not.toContain('secret');
   });
 });

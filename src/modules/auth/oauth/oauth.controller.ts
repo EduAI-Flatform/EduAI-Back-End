@@ -6,8 +6,10 @@ import {
   Param,
   Post,
   Query,
+  Req,
   Body,
   Res,
+  Optional,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -17,6 +19,8 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
+import type { CorrelatedRequest } from '../../../common/http/request-context';
+import { AppLoggerService } from '../../../common/logging/app-logger.service';
 import { Public } from '../../../common/security/public.decorator';
 import { RateLimit } from '../../../common/security/rate-limit.decorator';
 import { OAuthCallbackDto } from '../dto/oauth-callback.dto';
@@ -24,14 +28,19 @@ import { OAuthExchangeDto } from '../dto/oauth-exchange.dto';
 import { OAuthProfileDto } from '../dto/oauth-profile.dto';
 import { OAuthStartDto } from '../dto/oauth-start.dto';
 import { OAuthService } from './oauth.service';
-
-const SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{2,64}$/;
+import {
+  buildOAuthDiagnosticMetadata,
+  isSafeOAuthCode,
+} from './oauth-diagnostics';
 const SOCIAL_PROVIDERS = new Set(['facebook', 'zalo']);
 
 @ApiTags('Auth OAuth')
 @Controller('auth/oauth')
 export class OAuthController {
-  constructor(private readonly oauthService: OAuthService) {}
+  constructor(
+    private readonly oauthService: OAuthService,
+    @Optional() private readonly logger?: AppLoggerService,
+  ) {}
 
   @Get('providers')
   @Public()
@@ -79,6 +88,7 @@ export class OAuthController {
     @Param('provider') provider: string,
     @Query() input: OAuthCallbackDto,
     @Res() response: Response,
+    @Req() request?: CorrelatedRequest,
   ): Promise<void> {
     if (!SOCIAL_PROVIDERS.has(provider)) {
       throw new HttpException('Unsupported OAuth provider', HttpStatus.BAD_REQUEST);
@@ -89,6 +99,16 @@ export class OAuthController {
       response.setHeader('Cache-Control', 'no-store');
       response.redirect(HttpStatus.FOUND, result.redirectUrl);
     } catch (error) {
+      this.logger?.error(
+        'OAuth callback failed',
+        'OAuthCallback',
+        buildOAuthDiagnosticMetadata(
+          provider,
+          'callback',
+          error,
+          request?.correlationId,
+        ),
+      );
       const code = this.getSafeErrorCode(error);
       response.setHeader('Cache-Control', 'no-store');
       response.redirect(
@@ -136,7 +156,7 @@ export class OAuthController {
         payload !== null &&
         'error' in payload &&
         typeof payload.error === 'string' &&
-        SAFE_ERROR_CODE.test(payload.error)
+        isSafeOAuthCode(payload.error)
       ) {
         return payload.error;
       }
