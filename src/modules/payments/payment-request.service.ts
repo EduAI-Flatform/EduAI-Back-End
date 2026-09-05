@@ -434,7 +434,7 @@ export class PaymentRequestService {
     resourceId: string,
     now: Date,
   ): Promise<void> {
-    await tx.commerceIdempotencyRecord.create({
+    const idempotency = await tx.commerceIdempotencyRecord.create({
       data: {
         actorId,
         operation: IDEMPOTENCY_OPERATION,
@@ -442,6 +442,13 @@ export class PaymentRequestService {
         keyHashVersion: 1,
         requestHash,
         requestCanonicalizationVersion: 1,
+        status: CommerceIdempotencyStatus.in_progress,
+        lockedUntil: now,
+      },
+    });
+    await tx.commerceIdempotencyRecord.update({
+      where: { id: idempotency.id },
+      data: {
         status: CommerceIdempotencyStatus.completed,
         resourceType,
         resourceId,

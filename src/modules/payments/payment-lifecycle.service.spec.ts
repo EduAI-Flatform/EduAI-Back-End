@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { ConflictException } from '@nestjs/common';
-import { CommerceOrderStatus, CommercePaymentStatus, CommerceReservationStatus } from '../../../generated/prisma/client';
+import { CommerceIdempotencyStatus, CommerceOrderStatus, CommercePaymentStatus, CommerceReservationStatus } from '../../../generated/prisma/client';
 import { PaymentLifecycleService } from './payment-lifecycle.service';
 
 const secret = 's'.repeat(32);
@@ -34,7 +34,11 @@ function setup(initial = order()) {
   });
   const tx: any = {
     $queryRaw: jest.fn(),
-    commerceIdempotencyRecord: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+    commerceIdempotencyRecord: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 'idempotency-id' }),
+      update: jest.fn().mockResolvedValue({ id: 'idempotency-id' }),
+    },
     commerceOrder: {
       findFirst: jest.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(initial),
       update: jest.fn(), findUniqueOrThrow: jest.fn().mockResolvedValue(terminal),
@@ -79,6 +83,13 @@ describe('PaymentLifecycleService cancellation', () => {
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.not.objectContaining({ idempotencyKey: expect.anything() }),
     }), tx);
+    expect(tx.commerceIdempotencyRecord.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: CommerceIdempotencyStatus.in_progress }),
+    }));
+    expect(tx.commerceIdempotencyRecord.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'idempotency-id' },
+      data: expect.objectContaining({ status: CommerceIdempotencyStatus.completed }),
+    }));
   });
 
   it('closes locally without provider activity when no attempt exists', async () => {

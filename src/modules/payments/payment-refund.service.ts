@@ -102,9 +102,13 @@ export class PaymentRefundService {
           orderLineId: item.orderLineId, amountMinor: BigInt(item.amountMinor), currency: 'VND',
         })) },
       }, include: refundInclude });
-      await tx.commerceIdempotencyRecord.create({ data: {
+      const idempotency = await tx.commerceIdempotencyRecord.create({ data: {
         actorId, operation: OPERATION, keyHash, keyHashVersion: 1, requestHash,
-        requestCanonicalizationVersion: 1, status: CommerceIdempotencyStatus.completed,
+        requestCanonicalizationVersion: 1, status: CommerceIdempotencyStatus.in_progress,
+        lockedUntil: now,
+      } });
+      await tx.commerceIdempotencyRecord.update({ where: { id: idempotency.id }, data: {
+        status: CommerceIdempotencyStatus.completed,
         resourceType: 'commerce_refund', resourceId: refund.id, lockedUntil: now, completedAt: now,
       } });
       await this.audit.record({

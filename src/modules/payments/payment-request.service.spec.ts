@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { CommerceIdempotencyStatus } from '../../../generated/prisma/client';
 import { PaymentProviderError } from './payment-provider';
 import { PaymentRequestService } from './payment-request.service';
 
@@ -75,6 +76,7 @@ function harness(options: {
     commerceIdempotencyRecord: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 'idempotency-id' }),
+      update: jest.fn().mockResolvedValue({ id: 'idempotency-id' }),
     },
     commerceOrder: {
       findFirst: jest
@@ -203,6 +205,28 @@ describe('PaymentRequestService', () => {
         }),
       }),
       tx,
+    );
+  });
+
+  it('creates idempotency state in progress before finalizing the request', async () => {
+    const { service, tx } = harness();
+
+    await service.create('student-id', orderId, 'payment-key-initial-state');
+
+    expect(tx.commerceIdempotencyRecord.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: CommerceIdempotencyStatus.in_progress,
+        }),
+      }),
+    );
+    expect(tx.commerceIdempotencyRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'idempotency-id' },
+        data: expect.objectContaining({
+          status: CommerceIdempotencyStatus.completed,
+        }),
+      }),
     );
   });
 

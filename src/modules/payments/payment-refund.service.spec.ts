@@ -1,6 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import {
-  CommerceFulfillmentStatus, CommerceOrderStatus, CommerceProductType, CommerceReconciliationStatus,
+  CommerceFulfillmentStatus, CommerceIdempotencyStatus, CommerceOrderStatus, CommerceProductType, CommerceReconciliationStatus,
   CommerceRefundStatus,
 } from '../../../generated/prisma/client';
 import { PaymentRefundService } from './payment-refund.service';
@@ -34,7 +34,11 @@ function setup(current = refund()) {
   });
   const tx: any = {
     $queryRaw: jest.fn(),
-    commerceIdempotencyRecord: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+    commerceIdempotencyRecord: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 'idempotency-id' }),
+      update: jest.fn().mockResolvedValue({ id: 'idempotency-id' }),
+    },
     commerceSettlement: { findUnique: jest.fn() },
     commerceRefund: {
       create: jest.fn(), findUnique: jest.fn().mockResolvedValue(current),
@@ -77,7 +81,13 @@ describe('PaymentRefundService', () => {
       data: expect.objectContaining({ amountMinor: 40n, allocations: { create: [expect.objectContaining({ amountMinor: 40n })] } }),
     }));
     expect(tx.commerceIdempotencyRecord.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.not.objectContaining({ key: 'refund-key-123' }),
+      data: expect.objectContaining({
+        status: CommerceIdempotencyStatus.in_progress,
+      }),
+    }));
+    expect(tx.commerceIdempotencyRecord.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'idempotency-id' },
+      data: expect.objectContaining({ status: CommerceIdempotencyStatus.completed }),
     }));
     expect(audit.record).toHaveBeenCalled();
   });

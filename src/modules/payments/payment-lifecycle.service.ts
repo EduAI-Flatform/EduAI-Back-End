@@ -203,9 +203,13 @@ export class PaymentLifecycleService {
     }
     if (!existing) {
       const now = new Date();
-      await tx.commerceIdempotencyRecord.create({ data: {
+      const idempotency = await tx.commerceIdempotencyRecord.create({ data: {
         actorId: learnerId, operation: OPERATION, keyHash, keyHashVersion: 1, requestHash,
-        requestCanonicalizationVersion: 1, status: CommerceIdempotencyStatus.completed,
+        requestCanonicalizationVersion: 1, status: CommerceIdempotencyStatus.in_progress,
+        lockedUntil: now,
+      } });
+      await tx.commerceIdempotencyRecord.update({ where: { id: idempotency.id }, data: {
+        status: CommerceIdempotencyStatus.completed,
         resourceType: attempt ? 'payment_attempt' : 'commerce_order',
         resourceId: attempt?.id ?? order.id, lockedUntil: now, completedAt: now,
       } });

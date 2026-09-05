@@ -206,6 +206,52 @@ describe('Sprint 24 membership plans on PostgreSQL', () => {
     expect(result.rows[0]).toEqual({ line_count: 1, intent_count: 1 });
   });
 
+  it('enforces the idempotency initial state before allowing a terminal result', async () => {
+    const actorId = '10000000-0000-4000-8000-000000000013';
+    const keyHash = 'c'.repeat(64);
+    const requestHash = 'd'.repeat(64);
+
+    await db.exec(`
+      INSERT INTO users (id, email, password_hash, full_name, updated_at)
+      VALUES ('${actorId}', 'idempotency-contract@example.test', 'hash', 'Idempotency Contract', CURRENT_TIMESTAMP);
+    `);
+
+    await expect(
+      db.exec(`
+        INSERT INTO commerce_idempotency_records (
+          actor_id, operation, key_hash, key_hash_version, request_hash,
+          request_canonicalization_version, status, resource_type, resource_id,
+          locked_until, completed_at, updated_at
+        ) VALUES (
+          '${actorId}', 'contract_test', '${keyHash}', 1, '${requestHash}',
+          1, 'completed', 'contract_test', '${actorId}',
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        );
+      `),
+    ).rejects.toThrow(/commerce_idempotency_records must be created in its initial state/);
+
+    await db.exec(`
+      INSERT INTO commerce_idempotency_records (
+        actor_id, operation, key_hash, key_hash_version, request_hash,
+        request_canonicalization_version, status, locked_until, updated_at
+      ) VALUES (
+        '${actorId}', 'contract_test', '${keyHash}', 1, '${requestHash}',
+        1, 'in_progress', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      );
+      UPDATE commerce_idempotency_records
+        SET status = 'completed', resource_type = 'contract_test', resource_id = '${actorId}',
+            completed_at = CURRENT_TIMESTAMP, locked_until = CURRENT_TIMESTAMP
+        WHERE actor_id = '${actorId}' AND operation = 'contract_test';
+    `);
+
+    const result = await db.query<{ status: string; resource_type: string }>(`
+      SELECT status, resource_type
+      FROM commerce_idempotency_records
+      WHERE actor_id = '${actorId}' AND operation = 'contract_test'
+    `);
+    expect(result.rows).toEqual([{ status: 'completed', resource_type: 'contract_test' }]);
+  });
+
   it('stores immutable removed-course snapshots and explicit bounded membership-grace grants', async () => {
     const adminId = '10000000-0000-4000-8000-000000000001';
     const buyerId = '10000000-0000-4000-8000-000000000009';
