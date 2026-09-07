@@ -202,7 +202,7 @@ function normalizeStatus(value: unknown): PaymentRequestStatus {
     status: requireStatus(item.status),
     createdAt: requireIsoDate(item.createdAt),
     transactions: requireTransactions(item.transactions),
-    ...(item.canceledAt === null
+    ...(item.canceledAt === null || item.canceledAt === undefined
       ? {}
       : { cancelledAt: requireIsoDate(item.canceledAt) }),
   };
