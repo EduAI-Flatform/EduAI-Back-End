@@ -125,6 +125,19 @@ describe('PayosPaymentProvider', () => {
     });
   });
 
+  it('accepts PayOS documented empty transaction object for a pending link', async () => {
+    const { client, provider } = setup();
+    client.paymentRequests.get.mockResolvedValue({
+      ...validStatus,
+      transactions: {},
+    });
+
+    await expect(provider.reconcilePaymentRequest('payment-link-id')).resolves.toMatchObject({
+      status: 'PENDING',
+      transactions: [],
+    });
+  });
+
   it('rejects malformed provider responses before returning them', async () => {
     const { client, provider } = setup();
     client.paymentRequests.create.mockResolvedValue({

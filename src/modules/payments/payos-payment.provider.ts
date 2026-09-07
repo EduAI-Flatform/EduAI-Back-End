@@ -209,6 +209,9 @@ function normalizeStatus(value: unknown): PaymentRequestStatus {
 }
 
 function requireTransactions(value: unknown): PaymentRequestStatus['transactions'] {
+  if (isRecord(value) && Object.keys(value).length === 0) {
+    return [];
+  }
   if (!Array.isArray(value) || value.length > 100) {
     throw new PaymentProviderError('malformed_response', false);
   }
