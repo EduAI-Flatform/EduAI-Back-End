@@ -81,6 +81,24 @@ function loadMigrationDatabaseUrl(rootDirectory) {
 
 function classifyMigrationFailure(log) {
   const value = typeof log === 'string' ? log : '';
+  if (/\.env\.migration is required|MIGRATION_DATABASE_URL is required|must be a PostgreSQL URL|must not be readable by group or other users|database .* does not exist|role .* does not exist/i.test(value)) {
+    return 'MIGRATION_CONFIGURATION_INVALID';
+  }
+  if (/must use distinct PostgreSQL roles|must target the same database/i.test(value)) {
+    return 'MIGRATION_ROLE_SEPARATION_INVALID';
+  }
+  if (/Failed migration metadata inspection/i.test(value)) {
+    return 'MIGRATION_METADATA_INSPECTION_FAILED';
+  }
+  if (/password authentication failed|authentication failed|no pg_hba\.conf|connection refused|could not connect|can't reach database server|cannot reach database server|connection terminated unexpectedly|connect(?:ion)? timed out|ETIMEDOUT|ECONNREFUSED|ENOTFOUND/i.test(value)) {
+    return 'MIGRATION_DATABASE_CONNECTION_FAILED';
+  }
+  if (/Runtime membership privilege grant failed/i.test(value)) {
+    return 'RUNTIME_PRIVILEGE_GRANT_FAILED';
+  }
+  if (/failed migration requires reviewed recovery/i.test(value)) {
+    return 'MIGRATION_REQUIRES_REVIEWED_RECOVERY';
+  }
   if (/unsafe use of new value|must be committed before they can be used/i.test(value)) {
     return 'POSTGRES_ENUM_VALUE_NOT_COMMITTED';
   }
@@ -96,6 +114,14 @@ function classifyMigrationFailure(log) {
     return 'MIGRATION_TRANSACTION_CONFLICT';
   }
   return 'UNKNOWN_SCHEMA_MIGRATION_FAILURE';
+}
+
+function emitMigrationFailure(failureClass, migrationName) {
+  const migrationSuffix = migrationName ? `;migration=${migrationName}` : '';
+  console.log(`migrationFailureClass: ${failureClass}`);
+  console.error(
+    `::error title=Production migration blocked::migrationFailureClass=${failureClass}${migrationSuffix}`,
+  );
 }
 
 function safeMigrationName(value) {
@@ -153,10 +179,7 @@ async function run() {
     const failureClass = classifyMigrationFailure(failedMigration.logs);
     console.log('failedMigrationPresent: true');
     console.log(`failedMigrationName: ${migrationName}`);
-    console.log(`migrationFailureClass: ${failureClass}`);
-    console.error(
-      `::error title=Production migration blocked::migrationFailureClass=${failureClass};migration=${migrationName}`,
-    );
+    emitMigrationFailure(failureClass, migrationName);
     throw new Error('A failed migration requires reviewed recovery');
   }
   console.log('failedMigrationPresent: false');
@@ -171,12 +194,22 @@ async function run() {
         DATABASE_URL: migrationDatabaseUrl,
         MIGRATION_DATABASE_URL: migrationDatabaseUrl,
       },
-      stdio: 'inherit',
+      stdio: ['inherit', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
     },
   );
 
-  if (migration.error) throw migration.error;
-  if (migration.status !== 0) {
+  if (migration.error) {
+    emitMigrationFailure('MIGRATION_PROCESS_SPAWN_FAILED');
+    process.exitCode = 1;
+    return;
+  }
+  if (migration.status !== 0 || migration.signal) {
+    const migrationOutput = [migration.stdout, migration.stderr]
+      .filter((value) => typeof value === 'string' && value)
+      .join('\n');
+    emitMigrationFailure(classifyMigrationFailure(migrationOutput));
     process.exitCode = migration.status ?? 1;
     return;
   }
@@ -190,11 +223,11 @@ async function run() {
 
 if (require.main === module) {
   run().catch((error) => {
-    console.error(
-      `Production migration preflight failed: ${
-        error instanceof Error ? error.message : 'unknown safe error'
-      }`,
-    );
+    const message = error instanceof Error ? error.message : '';
+    if (message !== 'A failed migration requires reviewed recovery') {
+      console.error(`migrationFailureClass: ${classifyMigrationFailure(message)}`);
+    }
+    console.error('Production migration preflight failed');
     process.exitCode = 1;
   });
 }

@@ -120,6 +120,28 @@ describe('production database role separation', () => {
     expect(safeMigrationName('unsafe migration/name')).toBe('UNAVAILABLE');
   });
 
+  it('classifies deployment preflight failures without exposing raw process output', () => {
+    expect(classifyMigrationFailure('.env.migration is required')).toBe(
+      'MIGRATION_CONFIGURATION_INVALID',
+    );
+    expect(
+      classifyMigrationFailure(
+        'DATABASE_URL and MIGRATION_DATABASE_URL must use distinct PostgreSQL roles',
+      ),
+    ).toBe('MIGRATION_ROLE_SEPARATION_INVALID');
+    expect(
+      classifyMigrationFailure('Failed migration metadata inspection was unavailable'),
+    ).toBe('MIGRATION_METADATA_INSPECTION_FAILED');
+    expect(
+      classifyMigrationFailure(
+        'Prisma error: password authentication failed for user migration-secret-role',
+      ),
+    ).toBe('MIGRATION_DATABASE_CONNECTION_FAILED');
+    expect(classifyMigrationFailure('Runtime membership privilege grant failed')).toBe(
+      'RUNTIME_PRIVILEGE_GRANT_FAILED',
+    );
+  });
+
   it('grants only membership-table DML to the URL-derived runtime role', () => {
     const statement = buildRuntimePrivilegeStatement(
       'postgresql://runtime%22role:secret@db.example/eduai',
