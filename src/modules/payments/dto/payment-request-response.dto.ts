@@ -1,4 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class PaymentAmountResponseDto {
   @ApiProperty({ example: '125000' })
@@ -21,10 +23,10 @@ export class PaymentAttemptResponseDto {
   @ApiProperty()
   expiresAt!: Date;
 
-  @ApiProperty({ required: false })
+  @ApiPropertyOptional()
   checkoutUrl?: string;
 
-  @ApiProperty({ required: false, description: 'Short-lived QR image data returned only from successful creation.' })
+  @ApiPropertyOptional({ description: 'Short-lived QR image data returned only from successful creation.' })
   qrCodeDataUrl?: string;
 }
 
@@ -43,4 +45,29 @@ export class PaymentRequestResponseDto {
 
   @ApiProperty({ type: PaymentAttemptResponseDto, nullable: true })
   payment!: PaymentAttemptResponseDto | null;
+}
+
+export class ListPendingPaymentQueryDto {
+  @IsOptional() @Transform(({ value }) => Number(value)) @IsInt() @Min(1)
+  page = 1;
+
+  @IsOptional() @Transform(({ value }) => Number(value)) @IsInt() @Min(1) @Max(100)
+  pageSize = 20;
+}
+
+export class PaymentRequestPageResponseDto {
+  @ApiProperty({ type: [PaymentRequestResponseDto] })
+  items!: PaymentRequestResponseDto[];
+
+  @ApiProperty()
+  page!: number;
+
+  @ApiProperty()
+  pageSize!: number;
+
+  @ApiProperty()
+  total!: number;
+
+  @ApiProperty()
+  totalPages!: number;
 }

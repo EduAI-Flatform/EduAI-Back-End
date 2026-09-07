@@ -13,6 +13,10 @@ export class DisabledPaymentProvider implements PaymentProvider {
     return this.disabled();
   }
 
+  checkoutUrlFor(_providerPaymentIdentity: string): string {
+    throw new PaymentProviderError('disabled', false);
+  }
+
   retrievePaymentRequest(_identity: string): Promise<PaymentRequestStatus> {
     return this.disabled();
   }

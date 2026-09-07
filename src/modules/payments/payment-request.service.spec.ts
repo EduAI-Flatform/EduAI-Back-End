@@ -87,6 +87,7 @@ function harness(options: {
           paymentAttempts: [pendingAttempt],
           status: payableAmountMinor === 0n ? 'confirmed' : 'pending_payment',
         })),
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
     },
     commercePaymentAttempt: {
@@ -101,6 +102,8 @@ function harness(options: {
   const prisma = {
     commerceOrder: {
       findFirst: jest.fn().mockResolvedValue({ payableAmountMinor }),
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => {
       events.push('transaction:start');
@@ -110,6 +113,7 @@ function harness(options: {
     }),
   };
   const provider = {
+    checkoutUrlFor: jest.fn((identity: string) => `https://pay.payos.vn/web/${identity}`),
     createPaymentRequest: jest.fn(async () => {
       events.push('provider');
       return {
@@ -254,6 +258,46 @@ describe('PaymentRequestService', () => {
 
     await expect(service.create('student-id', orderId, 'payment-key-2')).resolves.toMatchObject({
       payment: { id: attemptId, status: 'PENDING' },
+    });
+    expect(provider.createPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a resumable checkout URL for the learner-owned pending attempt', async () => {
+    const open = attempt({ status: 'pending', providerPaymentIdentity: 'provider-payment-id' });
+    const { service, prisma, provider } = harness();
+    prisma.commerceOrder.findFirst.mockResolvedValueOnce(order({ paymentAttempts: [open] }));
+
+    await expect(service.status('student-id', orderId)).resolves.toMatchObject({
+      orderId,
+      payment: {
+        id: attemptId,
+        status: 'PENDING',
+        checkoutUrl: 'https://pay.payos.vn/web/provider-payment-id',
+      },
+    });
+    expect(provider.checkoutUrlFor).toHaveBeenCalledWith('provider-payment-id');
+  });
+
+  it('lists learner-owned pending payments without creating or mutating a payment attempt', async () => {
+    const open = attempt({ status: 'pending', providerPaymentIdentity: 'provider-payment-id' });
+    const { service, prisma, provider, tx } = harness();
+    prisma.commerceOrder.count.mockResolvedValueOnce(1);
+    prisma.commerceOrder.findMany.mockResolvedValue([order({ paymentAttempts: [open] })]);
+
+    await expect(service.pending('student-id')).resolves.toMatchObject({
+      items: [{
+        orderId,
+        payment: {
+          id: attemptId,
+          amount: { amountMinor: '125000', currency: 'VND' },
+          checkoutUrl: 'https://pay.payos.vn/web/provider-payment-id',
+        },
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
     });
     expect(provider.createPaymentRequest).not.toHaveBeenCalled();
     expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();

@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
@@ -14,7 +15,11 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { PaymentRequestResponseDto } from './dto/payment-request-response.dto';
+import {
+  ListPendingPaymentQueryDto,
+  PaymentRequestPageResponseDto,
+  PaymentRequestResponseDto,
+} from './dto/payment-request-response.dto';
 import { PaymentLifecycleResponseDto } from './dto/payment-lifecycle.dto';
 import { PaymentLifecycleService } from './payment-lifecycle.service';
 import { PaymentRequestService } from './payment-request.service';
@@ -29,6 +34,15 @@ export class PaymentRequestController {
     private readonly payments: PaymentRequestService,
     private readonly lifecycle: PaymentLifecycleService,
   ) {}
+
+  @Get('pending')
+  @ApiOkResponse({ type: PaymentRequestPageResponseDto })
+  pending(
+    @CurrentUser('id') learnerId: string,
+    @Query() query: ListPendingPaymentQueryDto,
+  ): Promise<PaymentRequestPageResponseDto> {
+    return this.payments.pending(learnerId, query);
+  }
 
   @Post(':orderId/request')
   @ApiCreatedResponse({ type: PaymentRequestResponseDto })

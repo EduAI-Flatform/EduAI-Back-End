@@ -39,9 +39,19 @@ const STATUSES = new Set<PaymentProviderStatus>([
   'FAILED',
 ]);
 const PAYOS_CHECKOUT_HOSTS = new Set(['pay.payos.vn', 'next.pay.payos.vn']);
+const PAYOS_CHECKOUT_BASE_URL = 'https://pay.payos.vn/web/';
 
 export class PayosPaymentProvider implements PaymentProvider {
   constructor(private readonly client: PayosClientPort | null) {}
+
+  checkoutUrlFor(providerPaymentIdentity: string): string {
+    this.requireClient();
+    validateIdentity(providerPaymentIdentity);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(providerPaymentIdentity)) {
+      throw new PaymentProviderError('invalid_request', false);
+    }
+    return `${PAYOS_CHECKOUT_BASE_URL}${providerPaymentIdentity}`;
+  }
 
   async createPaymentRequest(
     input: CreatePaymentRequestInput,

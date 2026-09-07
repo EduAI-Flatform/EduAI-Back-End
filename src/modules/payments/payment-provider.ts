@@ -88,6 +88,7 @@ export interface VerifiedPaymentWebhook {
 
 export interface PaymentProvider {
   createPaymentRequest(input: CreatePaymentRequestInput): Promise<CreatedPaymentRequest>;
+  checkoutUrlFor(providerPaymentIdentity: string): string;
   retrievePaymentRequest(providerPaymentIdentity: string): Promise<PaymentRequestStatus>;
   cancelPaymentRequest(
     providerPaymentIdentity: string,

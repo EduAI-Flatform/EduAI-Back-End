@@ -24,7 +24,11 @@ import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaymentRequestResponseDto } from './dto/payment-request-response.dto';
+import {
+  ListPendingPaymentQueryDto,
+  PaymentRequestPageResponseDto,
+  PaymentRequestResponseDto,
+} from './dto/payment-request-response.dto';
 import {
   PAYMENT_PROVIDER,
   CreatedPaymentRequest,
@@ -99,7 +103,7 @@ export class PaymentRequestService {
     await this.fulfillment.dispatchPending();
 
     if (!prepared.attempt || !prepared.shouldCallProvider) {
-      return this.toResponse(prepared.order, prepared.attempt);
+      return this.toResponse(prepared.order, prepared.attempt, this.checkoutFor(prepared.attempt));
     }
 
     let created: CreatedPaymentRequest;
@@ -163,7 +167,42 @@ export class PaymentRequestService {
         message: 'Payment request was not created.',
       });
     }
-    return this.toResponse(order, attempt);
+    return this.toResponse(order, attempt, this.checkoutFor(attempt));
+  }
+
+  async pending(
+    learnerId: string,
+    query: ListPendingPaymentQueryDto = { page: 1, pageSize: 20 },
+  ): Promise<PaymentRequestPageResponseDto> {
+    const where: Prisma.CommerceOrderWhereInput = {
+      buyerId: learnerId,
+      status: CommerceOrderStatus.pending_payment,
+      paymentAttempts: {
+        some: {
+          status: { in: [CommercePaymentStatus.created, CommercePaymentStatus.pending] },
+        },
+      },
+    };
+    const [total, orders] = await Promise.all([
+      this.prisma.commerceOrder.count({ where }),
+      this.prisma.commerceOrder.findMany({
+        where,
+        include: orderInclude,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+    ]);
+    return {
+      items: orders.map((order) => {
+        const attempt = order.paymentAttempts[0] ?? null;
+        return this.toResponse(order, attempt, this.checkoutFor(attempt));
+      }),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: Math.ceil(total / query.pageSize),
+    };
   }
 
   private async prepare(
@@ -489,7 +528,7 @@ export class PaymentRequestService {
   private toResponse(
     order: OrderRecord,
     attempt: AttemptRecord | null,
-    checkout?: { checkoutUrl: string; qrCodeDataUrl: string },
+    checkout?: { checkoutUrl?: string; qrCodeDataUrl?: string },
   ): PaymentRequestResponseDto {
     return {
       orderId: order.id,
@@ -502,8 +541,15 @@ export class PaymentRequestService {
         amount: { amountMinor: attempt.amountMinor.toString(), currency: CURRENCY },
         expiresAt: attempt.providerExpiresAt as Date,
         ...checkout,
-      } : null,
+    } : null,
     };
+  }
+
+  private checkoutFor(attempt: AttemptRecord | null): { checkoutUrl: string } | undefined {
+    if (this.config.payos.environment !== 'production' || !attempt?.providerPaymentIdentity) {
+      return undefined;
+    }
+    return { checkoutUrl: this.provider.checkoutUrlFor(attempt.providerPaymentIdentity) };
   }
 
   private assertProviderEnabled(): void {

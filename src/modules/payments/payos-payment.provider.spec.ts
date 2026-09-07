@@ -46,6 +46,14 @@ describe('PayosPaymentProvider', () => {
     return { client, provider: new PayosPaymentProvider(client) };
   }
 
+  it('reconstructs a safe PayOS checkout URL from a stored payment-link identity', () => {
+    const { provider } = setup();
+
+    expect(provider.checkoutUrlFor('payment-link-id')).toBe(
+      'https://pay.payos.vn/web/payment-link-id',
+    );
+  });
+
   it('normalizes create, retrieve, cancel, and reconcile responses without PayOS types', async () => {
     const { client, provider } = setup();
     client.paymentRequests.create.mockResolvedValue(validCreated);
