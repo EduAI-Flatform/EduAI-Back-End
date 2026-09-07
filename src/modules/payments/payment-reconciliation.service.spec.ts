@@ -149,9 +149,20 @@ describe('PaymentReconciliationService', () => {
     };
     prisma.commercePaymentAttempt.findMany.mockResolvedValue([ambiguous]);
     tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(ambiguous);
+    provider.reconcilePaymentRequest.mockResolvedValue({
+      providerPaymentIdentity: 'payment-link',
+      receivingAccount: null,
+      localOrderReference: 9001,
+      amountMinor: 125000n,
+      amountPaidMinor: 0n,
+      amountRemainingMinor: 125000n,
+      status: 'PENDING',
+      createdAt: now,
+      transactions: [],
+    });
 
     await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
-      recoveredCount: 1,
+      recoveredCount: 0,
       reviewRequiredCount: 0,
     });
 
@@ -160,7 +171,6 @@ describe('PaymentReconciliationService', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           providerPaymentIdentity: 'payment-link',
-          providerReceivingAccountHash: expect.any(String),
           status: 'pending',
         }),
       }),
@@ -170,7 +180,7 @@ describe('PaymentReconciliationService', () => {
         data: expect.objectContaining({ reasonCode: 'PROVIDER_REQUEST_RECOVERED' }),
       }),
     );
-    expect(webhook.ingestVerified).toHaveBeenCalled();
+    expect(webhook.ingestVerified).not.toHaveBeenCalled();
   });
 
   it('opens an idempotent safe review when provider facts mismatch', async () => {

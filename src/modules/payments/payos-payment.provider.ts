@@ -194,7 +194,7 @@ function normalizeStatus(value: unknown): PaymentRequestStatus {
   const amountRemainingMinor = BigInt(requireNonNegativeInteger(item.amountRemaining));
   return {
     providerPaymentIdentity: requireString(item.id, 128),
-    receivingAccount: requireString(item.accountNumber, 128),
+    receivingAccount: requireOptionalString(item.accountNumber, 128),
     localOrderReference: requireSafeInteger(item.orderCode),
     amountMinor,
     amountPaidMinor,
@@ -277,6 +277,11 @@ function requireString(value: unknown, maximum: number): string {
     throw new PaymentProviderError('malformed_response', false);
   }
   return value;
+}
+
+function requireOptionalString(value: unknown, maximum: number): string | null {
+  if (value === null || value === undefined) return null;
+  return requireString(value, maximum);
 }
 
 function requireSafeInteger(value: unknown): number {

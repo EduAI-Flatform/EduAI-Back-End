@@ -138,10 +138,9 @@ describe('PayosPaymentProvider', () => {
     });
   });
 
-  it('accepts the documented pending response without cancellation fields', async () => {
+  it('accepts the documented pending response without account or cancellation fields', async () => {
     const { client, provider } = setup();
     client.paymentRequests.get.mockResolvedValue({
-      accountNumber: 'receiving-account',
       amount: 125000,
       amountPaid: 0,
       amountRemaining: 125000,
@@ -154,6 +153,7 @@ describe('PayosPaymentProvider', () => {
 
     await expect(provider.reconcilePaymentRequest('payment-link-id')).resolves.toMatchObject({
       status: 'PENDING',
+      receivingAccount: null,
       transactions: [],
     });
   });

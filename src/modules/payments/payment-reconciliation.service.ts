@@ -293,9 +293,13 @@ export class PaymentReconciliationService {
           ...(!current.providerPaymentIdentity
             ? {
                 providerPaymentIdentity: status.providerPaymentIdentity,
-                providerReceivingAccountHash: this.receivingAccountHash(
-                  status.receivingAccount,
-                ),
+                ...(status.receivingAccount
+                  ? {
+                      providerReceivingAccountHash: this.receivingAccountHash(
+                        status.receivingAccount,
+                      ),
+                    }
+                  : {}),
               }
             : {}),
           ...(recovered
@@ -373,13 +377,16 @@ export class PaymentReconciliationService {
     },
     status: PaymentRequestStatus,
   ): VerifiedPaymentWebhook | null {
-    if (status.amountPaidMinor !== attempt.amountMinor || status.amountRemainingMinor !== 0n) return null;
+    if (
+      status.amountPaidMinor !== attempt.amountMinor ||
+      status.amountRemainingMinor !== 0n ||
+      !attempt.providerReceivingAccountHash
+    ) return null;
     const transaction = status.transactions.find(
       (item) =>
         item.amountMinor === attempt.amountMinor &&
         this.receivingAccountHash(item.receivingAccount) ===
-          (attempt.providerReceivingAccountHash ??
-            this.receivingAccountHash(status.receivingAccount)),
+          attempt.providerReceivingAccountHash,
     );
     if (!transaction || attempt.providerOrderCode === null) return null;
     return {

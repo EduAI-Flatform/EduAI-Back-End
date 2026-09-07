@@ -314,10 +314,12 @@ export class PaymentLifecycleService {
     return null;
   }
   private toVerified(attempt: Attempt, status: PaymentRequestStatus): VerifiedPaymentWebhook | null {
-    if (status.amountPaidMinor !== attempt.amountMinor || status.amountRemainingMinor !== 0n) return null;
-    const accountHash = createHmac('sha256', this.config.commerce.idempotencySecret as string)
-      .update(`payos-receiving-account:${status.receivingAccount}`).digest('hex');
-    if (attempt.providerReceivingAccountHash !== accountHash) return null;
+    if (
+      status.amountPaidMinor !== attempt.amountMinor ||
+      status.amountRemainingMinor !== 0n ||
+      !attempt.providerReceivingAccountHash
+    ) return null;
+    const accountHash = attempt.providerReceivingAccountHash;
     const transaction = status.transactions.find((item) =>
       item.amountMinor === attempt.amountMinor &&
       createHmac('sha256', this.config.commerce.idempotencySecret as string)
