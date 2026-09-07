@@ -69,7 +69,7 @@ export class PaymentLifecycleService {
         await this.reconciliation.flagAttempt(
           prepared.attempt,
           CommerceReconciliationKind.provider_fact_mismatch,
-          'PROVIDER_PAID_FACTS_INCOMPLETE',
+          this.reconciliation.verifiedFailureReason(prepared.attempt, status),
         );
         throw new ConflictException({
           error: 'PAYMENT_RECONCILIATION_REQUIRED',
@@ -134,7 +134,11 @@ export class PaymentLifecycleService {
         if (status.status === 'PAID') {
           const verified = this.toVerified(attempt as Attempt, status);
           if (!verified) {
-            await this.reconciliation.flagAttempt(attempt, CommerceReconciliationKind.provider_fact_mismatch, 'PROVIDER_PAID_FACTS_INCOMPLETE');
+            await this.reconciliation.flagAttempt(
+              attempt,
+              CommerceReconciliationKind.provider_fact_mismatch,
+              this.reconciliation.verifiedFailureReason(attempt, status),
+            );
             reviewRequiredCount += 1;
             continue;
           }

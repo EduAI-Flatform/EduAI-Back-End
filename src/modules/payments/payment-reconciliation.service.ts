@@ -89,7 +89,7 @@ export class PaymentReconciliationService {
             await this.flagAttempt(
               attempt,
               CommerceReconciliationKind.provider_fact_mismatch,
-              'PROVIDER_PAID_FACTS_INCOMPLETE',
+              this.verifiedFailureReason(attempt, status),
             );
             reviewRequired += 1;
             continue;
@@ -344,6 +344,7 @@ export class PaymentReconciliationService {
         lastCheckedAt: now,
       },
       update: {
+        reasonCode,
         lastCheckedAt: now,
         checkCount: { increment: 1 },
       },
@@ -400,6 +401,40 @@ export class PaymentReconciliationService {
       providerCode: '00',
       receivingAccount: transaction.receivingAccount,
     };
+  }
+
+  verifiedFailureReason(
+    attempt: {
+      providerReceivingAccountHash: string | null;
+      providerOrderCode: bigint | null;
+      amountMinor: bigint;
+    },
+    status: PaymentRequestStatus,
+  ): string {
+    if (
+      status.amountPaidMinor !== attempt.amountMinor ||
+      status.amountRemainingMinor !== 0n
+    ) return 'PROVIDER_PAID_AMOUNT_FACTS_INCOMPLETE';
+    if (!attempt.providerReceivingAccountHash) {
+      return 'PROVIDER_PAID_RECEIVING_ACCOUNT_HASH_MISSING';
+    }
+    const expectedAmountTransactions = status.transactions.filter(
+      (item) => item.amountMinor === attempt.amountMinor,
+    );
+    if (expectedAmountTransactions.length === 0) {
+      return 'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING';
+    }
+    if (
+      !expectedAmountTransactions.some(
+        (item) =>
+          this.receivingAccountHash(item.receivingAccount) ===
+          attempt.providerReceivingAccountHash,
+      )
+    ) return 'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH';
+    if (attempt.providerOrderCode === null) {
+      return 'PROVIDER_PAID_ORDER_REFERENCE_MISSING';
+    }
+    return 'PROVIDER_PAID_FACTS_INCOMPLETE';
   }
 
   private receivingAccountHash(value: string): string {

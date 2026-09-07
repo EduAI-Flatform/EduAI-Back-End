@@ -277,6 +277,63 @@ describe('PaymentReconciliationService', () => {
     );
   });
 
+  it.each([
+    ['paid amount facts', {}, { amountPaidMinor: 124999n }, 'PROVIDER_PAID_AMOUNT_FACTS_INCOMPLETE'],
+    [
+      'receiving account hash',
+      { providerReceivingAccountHash: null },
+      {},
+      'PROVIDER_PAID_RECEIVING_ACCOUNT_HASH_MISSING',
+    ],
+    ['transaction amount', {}, { transactions: [] }, 'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING'],
+    [
+      'transaction receiving account',
+      {},
+      { transactions: [{
+        reference: 'settlement-reference',
+        amountMinor: 125000n,
+        receivingAccount: 'different-receiving-account',
+        occurredAt: now,
+      }] },
+      'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH',
+    ],
+  ])('records the exact sanitized verified-payment failure: %s', async (_label, attemptPatch, statusPatch, reasonCode) => {
+    const { service, provider, prisma } = harness();
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([{ ...attempt, ...attemptPatch }]);
+    provider.reconcilePaymentRequest.mockResolvedValue({
+      ...(await provider.reconcilePaymentRequest('seed')),
+      ...statusPatch,
+    });
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ reasonCode }),
+      }),
+    );
+  });
+
+  it('refreshes a reconciliation reason when an existing case is checked again', async () => {
+    const { service, prisma } = harness();
+
+    await service.flagAttempt(
+      attempt,
+      CommerceReconciliationKind.provider_fact_mismatch,
+      'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH',
+    );
+
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          reasonCode: 'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH',
+        }),
+      }),
+    );
+  });
+
   it('paginates and sanitizes administrator review projections', async () => {
     const { service } = harness();
     await expect(
