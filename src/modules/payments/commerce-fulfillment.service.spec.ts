@@ -239,6 +239,16 @@ describe('CommerceFulfillmentService', () => {
     });
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(prisma.$transaction).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Function),
+      expect.objectContaining({ maxWait: 5_000, timeout: 20_000 }),
+    );
+    expect(prisma.$transaction).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Function),
+      expect.objectContaining({ maxWait: 5_000, timeout: 20_000 }),
+    );
     expect(tx.commerceOrder.update).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         fulfillmentStatus: CommerceFulfillmentStatus.failed,
