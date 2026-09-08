@@ -17,8 +17,9 @@ import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { ListPaymentReviewsDto, ResolvePaymentReviewDto, RunPaymentReconciliationDto } from './dto/payment-reconciliation.dto';
-import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus, VerifiedPaymentWebhook } from './payment-provider';
+import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus } from './payment-provider';
 import { PaymentWebhookService } from './payment-webhook.service';
+import { toVerifiedPaymentWebhook } from './payment-verified-webhook';
 
 const PROVIDER = 'payos';
 const ELIGIBLE_STATUSES = [
@@ -84,7 +85,7 @@ export class PaymentReconciliationService {
         }
         await this.persistCheckedFacts(attempt, status);
         if (status.status === 'PAID') {
-          const verified = this.toVerified(attempt, status);
+          const verified = toVerifiedPaymentWebhook(attempt, status);
           if (!verified) {
             await this.flagAttempt(
               attempt,
@@ -114,15 +115,8 @@ export class PaymentReconciliationService {
           reviewRequired += 1;
         }
       } catch (error) {
-        const kind =
-          error instanceof PaymentProviderError && error.code === 'malformed_response'
-            ? CommerceReconciliationKind.unknown_provider_status
-            : CommerceReconciliationKind.provider_outage;
-        const reason =
-          kind === CommerceReconciliationKind.unknown_provider_status
-            ? 'PROVIDER_STATUS_MALFORMED'
-            : 'PROVIDER_STATUS_UNAVAILABLE';
-        await this.flagAttempt(attempt, kind, reason);
+        const classification = this.classifyProviderError(error);
+        await this.flagAttempt(attempt, classification.kind, classification.reasonCode);
         reviewRequired += 1;
       }
     }
@@ -369,43 +363,8 @@ export class PaymentReconciliationService {
     return null;
   }
 
-  private toVerified(
-    attempt: {
-      providerPaymentIdentity: string | null;
-      providerReceivingAccountHash: string | null;
-      providerOrderCode: bigint | null;
-      amountMinor: bigint;
-    },
-    status: PaymentRequestStatus,
-  ): VerifiedPaymentWebhook | null {
-    if (
-      status.amountPaidMinor !== attempt.amountMinor ||
-      status.amountRemainingMinor !== 0n ||
-      !attempt.providerReceivingAccountHash
-    ) return null;
-    const transaction = status.transactions.find(
-      (item) =>
-        item.amountMinor === attempt.amountMinor &&
-        this.receivingAccountHash(item.receivingAccount) ===
-          attempt.providerReceivingAccountHash,
-    );
-    if (!transaction || attempt.providerOrderCode === null) return null;
-    return {
-      providerEventIdentity: transaction.reference,
-      providerPaymentIdentity: status.providerPaymentIdentity,
-      providerSettlementReference: transaction.reference,
-      localOrderReference: Number(attempt.providerOrderCode),
-      amountMinor: transaction.amountMinor,
-      currency: 'VND',
-      occurredAt: transaction.occurredAt,
-      providerCode: '00',
-      receivingAccount: transaction.receivingAccount,
-    };
-  }
-
   verifiedFailureReason(
     attempt: {
-      providerReceivingAccountHash: string | null;
       providerOrderCode: bigint | null;
       amountMinor: bigint;
     },
@@ -415,22 +374,12 @@ export class PaymentReconciliationService {
       status.amountPaidMinor !== attempt.amountMinor ||
       status.amountRemainingMinor !== 0n
     ) return 'PROVIDER_PAID_AMOUNT_FACTS_INCOMPLETE';
-    if (!attempt.providerReceivingAccountHash) {
-      return 'PROVIDER_PAID_RECEIVING_ACCOUNT_HASH_MISSING';
-    }
     const expectedAmountTransactions = status.transactions.filter(
       (item) => item.amountMinor === attempt.amountMinor,
     );
     if (expectedAmountTransactions.length === 0) {
       return 'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING';
     }
-    if (
-      !expectedAmountTransactions.some(
-        (item) =>
-          this.receivingAccountHash(item.receivingAccount) ===
-          attempt.providerReceivingAccountHash,
-      )
-    ) return 'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH';
     if (attempt.providerOrderCode === null) {
       return 'PROVIDER_PAID_ORDER_REFERENCE_MISSING';
     }
@@ -441,6 +390,47 @@ export class PaymentReconciliationService {
     return createHmac('sha256', this.config.commerce.idempotencySecret as string)
       .update(`payos-receiving-account:${value}`)
       .digest('hex');
+  }
+
+  private classifyProviderError(error: unknown): {
+    kind: CommerceReconciliationKind;
+    reasonCode: string;
+  } {
+    if (error instanceof PaymentProviderError) {
+      switch (error.code) {
+        case 'malformed_response':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_STATUS_MALFORMED',
+          };
+        case 'invalid_signature':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_STATUS_INVALID_SIGNATURE',
+          };
+        case 'rejected':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_STATUS_REJECTED',
+          };
+        case 'timeout':
+          return {
+            kind: CommerceReconciliationKind.provider_outage,
+            reasonCode: 'PROVIDER_STATUS_TIMEOUT',
+          };
+        case 'unavailable':
+          return {
+            kind: CommerceReconciliationKind.provider_outage,
+            reasonCode: 'PROVIDER_STATUS_UNAVAILABLE',
+          };
+        default:
+          break;
+      }
+    }
+    return {
+      kind: CommerceReconciliationKind.provider_outage,
+      reasonCode: 'PROVIDER_STATUS_UNAVAILABLE',
+    };
   }
 
   private reviewSelect() {

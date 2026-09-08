@@ -139,6 +139,49 @@ describe('PaymentReconciliationService', () => {
     );
   });
 
+  it('recovers a PAID payment when the provider receiver varies', async () => {
+    const { service, provider, webhook, prisma } = harness();
+    provider.reconcilePaymentRequest.mockResolvedValue({
+      ...(await provider.reconcilePaymentRequest('seed')),
+      receivingAccount: 'different-receiving-account',
+      transactions: [{
+        reference: 'settlement-reference',
+        amountMinor: 125000n,
+        receivingAccount: 'different-receiving-account',
+        occurredAt: now,
+      }],
+    });
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 1,
+      reviewRequiredCount: 0,
+    });
+    expect(webhook.ingestVerified).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerPaymentIdentity: 'payment-link',
+        providerSettlementReference: 'settlement-reference',
+        receivingAccount: 'different-receiving-account',
+      }),
+    );
+    expect(JSON.stringify(prisma.commerceReconciliationCase.upsert.mock.calls)).not.toContain(
+      'different-receiving-account',
+    );
+  });
+
+  it('recovers a PAID payment when the stored receiver fingerprint is missing', async () => {
+    const { service, prisma, webhook } = harness();
+    const missingReceiverFingerprint = { ...attempt, providerReceivingAccountHash: null };
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([missingReceiverFingerprint]);
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 1,
+      reviewRequiredCount: 0,
+    });
+    expect(webhook.ingestVerified).toHaveBeenCalledWith(
+      expect.objectContaining({ providerSettlementReference: 'settlement-reference' }),
+    );
+  });
+
   it('recovers an ambiguous create by stable provider order code before settlement', async () => {
     const { service, prisma, provider, tx, webhook } = harness();
     const ambiguous = {
@@ -213,6 +256,39 @@ describe('PaymentReconciliationService', () => {
     );
   });
 
+  it.each([
+    [
+      'payment link identity',
+      { providerPaymentIdentity: 'different-payment-link' },
+      'PROVIDER_PAYMENT_IDENTITY_MISMATCH',
+    ],
+    [
+      'order code',
+      { localOrderReference: 9002 },
+      'PROVIDER_ORDER_REFERENCE_MISMATCH',
+    ],
+  ])('does not recover a PAID payment with mismatched %s', async (_label, statusPatch, reasonCode) => {
+    const { service, provider, prisma, webhook } = harness();
+    provider.reconcilePaymentRequest.mockResolvedValue({
+      ...(await provider.reconcilePaymentRequest('seed')),
+      ...statusPatch,
+    });
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          kind: CommerceReconciliationKind.provider_fact_mismatch,
+          reasonCode,
+        }),
+      }),
+    );
+    expect(webhook.ingestVerified).not.toHaveBeenCalled();
+  });
+
   it('records only a sanitized outage reason and keeps a restart cursor', async () => {
     const { service, provider, prisma } = harness();
     prisma.commercePaymentAttempt.findMany.mockResolvedValue([
@@ -232,7 +308,7 @@ describe('PaymentReconciliationService', () => {
       expect.objectContaining({
         create: expect.objectContaining({
           kind: CommerceReconciliationKind.provider_outage,
-          reasonCode: 'PROVIDER_STATUS_UNAVAILABLE',
+          reasonCode: 'PROVIDER_STATUS_TIMEOUT',
         }),
       }),
     );
@@ -259,6 +335,48 @@ describe('PaymentReconciliationService', () => {
     );
   });
 
+  it('classifies an invalid provider response signature without recovery', async () => {
+    const { service, provider, prisma, webhook } = harness();
+    provider.reconcilePaymentRequest.mockRejectedValue(
+      new PaymentProviderError('invalid_signature', false),
+    );
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_STATUS_INVALID_SIGNATURE',
+        }),
+      }),
+    );
+    expect(webhook.ingestVerified).not.toHaveBeenCalled();
+  });
+
+  it('classifies a provider API rejection without recovery', async () => {
+    const { service, provider, prisma, webhook } = harness();
+    provider.reconcilePaymentRequest.mockRejectedValue(
+      new PaymentProviderError('rejected', false),
+    );
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_STATUS_REJECTED',
+        }),
+      }),
+    );
+    expect(webhook.ingestVerified).not.toHaveBeenCalled();
+  });
+
   it('keeps an externally paid but locally unfulfilled order in explicit review', async () => {
     const { service, webhook, prisma } = harness();
     webhook.ingestVerified.mockRejectedValue(new Error('sanitized fulfillment failure'));
@@ -279,24 +397,8 @@ describe('PaymentReconciliationService', () => {
 
   it.each([
     ['paid amount facts', {}, { amountPaidMinor: 124999n }, 'PROVIDER_PAID_AMOUNT_FACTS_INCOMPLETE'],
-    [
-      'receiving account hash',
-      { providerReceivingAccountHash: null },
-      {},
-      'PROVIDER_PAID_RECEIVING_ACCOUNT_HASH_MISSING',
-    ],
+    ['remaining amount', {}, { amountRemainingMinor: 1n }, 'PROVIDER_PAID_AMOUNT_FACTS_INCOMPLETE'],
     ['transaction amount', {}, { transactions: [] }, 'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING'],
-    [
-      'transaction receiving account',
-      {},
-      { transactions: [{
-        reference: 'settlement-reference',
-        amountMinor: 125000n,
-        receivingAccount: 'different-receiving-account',
-        occurredAt: now,
-      }] },
-      'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH',
-    ],
   ])('records the exact sanitized verified-payment failure: %s', async (_label, attemptPatch, statusPatch, reasonCode) => {
     const { service, provider, prisma } = harness();
     prisma.commercePaymentAttempt.findMany.mockResolvedValue([{ ...attempt, ...attemptPatch }]);
@@ -322,13 +424,13 @@ describe('PaymentReconciliationService', () => {
     await service.flagAttempt(
       attempt,
       CommerceReconciliationKind.provider_fact_mismatch,
-      'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH',
+      'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING',
     );
 
     expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: expect.objectContaining({
-          reasonCode: 'PROVIDER_PAID_RECEIVING_ACCOUNT_MISMATCH',
+          reasonCode: 'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING',
         }),
       }),
     );

@@ -11,9 +11,10 @@ import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentLifecycleResponseDto } from './dto/payment-lifecycle.dto';
 import { RunPaymentExpiryDto } from './dto/payment-lifecycle.dto';
-import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus, VerifiedPaymentWebhook } from './payment-provider';
+import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus } from './payment-provider';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentWebhookService } from './payment-webhook.service';
+import { toVerifiedPaymentWebhook } from './payment-verified-webhook';
 
 const OPERATION = 'payment.cancel-request';
 const KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
@@ -64,7 +65,7 @@ export class PaymentLifecycleService {
       });
     }
     if (status.status === 'PAID') {
-      const verified = this.toVerified(prepared.attempt, status);
+      const verified = toVerifiedPaymentWebhook(prepared.attempt, status);
       if (!verified) {
         await this.reconciliation.flagAttempt(
           prepared.attempt,
@@ -132,7 +133,7 @@ export class PaymentLifecycleService {
           continue;
         }
         if (status.status === 'PAID') {
-          const verified = this.toVerified(attempt as Attempt, status);
+          const verified = toVerifiedPaymentWebhook(attempt as Attempt, status);
           if (!verified) {
             await this.reconciliation.flagAttempt(
               attempt,
@@ -316,30 +317,6 @@ export class PaymentLifecycleService {
     if (attempt.providerOrderCode !== BigInt(status.localOrderReference)) return 'PROVIDER_ORDER_REFERENCE_MISMATCH';
     if (attempt.amountMinor !== status.amountMinor || attempt.currency !== 'VND') return 'PROVIDER_AMOUNT_MISMATCH';
     return null;
-  }
-  private toVerified(attempt: Attempt, status: PaymentRequestStatus): VerifiedPaymentWebhook | null {
-    if (
-      status.amountPaidMinor !== attempt.amountMinor ||
-      status.amountRemainingMinor !== 0n ||
-      !attempt.providerReceivingAccountHash
-    ) return null;
-    const accountHash = attempt.providerReceivingAccountHash;
-    const transaction = status.transactions.find((item) =>
-      item.amountMinor === attempt.amountMinor &&
-      createHmac('sha256', this.config.commerce.idempotencySecret as string)
-        .update(`payos-receiving-account:${item.receivingAccount}`).digest('hex') === accountHash);
-    if (!transaction || attempt.providerOrderCode === null) return null;
-    return {
-      providerEventIdentity: transaction.reference,
-      providerPaymentIdentity: status.providerPaymentIdentity,
-      providerSettlementReference: transaction.reference,
-      localOrderReference: Number(attempt.providerOrderCode),
-      amountMinor: transaction.amountMinor,
-      currency: 'VND',
-      occurredAt: transaction.occurredAt,
-      providerCode: '00',
-      receivingAccount: transaction.receivingAccount,
-    };
   }
   private project(order: Order): PaymentLifecycleResponseDto {
     return { orderId: order.id, orderStatus: order.status.toUpperCase(), paymentStatus: order.paymentAttempts[0]?.status.toUpperCase() ?? null };

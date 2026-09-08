@@ -89,9 +89,13 @@ PayOS 2xx acknowledgement contract without treating the sample as paid.
 
 Malformed envelopes remain HTTP 400, invalid signatures remain HTTP 401, and
 verified non-settlement provider codes remain HTTP 400. Known settlements keep
-the existing authoritative fact checks, serializable transition, duplicate
-handling, and idempotent fulfillment behavior. Do not replace these branches
-with an unconditional success response or add sample-specific identifiers.
+the existing authoritative identity, amount, currency, order, reservation,
+serializable transition, duplicate-handling, and idempotent fulfillment
+checks. A receiving-account fingerprint variance is non-authoritative
+telemetry: it may create sanitized HMAC/boolean audit evidence, but it cannot
+block an otherwise-valid settlement. Raw receiving accounts remain absent
+from persisted evidence. Do not replace these branches with an unconditional
+success response or add sample-specific identifiers.
 
 ## Activation and rollback
 
@@ -151,11 +155,12 @@ independently rate limited and each provider call completes before any database
 transaction begins.
 
 Review reasons distinguish provider outage, malformed/unknown status,
-authoritative fact mismatch, and paid-but-not-fulfilled recovery. Late and
-duplicate collections continue to use their settlement-backed cases. Provider
-identifiers, raw responses, checkout/QR payloads, receiving accounts, and
-credentials are intentionally absent from the administrator projection and
-operational evidence.
+authoritative fact mismatch, and paid-but-not-fulfilled recovery. A receiver
+fingerprint variance is informational anomaly evidence and is not a recovery
+blocker. Late and duplicate collections continue to use their settlement-
+backed cases. Provider identifiers, raw responses, checkout/QR payloads,
+receiving accounts, and credentials are intentionally absent from the
+administrator projection and operational evidence.
 
 An operator may acknowledge only non-collection operational evidence. A
 paid-but-not-fulfilled case may close only after the idempotent fulfillment

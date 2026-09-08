@@ -36,6 +36,7 @@ export const AuditAction = {
   PaymentRefundRejected: 'PAYMENT_REFUND_REJECTED',
   PaymentNotRequiredConfirmed: 'PAYMENT_NOT_REQUIRED_CONFIRMED',
   PaymentWebhookSettled: 'PAYMENT_WEBHOOK_SETTLED',
+  PaymentWebhookReceivingAccountVariance: 'PAYMENT_WEBHOOK_RECEIVING_ACCOUNT_VARIANCE',
   PaymentWebhookReconciliationRequired: 'PAYMENT_WEBHOOK_RECONCILIATION_REQUIRED',
   PaymentReconciliationChecked: 'PAYMENT_RECONCILIATION_CHECKED',
   PaymentReconciliationResolved: 'PAYMENT_RECONCILIATION_RESOLVED',

@@ -15,13 +15,16 @@ const order = (overrides: Record<string, unknown> = {}) => ({
   id: 'order-id', buyerId: 'learner-id', status: CommerceOrderStatus.pending_payment,
   paymentAttempts: [attempt], reservations: [{ id: 'reservation-id' }], ...overrides,
 });
-const providerStatus = (status: 'CANCELLED' | 'PAID' = 'CANCELLED') => ({
-  providerPaymentIdentity: 'provider-id', receivingAccount: account, localOrderReference: 42,
+const providerStatus = (
+  status: 'CANCELLED' | 'PAID' = 'CANCELLED',
+  receivingAccount = account,
+) => ({
+  providerPaymentIdentity: 'provider-id', receivingAccount, localOrderReference: 42,
   amountMinor: 100000n, amountPaidMinor: status === 'PAID' ? 100000n : 0n,
   amountRemainingMinor: status === 'PAID' ? 0n : 100000n, status,
   createdAt: new Date('2026-08-27T08:00:00Z'),
   transactions: status === 'PAID' ? [{
-    reference: 'settlement-ref', amountMinor: 100000n, receivingAccount: account,
+    reference: 'settlement-ref', amountMinor: 100000n, receivingAccount,
     occurredAt: new Date('2026-08-27T08:01:00Z'),
   }] : [],
 });
@@ -102,9 +105,9 @@ describe('PaymentLifecycleService cancellation', () => {
     expect(tx.commerceOrder.update).toHaveBeenCalled();
   });
 
-  it('routes a paid cancellation race through verified settlement instead of cancelling', async () => {
+  it('routes a paid cancellation race through verified settlement despite receiver variance', async () => {
     const { service, provider, prisma, webhook, tx } = setup();
-    provider.cancelPaymentRequest.mockResolvedValue(providerStatus('PAID'));
+    provider.cancelPaymentRequest.mockResolvedValue(providerStatus('PAID', 'different-safe-account'));
     prisma.commerceOrder.findFirst.mockResolvedValue(order({
       status: CommerceOrderStatus.confirmed,
       paymentAttempts: [{ ...attempt, status: CommercePaymentStatus.paid }],
@@ -155,7 +158,7 @@ describe('PaymentLifecycleService cancellation', () => {
   it('settles a paid expiry race and never expires the order', async () => {
     const { service, prisma, provider, webhook, tx } = setup();
     prisma.commercePaymentAttempt.findMany.mockResolvedValue([attempt]);
-    provider.cancelPaymentRequest.mockResolvedValue(providerStatus('PAID'));
+    provider.cancelPaymentRequest.mockResolvedValue(providerStatus('PAID', 'different-safe-account'));
     await expect(service.runExpiry('admin-id', { limit: 20 })).resolves.toEqual(expect.objectContaining({
       checkedCount: 1, expiredCount: 0, settledCount: 1, reviewRequiredCount: 0,
     }));

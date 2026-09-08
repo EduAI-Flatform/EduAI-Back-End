@@ -110,6 +110,12 @@ export class PaymentWebhookService {
   async ingestVerified(
     verified: VerifiedPaymentWebhook,
   ): Promise<PaymentWebhookResponseDto> {
+    if (verified.providerCode !== '00') {
+      throw new BadRequestException({
+        error: 'WEBHOOK_NOT_SETTLED',
+        message: 'Webhook does not describe an eligible settlement.',
+      });
+    }
     const response = await this.runSerializable((tx) => this.applyVerified(tx, verified));
     if ('rejected' in response) {
       throw new ConflictException({
@@ -244,6 +250,8 @@ export class PaymentWebhookService {
       return this.resultFor(existingSettlement.disposition);
     }
 
+    await this.recordReceiverVariance(tx, locked, verified);
+
     if (
       locked.status === CommercePaymentStatus.pending &&
       locked.order.status === CommerceOrderStatus.pending_payment
@@ -357,10 +365,7 @@ export class PaymentWebhookService {
           reservation.orderId === attempt.orderId &&
           reservation.buyerId === attempt.order.buyerId &&
           reservation.orderLine.orderId === attempt.orderId,
-      ) &&
-      !!attempt.providerReceivingAccountHash &&
-      attempt.providerReceivingAccountHash ===
-        this.receivingAccountHash(verified.receivingAccount)
+      )
     );
   }
 
@@ -369,6 +374,30 @@ export class PaymentWebhookService {
       'sha256',
       this.config.commerce.idempotencySecret as string,
     ).update(`payos-receiving-account:${value}`).digest('hex');
+  }
+
+  private async recordReceiverVariance(
+    tx: Prisma.TransactionClient,
+    attempt: AttemptRecord,
+    verified: VerifiedPaymentWebhook,
+  ): Promise<void> {
+    const storedFingerprint = attempt.providerReceivingAccountHash;
+    if (!storedFingerprint) return;
+
+    const observedFingerprint = this.receivingAccountHash(verified.receivingAccount);
+    if (storedFingerprint === observedFingerprint) return;
+
+    await this.audit.record({
+      actorKind: AuditActorKind.PROVIDER,
+      action: AuditAction.PaymentWebhookReceivingAccountVariance,
+      target: { type: 'commerce_order', id: attempt.orderId },
+      metadata: {
+        reasonCode: 'PROVIDER_RECEIVING_ACCOUNT_VARIANCE',
+        receiverVariance: true,
+        storedReceivingAccountFingerprint: storedFingerprint,
+        observedReceivingAccountFingerprint: observedFingerprint,
+      },
+    }, tx);
   }
 
   private async confirm(

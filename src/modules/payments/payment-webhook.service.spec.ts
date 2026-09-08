@@ -27,6 +27,9 @@ const TEST_SECRET = 'test-commerce-idempotency-secret-32-characters';
 const receivingAccountHash = createHmac('sha256', TEST_SECRET)
   .update('payos-receiving-account:receiving-account')
   .digest('hex');
+const differentReceivingAccountHash = createHmac('sha256', TEST_SECRET)
+  .update('payos-receiving-account:different-receiving-account')
+  .digest('hex');
 
 function webhookFingerprint(kind: 'event' | 'order' | 'payment', value: string | number) {
   return createHmac('sha256', TEST_SECRET)
@@ -540,17 +543,49 @@ describe('PaymentWebhookService', () => {
     expect(tx.commercePaymentEvent.create).not.toHaveBeenCalled();
   });
 
-  it('rejects a verified receiving-account mismatch without retaining the raw account', async () => {
-    const { provider, service, tx } = harness();
+  it('confirms a verified receiving-account variance with sanitized evidence', async () => {
+    const { audit, provider, service, tx } = harness();
     provider.verifyWebhook.mockResolvedValue({
       ...verified,
       receivingAccount: 'different-receiving-account',
     });
 
-    await expect(service.ingest({ data: {}, signature: 'signed' })).rejects.toMatchObject({
-      status: 409,
+    await expect(service.ingest({ data: {}, signature: 'signed' })).resolves.toEqual({
+      accepted: true,
+      result: 'CONFIRMED',
     });
-    expect(tx.commercePaymentEvent.create).not.toHaveBeenCalled();
+    expect(tx.commercePaymentEvent.create).toHaveBeenCalledTimes(1);
+    expect(tx.commerceSettlement.create).toHaveBeenCalledTimes(1);
+    expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith({
+      where: { id: 'attempt-id' },
+      data: expect.objectContaining({ status: CommercePaymentStatus.paid }),
+    });
+    expect(tx.commerceOrder.update).toHaveBeenCalledWith({
+      where: { id: 'order-id' },
+      data: expect.objectContaining({ status: CommerceOrderStatus.confirmed }),
+    });
+    expect(provider.verifyWebhook).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(tx.commercePaymentEvent.create.mock.calls, bigintReplacer)).not.toContain(
+      'different-receiving-account',
+    );
+    expect(JSON.stringify(tx.commerceSettlement.create.mock.calls, bigintReplacer)).not.toContain(
+      'different-receiving-account',
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'PAYMENT_WEBHOOK_RECEIVING_ACCOUNT_VARIANCE',
+        metadata: expect.objectContaining({
+          reasonCode: 'PROVIDER_RECEIVING_ACCOUNT_VARIANCE',
+          receiverVariance: true,
+          storedReceivingAccountFingerprint: receivingAccountHash,
+          observedReceivingAccountFingerprint: differentReceivingAccountHash,
+        }),
+      }),
+      tx,
+    );
+    expect(JSON.stringify(audit.record.mock.calls)).not.toContain(
+      'different-receiving-account',
+    );
   });
 
   it('records a second valid collection for reconciliation without fulfilling twice', async () => {
@@ -623,3 +658,7 @@ describe('PaymentWebhookService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
+
+function bigintReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
