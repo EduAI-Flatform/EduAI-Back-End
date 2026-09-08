@@ -3,15 +3,56 @@ import {
   CommerceFulfillmentStatus,
   CommerceNotificationOutboxStatus,
   CommerceOrderStatus,
+  CommercePaymentStatus,
   CommerceProductType,
+  CommerceSettlementDisposition,
+  CommerceSettlementKind,
   CourseAccessSourceType,
 } from '../../../generated/prisma/client';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
+import { PaymentRecoveryError } from './payment-recovery-error';
 
 describe('CommerceFulfillmentService', () => {
   const order = {
     id: 'order-id', buyerId: 'learner-id', status: CommerceOrderStatus.confirmed,
     fulfillmentStatus: CommerceFulfillmentStatus.not_started,
+    payableAmountMinor: 100000n,
+    currency: 'VND',
+    confirmedSettlementId: 'settlement-id',
+    confirmedSettlement: {
+      id: 'settlement-id',
+      orderId: 'order-id',
+      paymentAttemptId: 'attempt-id',
+      paymentEventId: 'event-id',
+      kind: CommerceSettlementKind.provider_collection,
+      disposition: CommerceSettlementDisposition.matched,
+      provider: 'payos',
+      providerSettlementReference: 'settlement-reference',
+      amountMinor: 100000n,
+      currency: 'VND',
+      settledAt: new Date('2026-08-27T00:00:00.000Z'),
+      paymentAttempt: {
+        id: 'attempt-id',
+        orderId: 'order-id',
+        provider: 'payos',
+        providerPaymentIdentity: 'payment-link',
+        providerOrderCode: 9001n,
+        status: CommercePaymentStatus.paid,
+        amountMinor: 100000n,
+        currency: 'VND',
+      },
+      paymentEvent: {
+        id: 'event-id',
+        paymentAttemptId: 'attempt-id',
+        provider: 'payos',
+        providerPaymentIdentity: 'payment-link',
+        providerSettlementReference: 'settlement-reference',
+        amountMinor: 100000n,
+        currency: 'VND',
+        nextStatus: CommercePaymentStatus.paid,
+        providerOccurredAt: new Date('2026-08-27T00:00:00.000Z'),
+      },
+    },
     lines: [{
       id: 'line-id', productType: CommerceProductType.course,
       productReferenceId: 'course-id',
@@ -24,6 +65,11 @@ describe('CommerceFulfillmentService', () => {
     commerceLifecycleEvent: { create: jest.fn() },
     commerceFulfillmentEffect: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
     commerceNotificationOutbox: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    commerceReconciliationCase: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+    },
     membershipSubscription: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
     serviceEntitlementGrant: {
       createMany: jest.fn(),
@@ -34,6 +80,7 @@ describe('CommerceFulfillmentService', () => {
   const courseAccess = { ensureGrant: jest.fn().mockResolvedValue({ id: 'grant-id' }) };
   const audit = { record: jest.fn() };
   const prisma: any = {
+    $transaction: jest.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx)),
     commerceNotificationOutbox: {
       findMany: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -171,6 +218,64 @@ describe('CommerceFulfillmentService', () => {
     expect(tx.commerceNotificationOutbox.createMany).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
     expect(tx.commerceOrder.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps canonical payment state committed while recording a retryable fulfillment failure', async () => {
+    courseAccess.ensureGrant.mockRejectedValueOnce(new Error('simulated grant failure'));
+
+    await expect(
+      service.fulfillConfirmedPayment(
+        order.id,
+        'settlement-id',
+        CommerceActorKind.provider,
+        null,
+      ),
+    ).rejects.toMatchObject({
+      name: 'PaymentRecoveryError',
+      phase: 'fulfillment',
+      reasonCode: 'PAYMENT_FULFILLMENT_FAILED',
+      financiallyCommitted: true,
+      settlementId: 'settlement-id',
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(tx.commerceOrder.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        fulfillmentStatus: CommerceFulfillmentStatus.failed,
+      }),
+    }));
+    expect(tx.commerceReconciliationCase.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        orderId: order.id,
+        settlementId: 'settlement-id',
+        paymentAttemptId: 'attempt-id',
+        kind: 'paid_not_fulfilled',
+        reasonCode: 'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED',
+      }),
+    });
+  });
+
+  it('fails closed when the requested settlement is not the order canonical match', async () => {
+    tx.commerceOrder.findUnique.mockResolvedValueOnce({
+      ...order,
+      confirmedSettlement: null,
+      confirmedSettlementId: null,
+    });
+
+    await expect(
+      service.fulfillConfirmedPayment(
+        order.id,
+        'settlement-id',
+        CommerceActorKind.provider,
+        null,
+      ),
+    ).rejects.toMatchObject({
+      name: 'PaymentRecoveryError',
+      phase: 'identity',
+      reasonCode: 'PAYMENT_SETTLEMENT_CONFLICT',
+    });
+    expect(courseAccess.ensureGrant).not.toHaveBeenCalled();
+    expect(tx.commerceReconciliationCase.create).not.toHaveBeenCalled();
   });
 
   it('retains a pending outbox event after notification failure and retries idempotently', async () => {

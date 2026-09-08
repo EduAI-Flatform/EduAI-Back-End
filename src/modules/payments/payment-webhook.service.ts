@@ -3,6 +3,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  HttpException,
   Inject,
   Injectable,
   ServiceUnavailableException,
@@ -32,6 +33,7 @@ import {
   VerifiedPaymentWebhook,
 } from './payment-provider';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
+import { PaymentRecoveryError } from './payment-recovery-error';
 
 const PROVIDER = 'payos';
 
@@ -74,7 +76,10 @@ type IdentityMismatchCode =
   | 'PAYMENT_STATE_MISMATCH';
 
 type WebhookTransactionResult =
-  | PaymentWebhookResponseDto
+  | (PaymentWebhookResponseDto & {
+      orderId?: string;
+      settlementId?: string;
+    })
   | {
       rejected: true;
       error: IdentityMismatchCode;
@@ -104,7 +109,11 @@ export class PaymentWebhookService {
         message: 'Webhook does not describe an eligible settlement.',
       });
     }
-    return this.ingestVerified(verified);
+    try {
+      return await this.ingestVerified(verified);
+    } catch (error) {
+      throw this.toHttpError(error);
+    }
   }
 
   async ingestVerified(
@@ -123,10 +132,26 @@ export class PaymentWebhookService {
         message: response.message,
       });
     }
-    if (response.result !== 'UNKNOWN_PAYMENT_ACKNOWLEDGED') {
-      await this.fulfillment.dispatchPending();
+    if (response.result === 'CONFIRMED') {
+      if (!response.orderId || !response.settlementId) {
+        throw new PaymentRecoveryError(
+          'identity',
+          'PAYMENT_RECOVERY_INTERNAL_ERROR',
+          false,
+          false,
+        );
+      }
+      await this.fulfillment.fulfillConfirmedPayment(
+        response.orderId,
+        response.settlementId,
+        CommerceActorKind.provider,
+        null,
+      );
     }
-    return response;
+    if (response.result !== 'UNKNOWN_PAYMENT_ACKNOWLEDGED') {
+      await this.fulfillment.dispatchPending().catch(() => undefined);
+    }
+    return { accepted: response.accepted, result: response.result };
   }
 
   private async applyVerified(
@@ -168,15 +193,11 @@ export class PaymentWebhookService {
           'PAYMENT_EVENT_IDENTITY_MISMATCH',
         );
       }
-      if (lockedPriorEvent.settlement.disposition === CommerceSettlementDisposition.matched) {
-        await this.fulfillment.fulfillConfirmedOrder(
-          tx,
-          lockedPriorEvent.settlement.orderId,
-          CommerceActorKind.provider,
-          null,
-        );
-      }
-      return this.resultFor(lockedPriorEvent.settlement.disposition);
+      return this.resultFor(
+        lockedPriorEvent.settlement.disposition,
+        lockedPriorEvent.settlement.orderId,
+        lockedPriorEvent.settlement.id,
+      );
     }
 
     const attempt = await tx.commercePaymentAttempt.findUnique({
@@ -239,15 +260,11 @@ export class PaymentWebhookService {
           'PAYMENT_REFERENCE_MISMATCH',
         );
       }
-      if (existingSettlement.disposition === CommerceSettlementDisposition.matched) {
-        await this.fulfillment.fulfillConfirmedOrder(
-          tx,
-          existingSettlement.orderId,
-          CommerceActorKind.provider,
-          null,
-        );
-      }
-      return this.resultFor(existingSettlement.disposition);
+      return this.resultFor(
+        existingSettlement.disposition,
+        existingSettlement.orderId,
+        existingSettlement.id,
+      );
     }
 
     await this.recordReceiverVariance(tx, locked, verified);
@@ -404,7 +421,7 @@ export class PaymentWebhookService {
     tx: Prisma.TransactionClient,
     attempt: AttemptRecord,
     verified: VerifiedPaymentWebhook,
-  ): Promise<PaymentWebhookResponseDto> {
+  ): Promise<PaymentWebhookResponseDto & { orderId: string; settlementId: string }> {
     const now = new Date();
     const operationId = randomUUID();
     const event = await this.createEvent(tx, attempt, verified, CommercePaymentStatus.paid);
@@ -464,13 +481,12 @@ export class PaymentWebhookService {
         provider: PROVIDER,
       },
     }, tx);
-    await this.fulfillment.fulfillConfirmedOrder(
-      tx,
-      attempt.orderId,
-      CommerceActorKind.provider,
-      null,
-    );
-    return { accepted: true, result: 'CONFIRMED' };
+    return {
+      accepted: true,
+      result: 'CONFIRMED',
+      orderId: attempt.orderId,
+      settlementId: settlement.id,
+    };
   }
 
   private async recordDuplicate(
@@ -756,9 +772,11 @@ export class PaymentWebhookService {
 
   private resultFor(
     disposition: CommerceSettlementDisposition,
-  ): PaymentWebhookResponseDto {
+    orderId?: string,
+    settlementId?: string,
+  ): WebhookTransactionResult {
     if (disposition === CommerceSettlementDisposition.matched) {
-      return { accepted: true, result: 'CONFIRMED' };
+      return { accepted: true, result: 'CONFIRMED', orderId, settlementId };
     }
     if (disposition === CommerceSettlementDisposition.late_collection) {
       return { accepted: true, result: 'LATE_PAYMENT_REVIEW' };
@@ -767,6 +785,28 @@ export class PaymentWebhookService {
   }
 
   private toHttpError(error: unknown): Error {
+    if (error instanceof HttpException) return error;
+    if (error instanceof PaymentRecoveryError) {
+      if (
+        error.phase === 'identity' &&
+        error.reasonCode === 'PAYMENT_SETTLEMENT_CONFLICT'
+      ) {
+        return new ConflictException({
+          error: error.reasonCode,
+          message: 'Verified payment references conflict with canonical local records.',
+        });
+      }
+      if (error.phase === 'fulfillment') {
+        return new ServiceUnavailableException({
+          error: 'PAYMENT_FULFILLMENT_RETRY_REQUIRED',
+          message: 'Payment was recorded; fulfillment will be retried.',
+        });
+      }
+      return new ServiceUnavailableException({
+        error: error.reasonCode,
+        message: 'Payment recovery could not be completed safely. Please retry.',
+      });
+    }
     if (error instanceof PaymentProviderError) {
       if (error.code === 'invalid_signature') {
         return new UnauthorizedException({
@@ -802,12 +842,29 @@ export class PaymentWebhookService {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         });
       } catch (error) {
-        if (
-          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-          (error.code !== 'P2034' && error.code !== 'P2002') ||
-          attempt === 2
-        ) {
-          throw error;
+        if (error instanceof PaymentRecoveryError) throw error;
+        const retryable =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          (error.code === 'P2034' || error.code === 'P2002');
+        if (!retryable) {
+          throw new PaymentRecoveryError(
+            'financial',
+            'PAYMENT_SETTLEMENT_PERSISTENCE_FAILED',
+            false,
+            false,
+            undefined,
+            error,
+          );
+        }
+        if (attempt === 2) {
+          throw new PaymentRecoveryError(
+            'financial',
+            'PAYMENT_TRANSACTION_RETRY_EXHAUSTED',
+            false,
+            true,
+            undefined,
+            error,
+          );
         }
       }
     }

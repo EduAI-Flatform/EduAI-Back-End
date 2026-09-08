@@ -9,6 +9,7 @@ import {
 import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentProvider, PaymentProviderError, VerifiedPaymentWebhook } from './payment-provider';
+import { PaymentRecoveryError } from './payment-recovery-error';
 import { PaymentWebhookService } from './payment-webhook.service';
 
 const verified: VerifiedPaymentWebhook = {
@@ -140,6 +141,7 @@ function harness() {
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const fulfillment = {
+    fulfillConfirmedPayment: jest.fn().mockResolvedValue(undefined),
     fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
     dispatchPending: jest.fn().mockResolvedValue(undefined),
   };
@@ -210,12 +212,44 @@ describe('PaymentWebhookService', () => {
       expect.objectContaining({ actorKind: AuditActorKind.PROVIDER }),
       tx,
     );
-    expect(fulfillment.fulfillConfirmedOrder).toHaveBeenCalledWith(
-      tx,
+    expect(fulfillment.fulfillConfirmedPayment).toHaveBeenCalledWith(
       'order-id',
+      'settlement-id',
       'provider',
       null,
     );
+    expect(fulfillment.fulfillConfirmedOrder).not.toHaveBeenCalled();
+  });
+
+  it('commits financial settlement before isolating a fulfillment failure', async () => {
+    const { fulfillment, prisma, service, tx } = harness();
+    const phases: string[] = [];
+    prisma.$transaction.mockImplementationOnce(async (operation: (client: typeof tx) => Promise<unknown>) => {
+      phases.push('financial-start');
+      const result = await operation(tx);
+      phases.push('financial-commit');
+      return result;
+    });
+    fulfillment.fulfillConfirmedPayment.mockImplementationOnce(async () => {
+      phases.push('fulfillment-start');
+      throw new PaymentRecoveryError(
+        'fulfillment',
+        'PAYMENT_FULFILLMENT_FAILED',
+        true,
+        true,
+        'settlement-id',
+      );
+    });
+
+    await expect(service.ingestVerified(verified)).rejects.toMatchObject({
+      name: 'PaymentRecoveryError',
+      phase: 'fulfillment',
+      reasonCode: 'PAYMENT_FULFILLMENT_FAILED',
+      financiallyCommitted: true,
+    });
+
+    expect(phases).toEqual(['financial-start', 'financial-commit', 'fulfillment-start']);
+    expect(fulfillment.dispatchPending).not.toHaveBeenCalled();
   });
 
   it('records settlement when a locked reservation remains reserved past its timestamp', async () => {
@@ -264,12 +298,13 @@ describe('PaymentWebhookService', () => {
     });
     expect(tx.commercePaymentAttempt.findUnique).not.toHaveBeenCalled();
     expect(tx.commercePaymentEvent.create).not.toHaveBeenCalled();
-    expect(fulfillment.fulfillConfirmedOrder).toHaveBeenCalledWith(
-      tx,
+    expect(fulfillment.fulfillConfirmedPayment).toHaveBeenCalledWith(
       'order-id',
+      'settlement-id',
       'provider',
       null,
     );
+    expect(fulfillment.fulfillConfirmedOrder).not.toHaveBeenCalled();
   });
 
   it('acknowledges a valid signed webhook for an unknown local payment', async () => {

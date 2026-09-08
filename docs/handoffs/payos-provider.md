@@ -162,12 +162,26 @@ backed cases. Provider identifiers, raw responses, checkout/QR payloads,
 receiving accounts, and credentials are intentionally absent from the
 administrator projection and operational evidence.
 
+Verified PayOS recovery has two transaction phases. Phase one commits the
+verified event, matched provider settlement, paid attempt, confirmed order,
+confirmed-settlement link, reservation consumption, lifecycle evidence, and
+sanitized financial audit evidence. Phase two runs through the
+settlement-scoped fulfillment entry point in its own serializable transaction.
+It revalidates the complete order-to-settlement-to-attempt-to-event chain
+under lock. A fulfillment failure cannot roll back the committed financial
+state; it records `FAILED` fulfillment plus an idempotent
+`PAID_ORDER_FULFILLMENT_RETRY_REQUIRED` case when possible. Reconciliation
+classifies financial persistence failures separately and never labels a
+pre-settlement conflict as paid-but-not-fulfilled.
+
 An operator may acknowledge only non-collection operational evidence. A
 paid-but-not-fulfilled case may close only after the idempotent fulfillment
 retry commits. Duplicate and late collections require their dedicated
 accept/refund workflow and cannot be acknowledged away. Resolution is
 optimistically versioned, role protected, and writes lifecycle plus audit
-evidence atomically; it never edits payment events or settlements.
+evidence atomically after the fulfillment retry. It never edits payment
+events or settlements. A lost handoff remains discoverable because the
+reconciliation scan selects paid attempts whose fulfillment is not complete.
 
 If PayOS is disabled or unavailable, stop polling after the bounded run and
 leave the safe outage cases open. Provider activation remains a separate

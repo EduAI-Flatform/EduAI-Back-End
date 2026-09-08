@@ -4,10 +4,13 @@ import {
   AuditActorKind,
   CommerceActorKind,
   CommerceFulfillmentStatus,
+  CommerceOrderStatus,
   CommercePaymentStatus,
   CommerceReconciliationKind,
   CommerceReconciliationResolution,
   CommerceReconciliationStatus,
+  CommerceSettlementDisposition,
+  CommerceSettlementKind,
   Prisma,
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
@@ -20,13 +23,61 @@ import { ListPaymentReviewsDto, ResolvePaymentReviewDto, RunPaymentReconciliatio
 import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus } from './payment-provider';
 import { PaymentWebhookService } from './payment-webhook.service';
 import { toVerifiedPaymentWebhook } from './payment-verified-webhook';
+import { PaymentRecoveryError } from './payment-recovery-error';
 
 const PROVIDER = 'payos';
+const PAID_ORDER_FULFILLMENT_RETRY_REQUIRED = 'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED';
 const ELIGIBLE_STATUSES = [
   CommercePaymentStatus.created,
   CommercePaymentStatus.pending,
   CommercePaymentStatus.paid,
 ] as const;
+
+const retryCaseInclude = {
+  order: {
+    select: {
+      status: true,
+      fulfillmentStatus: true,
+      confirmedSettlementId: true,
+      payableAmountMinor: true,
+      currency: true,
+    },
+  },
+  settlement: {
+    include: {
+      paymentAttempt: {
+        select: {
+          id: true,
+          orderId: true,
+          provider: true,
+          providerPaymentIdentity: true,
+          providerOrderCode: true,
+          status: true,
+          amountMinor: true,
+          currency: true,
+        },
+      },
+      paymentEvent: {
+        select: {
+          id: true,
+          paymentAttemptId: true,
+          provider: true,
+          providerPaymentIdentity: true,
+          providerSettlementReference: true,
+          amountMinor: true,
+          currency: true,
+          nextStatus: true,
+          providerOccurredAt: true,
+        },
+      },
+    },
+  },
+  paymentAttempt: { select: { id: true, orderId: true, status: true } },
+} satisfies Prisma.CommerceReconciliationCaseInclude;
+
+type RetryCase = Prisma.CommerceReconciliationCaseGetPayload<{
+  include: typeof retryCaseInclude;
+}>;
 
 @Injectable()
 export class PaymentReconciliationService {
@@ -98,11 +149,14 @@ export class PaymentReconciliationService {
           try {
             await this.webhook.ingestVerified(verified);
             recovered += 1;
-          } catch {
+          } catch (error) {
+            const classification = this.classifyRecoveryError(error);
+            if (classification.financiallyCommitted) recovered += 1;
             await this.flagAttempt(
               attempt,
-              CommerceReconciliationKind.paid_not_fulfilled,
-              'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED',
+              classification.kind,
+              classification.reasonCode,
+              classification.settlementId,
             );
             reviewRequired += 1;
           }
@@ -182,51 +236,171 @@ export class PaymentReconciliationService {
   }
 
   async resolve(actorId: string, caseId: string, input: ResolvePaymentReviewDto) {
-    const result = await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM commerce_reconciliation_cases WHERE id = ${caseId}::uuid FOR UPDATE`,
-      );
-      const current = await tx.commerceReconciliationCase.findUnique({
-        where: { id: caseId },
-        include: { order: { select: { fulfillmentStatus: true } } },
-      });
-      if (!current) throw new NotFoundException('Payment review case not found.');
-      if (current.status !== CommerceReconciliationStatus.open) {
-        throw new ConflictException('Payment review case is already resolved.');
-      }
-      if (current.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime()) {
-        throw new ConflictException({
-          error: 'RECONCILIATION_VERSION_CONFLICT',
-          message: 'Payment review case changed. Reload before resolving.',
-        });
-      }
-      if (input.resolution === 'retry_succeeded') {
+    if (input.resolution === 'retry_succeeded') {
+      const retry = await this.prisma.$transaction(async (tx) => {
+        const current = await this.loadOpenCase(tx, caseId, input.expectedUpdatedAt);
         if (current.kind !== CommerceReconciliationKind.paid_not_fulfilled) {
           throw new ConflictException('Only failed fulfillment review can be retried.');
         }
-        await this.fulfillment.fulfillConfirmedOrder(
-          tx,
-          current.orderId,
+        return this.assertRetryInvariant(current);
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      try {
+        await this.fulfillment.fulfillConfirmedPayment(
+          retry.orderId,
+          retry.settlementId,
           CommerceActorKind.user,
           actorId,
         );
-      } else if (
+      } catch (error) {
+        if (error instanceof PaymentRecoveryError && error.phase === 'identity') {
+          throw new ConflictException({
+            error: error.reasonCode,
+            message: 'Verified payment references conflict with canonical local records.',
+          });
+        }
+        throw error;
+      }
+      const result = await this.prisma.$transaction(async (tx) => {
+        const current = await this.loadOpenCase(tx, caseId, input.expectedUpdatedAt);
+        if (current.kind !== CommerceReconciliationKind.paid_not_fulfilled) {
+          throw new ConflictException('Only failed fulfillment review can be retried.');
+        }
+        this.assertRetryInvariant(current, true);
+        return this.finalizeResolution(
+          tx,
+          current,
+          actorId,
+          CommerceReconciliationResolution.retry_succeeded,
+        );
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      await this.fulfillment.dispatchPending().catch(() => undefined);
+      return {
+        id: result.id,
+        status: result.status.toUpperCase(),
+        resolution: result.resolution?.toUpperCase(),
+        resolvedAt: result.resolvedAt,
+      };
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const current = await this.loadOpenCase(tx, caseId, input.expectedUpdatedAt);
+      if (
         current.kind === CommerceReconciliationKind.duplicate_collection ||
         current.kind === CommerceReconciliationKind.late_payment ||
         current.kind === CommerceReconciliationKind.paid_not_fulfilled
       ) {
         throw new ConflictException('Financial collection review requires its dedicated resolution workflow.');
       }
-      const operationId = randomUUID();
+      return this.finalizeResolution(
+        tx,
+        current,
+        actorId,
+        CommerceReconciliationResolution.acknowledged,
+      );
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return { id: result.id, status: result.status.toUpperCase(), resolution: result.resolution?.toUpperCase(), resolvedAt: result.resolvedAt };
+  }
+
+  private async loadOpenCase(
+    tx: Prisma.TransactionClient,
+    caseId: string,
+    expectedUpdatedAt: string,
+  ): Promise<RetryCase> {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM commerce_reconciliation_cases WHERE id = ${caseId}::uuid FOR UPDATE`,
+    );
+    const current = await tx.commerceReconciliationCase.findUnique({
+      where: { id: caseId },
+      include: retryCaseInclude,
+    });
+    if (!current) throw new NotFoundException('Payment review case not found.');
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${current.orderId}::uuid FOR UPDATE`,
+    );
+    const lockedCurrent = await tx.commerceReconciliationCase.findUnique({
+      where: { id: caseId },
+      include: retryCaseInclude,
+    });
+    if (!lockedCurrent) throw new NotFoundException('Payment review case not found.');
+    if (lockedCurrent.status !== CommerceReconciliationStatus.open) {
+      throw new ConflictException('Payment review case is already resolved.');
+    }
+    if (lockedCurrent.updatedAt.getTime() !== new Date(expectedUpdatedAt).getTime()) {
+      throw new ConflictException({
+        error: 'RECONCILIATION_VERSION_CONFLICT',
+        message: 'Payment review case changed. Reload before resolving.',
+      });
+    }
+    return lockedCurrent;
+  }
+
+  private assertRetryInvariant(
+    current: RetryCase,
+    requireFulfilled = false,
+  ): { orderId: string; settlementId: string } {
+    const settlement = current.settlement;
+    const paymentAttempt = settlement?.paymentAttempt;
+    const paymentEvent = settlement?.paymentEvent;
+    if (
+      current.kind !== CommerceReconciliationKind.paid_not_fulfilled ||
+      !current.settlementId ||
+      !settlement ||
+      settlement.id !== current.settlementId ||
+      settlement.orderId !== current.orderId ||
+      current.paymentAttemptId !== paymentAttempt?.id ||
+      settlement.paymentAttemptId !== paymentAttempt?.id ||
+      settlement.kind !== CommerceSettlementKind.provider_collection ||
+      settlement.disposition !== CommerceSettlementDisposition.matched ||
+      settlement.provider !== PROVIDER ||
+      !settlement.providerSettlementReference ||
+      !settlement.paymentEventId ||
+      !paymentAttempt ||
+      paymentAttempt.orderId !== current.orderId ||
+      paymentAttempt.provider !== PROVIDER ||
+      !paymentAttempt.providerPaymentIdentity ||
+      paymentAttempt.providerOrderCode === null ||
+      paymentAttempt.status !== CommercePaymentStatus.paid ||
+      !paymentEvent ||
+      paymentEvent.id !== settlement.paymentEventId ||
+      paymentEvent.paymentAttemptId !== paymentAttempt.id ||
+      paymentEvent.provider !== PROVIDER ||
+      paymentEvent.providerPaymentIdentity !== paymentAttempt.providerPaymentIdentity ||
+      paymentEvent.providerSettlementReference !== settlement.providerSettlementReference ||
+      paymentEvent.amountMinor !== settlement.amountMinor ||
+      paymentEvent.currency !== settlement.currency ||
+      paymentEvent.nextStatus !== CommercePaymentStatus.paid ||
+      paymentEvent.providerOccurredAt?.getTime() !== settlement.settledAt.getTime() ||
+      paymentAttempt.amountMinor !== settlement.amountMinor ||
+      paymentAttempt.currency !== settlement.currency ||
+      settlement.amountMinor !== current.order.payableAmountMinor ||
+      settlement.currency !== current.order.currency ||
+      current.order.status !== CommerceOrderStatus.confirmed ||
+      current.order.confirmedSettlementId !== settlement.id ||
+      (requireFulfilled &&
+        current.order.fulfillmentStatus !== CommerceFulfillmentStatus.fulfilled)
+    ) {
+      throw new ConflictException({
+        error: 'PAYMENT_SETTLEMENT_CONFLICT',
+        message: 'Verified payment references conflict with canonical local records.',
+      });
+    }
+    return { orderId: current.orderId, settlementId: settlement.id };
+  }
+
+  private finalizeResolution(
+    tx: Prisma.TransactionClient,
+    current: RetryCase,
+    actorId: string,
+    resolution: CommerceReconciliationResolution,
+  ) {
+    const operationId = randomUUID();
+    return (async () => {
       const updated = await tx.commerceReconciliationCase.update({
-        where: { id: caseId },
+        where: { id: current.id },
         data: {
           status: CommerceReconciliationStatus.resolved,
           statusOperationId: operationId,
-          resolution:
-            input.resolution === 'retry_succeeded'
-              ? CommerceReconciliationResolution.retry_succeeded
-              : CommerceReconciliationResolution.acknowledged,
+          resolution,
           resolvedById: actorId,
           resolvedAt: new Date(),
         },
@@ -234,14 +408,14 @@ export class PaymentReconciliationService {
       await tx.commerceLifecycleEvent.create({
         data: {
           entityType: 'reconciliation',
-          entityId: caseId,
+          entityId: current.id,
           previousStatus: CommerceReconciliationStatus.open,
           nextStatus: CommerceReconciliationStatus.resolved,
           actorKind: CommerceActorKind.user,
           actorId,
           operationId,
           reasonCode:
-            input.resolution === 'retry_succeeded'
+            resolution === CommerceReconciliationResolution.retry_succeeded
               ? 'FULFILLMENT_RETRY_SUCCEEDED'
               : 'OPERATOR_ACKNOWLEDGED',
         },
@@ -249,18 +423,16 @@ export class PaymentReconciliationService {
       await this.audit.record({
         actorId,
         action: AuditAction.PaymentReconciliationResolved,
-        target: { type: 'commerce_reconciliation_case', id: caseId },
+        target: { type: 'commerce_reconciliation_case', id: current.id },
         metadata: {
           operationId,
           kind: current.kind.toUpperCase(),
           reasonCode: current.reasonCode,
-          resolution: input.resolution.toUpperCase(),
+          resolution: resolution.toUpperCase(),
         },
       }, tx);
       return updated;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    if (input.resolution === 'retry_succeeded') await this.fulfillment.dispatchPending();
-    return { id: result.id, status: result.status.toUpperCase(), resolution: result.resolution?.toUpperCase(), resolvedAt: result.resolvedAt };
+    })();
   }
 
   private async persistCheckedFacts(
@@ -325,20 +497,33 @@ export class PaymentReconciliationService {
     attempt: { id: string; orderId: string },
     kind: CommerceReconciliationKind,
     reasonCode: string,
+    settlementId?: string,
   ) {
     const now = new Date();
+    const linkedSettlementId =
+      kind === CommerceReconciliationKind.paid_not_fulfilled ? settlementId : undefined;
+    const safeReasonCode =
+      kind === CommerceReconciliationKind.paid_not_fulfilled
+        ? PAID_ORDER_FULFILLMENT_RETRY_REQUIRED
+        : reasonCode;
+    const sourceKey = [
+      attempt.id,
+      kind,
+      ...(linkedSettlementId ? [linkedSettlementId] : []),
+    ].join(':');
     await this.prisma.commerceReconciliationCase.upsert({
-      where: { sourceKey: `${attempt.id}:${kind}` },
+      where: { sourceKey },
       create: {
         orderId: attempt.orderId,
+        ...(linkedSettlementId ? { settlementId: linkedSettlementId } : {}),
         paymentAttemptId: attempt.id,
         kind,
-        reasonCode,
-        sourceKey: `${attempt.id}:${kind}`,
+        reasonCode: safeReasonCode,
+        sourceKey,
         lastCheckedAt: now,
       },
       update: {
-        reasonCode,
+        reasonCode: safeReasonCode,
         lastCheckedAt: now,
         checkCount: { increment: 1 },
       },
@@ -384,6 +569,41 @@ export class PaymentReconciliationService {
       return 'PROVIDER_PAID_ORDER_REFERENCE_MISSING';
     }
     return 'PROVIDER_PAID_FACTS_INCOMPLETE';
+  }
+
+  private classifyRecoveryError(error: unknown): {
+    kind: CommerceReconciliationKind;
+    reasonCode: string;
+    financiallyCommitted: boolean;
+    settlementId?: string;
+  } {
+    if (error instanceof PaymentRecoveryError) {
+      if (error.phase === 'fulfillment') {
+        return {
+          kind: CommerceReconciliationKind.paid_not_fulfilled,
+          reasonCode: PAID_ORDER_FULFILLMENT_RETRY_REQUIRED,
+          financiallyCommitted: error.financiallyCommitted,
+          settlementId: error.settlementId,
+        };
+      }
+      return {
+        kind: CommerceReconciliationKind.provider_fact_mismatch,
+        reasonCode: error.reasonCode,
+        financiallyCommitted: false,
+      };
+    }
+    if (error instanceof ConflictException) {
+      return {
+        kind: CommerceReconciliationKind.provider_fact_mismatch,
+        reasonCode: 'PAYMENT_SETTLEMENT_CONFLICT',
+        financiallyCommitted: false,
+      };
+    }
+    return {
+      kind: CommerceReconciliationKind.provider_fact_mismatch,
+      reasonCode: 'PAYMENT_RECOVERY_INTERNAL_ERROR',
+      financiallyCommitted: false,
+    };
   }
 
   private receivingAccountHash(value: string): string {

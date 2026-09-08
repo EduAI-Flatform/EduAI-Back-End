@@ -4,6 +4,7 @@ import {
   CommerceReconciliationStatus,
 } from '../../../generated/prisma/client';
 import { PaymentProviderError } from './payment-provider';
+import { PaymentRecoveryError } from './payment-recovery-error';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 
 const now = new Date('2026-08-27T00:00:00.000Z');
@@ -102,6 +103,7 @@ function harness() {
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
   const webhook = { ingestVerified: jest.fn().mockResolvedValue({ accepted: true }) };
   const fulfillment = {
+    fulfillConfirmedPayment: jest.fn().mockResolvedValue(undefined),
     fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
     dispatchPending: jest.fn().mockResolvedValue(undefined),
   };
@@ -379,7 +381,41 @@ describe('PaymentReconciliationService', () => {
 
   it('keeps an externally paid but locally unfulfilled order in explicit review', async () => {
     const { service, webhook, prisma } = harness();
-    webhook.ingestVerified.mockRejectedValue(new Error('sanitized fulfillment failure'));
+    webhook.ingestVerified.mockRejectedValue(
+      new PaymentRecoveryError(
+        'fulfillment',
+        'PAYMENT_FULFILLMENT_FAILED',
+        true,
+        true,
+        'settlement-id',
+      ),
+    );
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 1,
+      reviewRequiredCount: 1,
+    });
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          kind: CommerceReconciliationKind.paid_not_fulfilled,
+          reasonCode: 'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED',
+          settlementId: 'settlement-id',
+        }),
+      }),
+    );
+  });
+
+  it('classifies financial settlement persistence failure without opening a paid-not-fulfilled case', async () => {
+    const { service, webhook, prisma } = harness();
+    webhook.ingestVerified.mockRejectedValue(
+      new PaymentRecoveryError(
+        'financial',
+        'PAYMENT_SETTLEMENT_PERSISTENCE_FAILED',
+        false,
+        false,
+      ),
+    );
 
     await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
       recoveredCount: 0,
@@ -388,10 +424,13 @@ describe('PaymentReconciliationService', () => {
     expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
-          kind: CommerceReconciliationKind.paid_not_fulfilled,
-          reasonCode: 'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED',
+          kind: CommerceReconciliationKind.provider_fact_mismatch,
+          reasonCode: 'PAYMENT_SETTLEMENT_PERSISTENCE_FAILED',
         }),
       }),
+    );
+    expect(JSON.stringify(prisma.commerceReconciliationCase.upsert.mock.calls)).not.toContain(
+      'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED',
     );
   });
 
@@ -463,6 +502,120 @@ describe('PaymentReconciliationService', () => {
       expect.objectContaining({ action: 'PAYMENT_RECONCILIATION_RESOLVED' }),
       tx,
     );
+  });
+
+  it('retries fulfillment outside case resolution and closes only after canonical fulfillment', async () => {
+    const { service, tx, fulfillment, prisma, review } = harness();
+    const canonicalReview = {
+      ...review,
+      orderId: attempt.orderId,
+      kind: CommerceReconciliationKind.paid_not_fulfilled,
+      settlementId: 'settlement-id',
+      paymentAttemptId: attempt.id,
+      order: {
+        ...review.order,
+        status: 'confirmed',
+        confirmedSettlementId: 'settlement-id',
+        fulfillmentStatus: 'failed',
+      },
+      settlement: {
+        id: 'settlement-id',
+        orderId: attempt.orderId,
+        paymentAttemptId: attempt.id,
+        paymentEventId: 'event-id',
+        kind: 'provider_collection',
+        disposition: 'matched',
+        provider: 'payos',
+        providerSettlementReference: 'settlement-reference',
+        amountMinor: 125000n,
+        currency: 'VND',
+        settledAt: now,
+        paymentAttempt: {
+          id: attempt.id,
+          orderId: attempt.orderId,
+          provider: 'payos',
+          providerPaymentIdentity: 'payment-link',
+          providerOrderCode: 9001n,
+          status: 'paid',
+          amountMinor: 125000n,
+          currency: 'VND',
+        },
+        paymentEvent: {
+          id: 'event-id',
+          paymentAttemptId: attempt.id,
+          provider: 'payos',
+          providerPaymentIdentity: 'payment-link',
+          providerSettlementReference: 'settlement-reference',
+          amountMinor: 125000n,
+          currency: 'VND',
+          nextStatus: 'paid',
+          providerOccurredAt: now,
+        },
+      },
+    };
+    tx.commerceReconciliationCase.findUnique
+      .mockReset()
+      .mockResolvedValueOnce(canonicalReview)
+      .mockResolvedValueOnce(canonicalReview)
+      .mockResolvedValueOnce({
+        ...canonicalReview,
+        order: {
+          ...canonicalReview.order,
+          fulfillmentStatus: 'fulfilled',
+        },
+      })
+      .mockResolvedValueOnce({
+        ...canonicalReview,
+        order: {
+          ...canonicalReview.order,
+          fulfillmentStatus: 'fulfilled',
+        },
+      });
+    tx.commerceReconciliationCase.update.mockResolvedValue({
+      ...canonicalReview,
+      status: 'resolved',
+      resolution: 'retry_succeeded',
+      resolvedAt: now,
+    });
+
+    await expect(service.resolve('admin-id', reviewId(), {
+      resolution: 'retry_succeeded',
+      expectedUpdatedAt: now.toISOString(),
+    })).resolves.toMatchObject({
+      status: 'RESOLVED',
+      resolution: 'RETRY_SUCCEEDED',
+    });
+
+    expect(fulfillment.fulfillConfirmedPayment).toHaveBeenCalledWith(
+      attempt.orderId,
+      'settlement-id',
+      'user',
+      'admin-id',
+    );
+    expect(fulfillment.fulfillConfirmedOrder).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not grant access for a legacy paid-not-fulfilled case without canonical settlement evidence', async () => {
+    const { service, tx, fulfillment, review } = harness();
+    tx.commerceReconciliationCase.findUnique.mockResolvedValue({
+      ...review,
+      kind: CommerceReconciliationKind.paid_not_fulfilled,
+      paymentAttemptId: attempt.id,
+      settlementId: null,
+      order: {
+        ...review.order,
+        status: 'pending_payment',
+      },
+    });
+
+    await expect(service.resolve('admin-id', reviewId(), {
+      resolution: 'retry_succeeded',
+      expectedUpdatedAt: now.toISOString(),
+    })).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'PAYMENT_SETTLEMENT_CONFLICT' }),
+    });
+    expect(fulfillment.fulfillConfirmedPayment).not.toHaveBeenCalled();
   });
 });
 
