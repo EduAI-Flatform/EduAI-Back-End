@@ -86,6 +86,8 @@ type CanonicalPayment = {
 
 const PROVIDER = 'payos';
 const PAID_ORDER_FULFILLMENT_RETRY_REQUIRED = 'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED';
+const FULFILLMENT_TRANSACTION_MAX_WAIT_MS = 5_000;
+const FULFILLMENT_TRANSACTION_TIMEOUT_MS = 20_000;
 
 @Injectable()
 export class CommerceFulfillmentService {
@@ -656,6 +658,8 @@ export class CommerceFulfillmentService {
       try {
         return await this.prisma.$transaction(operation, {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: FULFILLMENT_TRANSACTION_MAX_WAIT_MS,
+          timeout: FULFILLMENT_TRANSACTION_TIMEOUT_MS,
         });
       } catch (error) {
         const retryable =
