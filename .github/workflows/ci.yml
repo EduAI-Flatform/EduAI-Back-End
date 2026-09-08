@@ -42,6 +42,7 @@ jobs:
           modules/payments/payment-lifecycle.service.spec.ts
           modules/payments/payment-reconciliation.service.spec.ts
           modules/payments/commerce-fulfillment.service.spec.ts
+          modules/payments/payment-recovery-error.spec.ts
 
       - name: Audit endpoint authorization
         run: npm run security:audit-endpoints
