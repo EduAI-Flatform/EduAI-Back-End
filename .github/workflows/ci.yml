@@ -44,6 +44,11 @@ jobs:
           modules/payments/commerce-fulfillment.service.spec.ts
           modules/payments/payment-recovery-error.spec.ts
 
+      - name: Commerce lifecycle PostgreSQL regression
+        run: >-
+          npm run test:demo-data -- --runInBand
+          commerce-lifecycle-multi-transition-postgres.spec.ts
+
       - name: Audit endpoint authorization
         run: npm run security:audit-endpoints
 
