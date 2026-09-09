@@ -10,6 +10,7 @@ import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { DisabledPaymentProvider } from './disabled-payment.provider';
 import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider';
 import { PayosClientPort, PayosPaymentProvider } from './payos-payment.provider';
+import { PaymentExpiryScheduler } from './payment-expiry.scheduler';
 import { PaymentRequestController } from './payment-request.controller';
 import { PaymentRequestService } from './payment-request.service';
 import { PaymentWebhookController } from './payment-webhook.controller';
@@ -32,6 +33,7 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
     CommerceFulfillmentService,
     PaymentReconciliationService,
     PaymentLifecycleService,
+    PaymentExpiryScheduler,
     PaymentRefundService,
     DisabledPaymentProvider,
     {
