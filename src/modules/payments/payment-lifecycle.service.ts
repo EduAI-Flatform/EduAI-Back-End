@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import {
+  AuditActorKind,
   CommerceActorKind, CommerceIdempotencyStatus, CommerceLifecycleEntityType,
   CommerceOrderStatus, CommercePaymentStatus, CommerceReconciliationKind,
   CommerceReservationStatus, Prisma,
@@ -24,6 +25,11 @@ const include = {
 } satisfies Prisma.CommerceOrderInclude;
 type Order = Prisma.CommerceOrderGetPayload<{ include: typeof include }>;
 type Attempt = Order['paymentAttempts'][number];
+type LifecycleActor = {
+  kind: CommerceActorKind;
+  id: string | null;
+  auditKind: AuditActorKind;
+};
 
 @Injectable()
 export class PaymentLifecycleService {
@@ -99,7 +105,8 @@ export class PaymentLifecycleService {
     return this.project(await this.serializable((tx) => this.finish(tx, learnerId, prepared.attempt.id, status)));
   }
 
-  async runExpiry(actorId: string, input: RunPaymentExpiryDto) {
+  async runExpiry(actorId: string | null, input: RunPaymentExpiryDto) {
+    const actor = this.expiryActor(actorId);
     const attempts = await this.prisma.commercePaymentAttempt.findMany({
       where: {
         id: input.cursor ? { gt: input.cursor } : undefined,
@@ -152,7 +159,7 @@ export class PaymentLifecycleService {
           reviewRequiredCount += 1;
           continue;
         }
-        await this.serializable((tx) => this.finishExpiry(tx, actorId, attempt.id, status));
+        await this.serializable((tx) => this.finishExpiry(tx, actor, attempt.id, status));
         expiredCount += 1;
       } catch (error) {
         await this.reconciliation.flagAttempt(
@@ -168,7 +175,8 @@ export class PaymentLifecycleService {
       }
     }
     await this.audit.record({
-      actorId,
+      actorKind: actor.auditKind,
+      ...(actor.id ? { actorId: actor.id } : {}),
       action: AuditAction.PaymentExpiryChecked,
       target: { type: 'commerce_payment_expiry_run', id: randomUUID() },
       metadata: {
@@ -202,7 +210,7 @@ export class PaymentLifecycleService {
     if (order.status !== CommerceOrderStatus.pending_payment) {
       throw new ConflictException({ error: 'ORDER_NOT_CANCELLABLE', message: 'Order cannot be cancelled.' });
     }
-    if (!attempt) order = await this.closeOrder(tx, order, learnerId, CommerceOrderStatus.cancelled, null);
+    if (!attempt) order = await this.closeOrder(tx, order, this.userActor(learnerId), CommerceOrderStatus.cancelled, null);
     else if (attempt.status !== CommercePaymentStatus.pending || !attempt.providerPaymentIdentity) {
       throw new ConflictException({ error: 'PAYMENT_RECONCILIATION_REQUIRED', message: 'Payment cancellation requires administrator review.' });
     }
@@ -245,12 +253,17 @@ export class PaymentLifecycleService {
       actorKind: CommerceActorKind.user, actorId: learnerId, operationId,
       reasonCode: 'LEARNER_CANCELLATION_PROVIDER_CONFIRMED',
     } });
-    return this.closeOrder(tx, order, learnerId,
+    return this.closeOrder(tx, order, this.userActor(learnerId),
       status.status === 'EXPIRED' ? CommerceOrderStatus.expired : CommerceOrderStatus.cancelled,
       attempt.id);
   }
 
-  private async finishExpiry(tx: Prisma.TransactionClient, actorId: string, attemptId: string, status: PaymentRequestStatus): Promise<Order> {
+  private async finishExpiry(
+    tx: Prisma.TransactionClient,
+    actor: LifecycleActor,
+    attemptId: string,
+    status: PaymentRequestStatus,
+  ): Promise<Order> {
     await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${attemptId}::uuid FOR UPDATE`);
     const attempt = await tx.commercePaymentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     const order = await tx.commerceOrder.findUniqueOrThrow({ where: { id: attempt.orderId }, include });
@@ -269,14 +282,19 @@ export class PaymentLifecycleService {
     await tx.commerceLifecycleEvent.create({ data: {
       entityType: CommerceLifecycleEntityType.payment, entityId: attempt.id,
       previousStatus: CommercePaymentStatus.pending, nextStatus: nextPayment,
-      actorKind: CommerceActorKind.user, actorId, operationId,
+      actorKind: actor.kind, actorId: actor.id, operationId,
       reasonCode: 'PAYMENT_WINDOW_EXPIRED_PROVIDER_CONFIRMED',
     } });
-    return this.closeOrder(tx, order, actorId, CommerceOrderStatus.expired, attempt.id);
+    return this.closeOrder(tx, order, actor, CommerceOrderStatus.expired, attempt.id);
   }
 
-  private async closeOrder(tx: Prisma.TransactionClient, order: Order, learnerId: string,
-    nextStatus: 'cancelled' | 'expired', attemptId: string | null): Promise<Order> {
+  private async closeOrder(
+    tx: Prisma.TransactionClient,
+    order: Order,
+    actor: LifecycleActor,
+    nextStatus: 'cancelled' | 'expired',
+    attemptId: string | null,
+  ): Promise<Order> {
     const now = new Date();
     for (const reservation of order.reservations) {
       const operationId = randomUUID();
@@ -288,7 +306,7 @@ export class PaymentLifecycleService {
       await tx.commerceLifecycleEvent.create({ data: {
         entityType: CommerceLifecycleEntityType.reservation, entityId: reservation.id,
         previousStatus: CommerceReservationStatus.reserved, nextStatus: next,
-        actorKind: CommerceActorKind.user, actorId: learnerId, operationId,
+        actorKind: actor.kind, actorId: actor.id, operationId,
         reasonCode: nextStatus === CommerceOrderStatus.expired ? 'ORDER_EXPIRED' : 'ORDER_CANCELLED',
       } });
     }
@@ -300,16 +318,27 @@ export class PaymentLifecycleService {
     await tx.commerceLifecycleEvent.create({ data: {
       entityType: CommerceLifecycleEntityType.order, entityId: order.id,
       previousStatus: CommerceOrderStatus.pending_payment, nextStatus,
-      actorKind: CommerceActorKind.user, actorId: learnerId, operationId,
+      actorKind: actor.kind, actorId: actor.id, operationId,
       reasonCode: nextStatus === CommerceOrderStatus.expired ? 'PAYMENT_WINDOW_EXPIRED' : 'LEARNER_CANCELLED',
     } });
     await this.audit.record({
-      actorId: learnerId,
+      actorKind: actor.auditKind,
+      ...(actor.id ? { actorId: actor.id } : {}),
       action: nextStatus === CommerceOrderStatus.expired ? AuditAction.PaymentRequestExpired : AuditAction.PaymentRequestCancelled,
       target: { type: 'commerce_order', id: order.id },
       metadata: { operationId, previousStatus: 'PENDING_PAYMENT', nextStatus: nextStatus.toUpperCase(), paymentAttemptId: attemptId },
     }, tx);
     return tx.commerceOrder.findUniqueOrThrow({ where: { id: order.id }, include });
+  }
+
+  private userActor(actorId: string): LifecycleActor {
+    return { kind: CommerceActorKind.user, id: actorId, auditKind: AuditActorKind.USER };
+  }
+
+  private expiryActor(actorId: string | null): LifecycleActor {
+    return actorId
+      ? this.userActor(actorId)
+      : { kind: CommerceActorKind.system, id: null, auditKind: AuditActorKind.SYSTEM };
   }
 
   private factConcern(attempt: Attempt, status: PaymentRequestStatus): string | null {
