@@ -52,6 +52,69 @@ describe('PaymentRecoveryError', () => {
     expect(error.message).not.toContain('sensitive values');
   });
 
+  it('extracts only safe nested DriverAdapterError cause fields', () => {
+    class DriverAdapterError extends Error {
+      cause = {
+        kind: 'postgres',
+        code: '23514',
+        originalCode: '23514',
+        originalMessage: 'constraint failed with account 123456789',
+        message: 'secret database details',
+        constraint: { fields: ['sensitive_field'] },
+      };
+    }
+
+    const error = new PaymentRecoveryError(
+      'fulfillment',
+      'PAYMENT_RECOVERY_INTERNAL_ERROR',
+      true,
+      true,
+      'settlement-id',
+      new DriverAdapterError('adapter error'),
+    );
+
+    expect(error.diagnostic).toEqual({
+      causeClass: 'DriverAdapterError',
+      databaseCode: '23514',
+      driverKind: 'postgres',
+      category: 'database',
+    });
+    expect(error.message).toContain('cause=DriverAdapterError');
+    expect(error.message).toContain('db=23514');
+    expect(error.message).toContain('driver=postgres');
+    expect(error.message).not.toContain('123456789');
+    expect(error.message).not.toContain('sensitive_field');
+    expect(JSON.stringify(error.diagnostic)).not.toContain('originalMessage');
+  });
+
+  it('extracts a safe adapter kind without copying unique constraint details', () => {
+    class DriverAdapterError extends Error {
+      cause = {
+        kind: 'UniqueConstraintViolation',
+        constraint: { fields: ['email', 'accountNumber'] },
+      };
+    }
+
+    const error = new PaymentRecoveryError(
+      'fulfillment',
+      'PAYMENT_FULFILLMENT_FAILED',
+      true,
+      true,
+      'settlement-id',
+      new DriverAdapterError('duplicate sensitive value'),
+    );
+
+    expect(error.diagnostic).toEqual({
+      causeClass: 'DriverAdapterError',
+      driverKind: 'UniqueConstraintViolation',
+      category: 'application',
+    });
+    expect(error.message).toContain('driver=UniqueConstraintViolation');
+    expect(error.message).not.toContain('email');
+    expect(error.message).not.toContain('accountNumber');
+    expect(error.message).not.toContain('duplicate sensitive value');
+  });
+
   it('does not expose arbitrary non-code fields from unknown objects', () => {
     const error = new PaymentRecoveryError(
       'fulfillment',
