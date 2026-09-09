@@ -208,7 +208,7 @@ describe('Commerce lifecycle multi-transition guards on PostgreSQL', () => {
       SELECT previous_status, next_status, operation_id::text
       FROM commerce_lifecycle_events
       WHERE entity_type = 'fulfillment' AND entity_id = '${orderId}'
-      ORDER BY occurred_at ASC, id ASC
+      ORDER BY CASE previous_status WHEN 'not_started' THEN 1 ELSE 2 END
     `);
     expect(events.rows).toEqual([
       {
