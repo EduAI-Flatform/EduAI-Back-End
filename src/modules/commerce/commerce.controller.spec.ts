@@ -3,7 +3,7 @@ import { RoleName } from '../../../generated/prisma/client';
 import { ROLES_KEY } from '../auth/roles.decorator';
 import { CommerceController } from './commerce.controller';
 
-describe('CommerceController cart routes', () => {
+describe('CommerceController learner routes', () => {
   function createController() {
     const service = {
       addCourse: jest.fn().mockResolvedValue({ id: 'cart-id' }),
@@ -12,10 +12,19 @@ describe('CommerceController cart routes', () => {
       removeCourse: jest.fn().mockResolvedValue({ id: 'cart-id' }),
     };
     const orderService = { createOrder: jest.fn().mockResolvedValue({ id: 'order-id' }) };
+    const orderHistoryService = {
+      list: jest.fn().mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }),
+      get: jest.fn().mockResolvedValue({ id: 'order-id' }),
+    };
     return {
-      controller: new CommerceController(service as never, orderService as never),
+      controller: new CommerceController(
+        service as never,
+        orderService as never,
+        orderHistoryService as never,
+      ),
       service,
       orderService,
+      orderHistoryService,
     };
   }
 
@@ -44,10 +53,28 @@ describe('CommerceController cart routes', () => {
     );
   });
 
+  it('lists and reads only the authenticated learner order history', async () => {
+    const { controller, orderHistoryService } = createController();
+    const query = { page: 2, pageSize: 10 };
+
+    await controller.listOrders('student-id', query);
+    await controller.getOrder('student-id', '11111111-1111-4111-8111-111111111111');
+
+    expect(orderHistoryService.list).toHaveBeenCalledWith('student-id', query);
+    expect(orderHistoryService.get).toHaveBeenCalledWith(
+      'student-id',
+      '11111111-1111-4111-8111-111111111111',
+    );
+  });
+
   it('requires the student role and authentication guards', () => {
     expect(Reflect.getMetadata(ROLES_KEY, CommerceController.prototype.getCart)).toEqual([
       RoleName.student,
     ]);
+    expect(Reflect.getMetadata(ROLES_KEY, CommerceController.prototype.listOrders)).toEqual([
+      RoleName.student,
+    ]);
     expect(Reflect.getMetadata(GUARDS_METADATA, CommerceController.prototype.addCourse)).toHaveLength(2);
+    expect(Reflect.getMetadata(GUARDS_METADATA, CommerceController.prototype.getOrder)).toHaveLength(2);
   });
 });
