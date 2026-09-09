@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -26,6 +27,12 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { CartResponseDto } from './dto/commerce-response.dto';
 import { CommerceService } from './commerce.service';
 import { CommerceOrderService } from './commerce-order.service';
+import { CommerceOrderHistoryService } from './commerce-order-history.service';
+import {
+  ListOrdersQueryDto,
+  OrderHistoryItemResponseDto,
+  OrderHistoryPageResponseDto,
+} from './dto/order-history.dto';
 import { OrderResponseDto } from './dto/order-response.dto';
 
 @ApiTags('Commerce')
@@ -35,6 +42,7 @@ export class CommerceController {
   constructor(
     private readonly commerceService: CommerceService,
     private readonly orderService: CommerceOrderService,
+    private readonly orderHistoryService: CommerceOrderHistoryService,
   ) {}
 
   @Get('cart')
@@ -74,6 +82,28 @@ export class CommerceController {
   @ApiOkResponse({ type: CartResponseDto })
   clearCart(@CurrentUser('id') learnerId: string): Promise<CartResponseDto> {
     return this.commerceService.clearCart(learnerId);
+  }
+
+  @Get('orders')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiOkResponse({ type: OrderHistoryPageResponseDto })
+  listOrders(
+    @CurrentUser('id') learnerId: string,
+    @Query() query: ListOrdersQueryDto,
+  ): Promise<OrderHistoryPageResponseDto> {
+    return this.orderHistoryService.list(learnerId, query);
+  }
+
+  @Get('orders/:orderId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student)
+  @ApiOkResponse({ type: OrderHistoryItemResponseDto })
+  getOrder(
+    @CurrentUser('id') learnerId: string,
+    @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
+  ): Promise<OrderHistoryItemResponseDto> {
+    return this.orderHistoryService.get(learnerId, orderId);
   }
 
   @Post('orders')
