@@ -2,6 +2,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayNotEmpty,
+  ArrayUnique,
   IsArray,
   IsOptional,
   IsString,
@@ -22,6 +24,20 @@ export class VoucherApplicationDto {
 }
 
 export class CreateOrderDto {
+  @ApiPropertyOptional({
+    type: [String],
+    format: 'uuid',
+    maxItems: 20,
+    description: 'Courses from the active cart to include in this order. Omit to checkout the whole cart.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(20)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  courseIds?: string[];
+
   @ApiPropertyOptional({ type: [VoucherApplicationDto], maxItems: 20 })
   @IsOptional()
   @IsArray()
