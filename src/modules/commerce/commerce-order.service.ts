@@ -81,9 +81,13 @@ export class CommerceOrderService {
   ): Promise<OrderResponseDto> {
     this.assertConfigured();
     this.assertIdempotencyKey(idempotencyKey);
+    const selectedCourseIds = this.normalizeCourseIds(input);
     const normalizedApplications = this.normalizeApplications(input);
+    const requestPayload = selectedCourseIds === null
+      ? { voucherApplications: normalizedApplications }
+      : { courseIds: selectedCourseIds, voucherApplications: normalizedApplications };
     const requestHash = createHash('sha256')
-      .update(JSON.stringify({ voucherApplications: normalizedApplications }))
+      .update(JSON.stringify(requestPayload))
       .digest('hex');
     const keyHash = createHmac(
       'sha256',
@@ -93,7 +97,14 @@ export class CommerceOrderService {
       .digest('hex');
 
     return this.runSerializable((tx) =>
-      this.createOrderTransaction(tx, learnerId, keyHash, requestHash, normalizedApplications),
+      this.createOrderTransaction(
+        tx,
+        learnerId,
+        keyHash,
+        requestHash,
+        selectedCourseIds,
+        normalizedApplications,
+      ),
     );
   }
 
@@ -102,6 +113,7 @@ export class CommerceOrderService {
     learnerId: string,
     keyHash: string,
     requestHash: string,
+    selectedCourseIds: string[] | null,
     applications: Array<{ courseId: string; code: string }>,
   ): Promise<OrderResponseDto> {
     const existing = await tx.commerceIdempotencyRecord.findUnique({
@@ -125,7 +137,7 @@ export class CommerceOrderService {
         keyHash,
         keyHashVersion: 1,
         requestHash,
-        requestCanonicalizationVersion: 1,
+        requestCanonicalizationVersion: selectedCourseIds === null ? 1 : 2,
         status: CommerceIdempotencyStatus.in_progress,
         lockedUntil: new Date(now.getTime() + 30_000),
       },
@@ -141,13 +153,36 @@ export class CommerceOrderService {
     await tx.$queryRaw(
       Prisma.sql`SELECT id FROM commerce_carts WHERE id = ${cart.id}::uuid FOR UPDATE`,
     );
+
+    const cartCourseIds = new Set(
+      cart.lines.map((line) => line.product.courseId).filter((courseId): courseId is string => Boolean(courseId)),
+    );
+    if (selectedCourseIds?.some((courseId) => !cartCourseIds.has(courseId))) {
+      throw new BadRequestException({
+        error: 'CHECKOUT_TARGET_NOT_IN_CART',
+        message: 'A selected course is not present in the active cart.',
+      });
+    }
+
+    const selectedSet = selectedCourseIds ? new Set(selectedCourseIds) : cartCourseIds;
+    const selectedLines = cart.lines.filter((line) => {
+      const courseId = line.product.courseId;
+      return Boolean(courseId && selectedSet.has(courseId));
+    });
+    if (selectedLines.length === 0) {
+      throw new BadRequestException({
+        error: 'EMPTY_CHECKOUT_SELECTION',
+        message: 'Select at least one course to checkout.',
+      });
+    }
+
     await tx.$queryRaw(
       Prisma.sql`SELECT id FROM courses WHERE id IN (${Prisma.join(
-        cart.lines.map((line) => line.product.courseId as string),
+        selectedLines.map((line) => line.product.courseId as string),
       )}) FOR SHARE`,
     );
 
-    const owned = await Promise.all(cart.lines.map((line) =>
+    const owned = await Promise.all(selectedLines.map((line) =>
       this.courseAccess.decideWithClient({
         user: { id: learnerId, roles: [RoleName.student] },
         courseId: line.product.courseId as string,
@@ -157,19 +192,20 @@ export class CommerceOrderService {
     if (owned.some((decision) => decision.allowed)) {
       throw new ConflictException({
         error: 'ALREADY_OWNED',
-        message: 'One or more cart courses are already owned.',
+        message: 'One or more selected courses are already owned.',
       });
     }
 
     const applicationByCourse = new Map(applications.map((item) => [item.courseId, item.code]));
-    const cartCourseIds = new Set(cart.lines.map((line) => line.product.courseId));
-    if (applications.some((item) => !cartCourseIds.has(item.courseId))) {
+    if (applications.some((item) => !selectedSet.has(item.courseId))) {
       throw new BadRequestException({
-        error: 'VOUCHER_TARGET_NOT_IN_CART',
-        message: 'A voucher target is not present in the active cart.',
+        error: 'VOUCHER_TARGET_NOT_SELECTED',
+        message: 'A voucher target is not included in the checkout selection.',
       });
     }
-    const pricedLines = await this.priceLines(tx, learnerId, cart, applicationByCourse);
+
+    const checkoutCart: CheckoutCart = { ...cart, lines: selectedLines };
+    const pricedLines = await this.priceLines(tx, learnerId, checkoutCart, applicationByCourse);
     const subtotal = pricedLines.reduce((sum, line) => sum + line.listPrice, 0n);
     const discount = pricedLines.reduce((sum, line) => sum + line.discount, 0n);
     const payable = subtotal - discount;
@@ -252,6 +288,26 @@ export class CommerceOrderService {
       }
     }
 
+    const unselectedLines = cart.lines.filter((line) => !selectedLines.some((selected) => selected.id === line.id));
+    if (unselectedLines.length > 0) {
+      await tx.commerceCart.create({
+        data: {
+          buyerId: learnerId,
+          status: CommerceCartStatus.active,
+          currency: cart.currency,
+          lines: {
+            create: unselectedLines.map((line) => ({
+              productId: line.productId,
+              quantity: line.quantity,
+            })),
+          },
+        },
+      });
+      await tx.commerceCartLine.deleteMany({
+        where: { id: { in: unselectedLines.map((line) => line.id) } },
+      });
+    }
+
     await tx.commerceCart.update({
       where: { id: cart.id },
       data: { status: CommerceCartStatus.converted, convertedAt: now },
@@ -285,6 +341,8 @@ export class CommerceOrderService {
           operationId,
           cartId: cart.id,
           orderNumber: order.orderNumber,
+          selectedItemCount: selectedLines.length,
+          retainedItemCount: unselectedLines.length,
           subtotalAmountMinor: subtotal.toString(),
           discountAmountMinor: discount.toString(),
           payableAmountMinor: payable.toString(),
@@ -506,6 +564,23 @@ export class CommerceOrderService {
         })),
       })),
     };
+  }
+
+  private normalizeCourseIds(input: CreateOrderDto): string[] | null {
+    if (input.courseIds === undefined) return null;
+    if (input.courseIds.length === 0 || input.courseIds.length > 20) {
+      throw new BadRequestException({
+        error: 'INVALID_CHECKOUT_SELECTION',
+        message: 'Checkout selection must contain between 1 and 20 courses.',
+      });
+    }
+    if (new Set(input.courseIds).size !== input.courseIds.length) {
+      throw new BadRequestException({
+        error: 'DUPLICATE_CHECKOUT_TARGET',
+        message: 'A course may only be selected once per checkout.',
+      });
+    }
+    return [...input.courseIds].sort((left, right) => left.localeCompare(right));
   }
 
   private normalizeApplications(input: CreateOrderDto): Array<{ courseId: string; code: string }> {
