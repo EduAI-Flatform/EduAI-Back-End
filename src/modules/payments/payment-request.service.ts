@@ -174,12 +174,14 @@ export class PaymentRequestService {
     learnerId: string,
     query: ListPendingPaymentQueryDto = { page: 1, pageSize: 20 },
   ): Promise<PaymentRequestPageResponseDto> {
+    const now = new Date();
     const where: Prisma.CommerceOrderWhereInput = {
       buyerId: learnerId,
       status: CommerceOrderStatus.pending_payment,
       paymentAttempts: {
         some: {
           status: { in: [CommercePaymentStatus.created, CommercePaymentStatus.pending] },
+          providerExpiresAt: { gt: now },
         },
       },
     };

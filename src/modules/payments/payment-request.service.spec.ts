@@ -303,6 +303,22 @@ describe('PaymentRequestService', () => {
     expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
   });
 
+  it('only queries payment attempts whose local payment window is still open', async () => {
+    const { service, prisma } = harness();
+
+    await service.pending('student-id');
+
+    expect(prisma.commerceOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        paymentAttempts: {
+          some: expect.objectContaining({
+            providerExpiresAt: { gt: expect.any(Date) },
+          }),
+        },
+      }),
+    }));
+  });
+
   it('keeps an ambiguous timeout in created state for reconciliation', async () => {
     const { service, provider, tx } = harness();
     provider.createPaymentRequest.mockRejectedValueOnce(
