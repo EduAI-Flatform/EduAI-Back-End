@@ -41,6 +41,35 @@ const retryCaseInclude = {
       confirmedSettlementId: true,
       payableAmountMinor: true,
       currency: true,
+      confirmedSettlement: {
+        include: {
+          paymentAttempt: {
+            select: {
+              id: true,
+              orderId: true,
+              provider: true,
+              providerPaymentIdentity: true,
+              providerOrderCode: true,
+              status: true,
+              amountMinor: true,
+              currency: true,
+            },
+          },
+          paymentEvent: {
+            select: {
+              id: true,
+              paymentAttemptId: true,
+              provider: true,
+              providerPaymentIdentity: true,
+              providerSettlementReference: true,
+              amountMinor: true,
+              currency: true,
+              nextStatus: true,
+              providerOccurredAt: true,
+            },
+          },
+        },
+      },
     },
   },
   settlement: {
@@ -268,30 +297,42 @@ export class PaymentReconciliationService {
         if (current.kind !== CommerceReconciliationKind.paid_not_fulfilled) {
           throw new ConflictException('Only failed fulfillment review can be retried.');
         }
-        return this.assertRetryInvariant(current);
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      try {
-        await this.fulfillment.fulfillConfirmedPayment(
-          retry.orderId,
-          retry.settlementId,
-          CommerceActorKind.user,
-          actorId,
-        );
-      } catch (error) {
-        if (error instanceof PaymentRecoveryError && error.phase === 'identity') {
-          throw new ConflictException({
-            error: error.reasonCode,
-            message: 'Verified payment references conflict with canonical local records.',
-          });
+        if (current.order.fulfillmentStatus === CommerceFulfillmentStatus.fulfilled) {
+          return {
+            ...this.assertFulfilledRetryInvariant(current),
+            alreadyFulfilled: true,
+          };
         }
-        throw error;
+        return { ...this.assertRetryInvariant(current), alreadyFulfilled: false };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      if (!retry.alreadyFulfilled) {
+        try {
+          await this.fulfillment.fulfillConfirmedPayment(
+            retry.orderId,
+            retry.settlementId,
+            CommerceActorKind.user,
+            actorId,
+          );
+        } catch (error) {
+          if (error instanceof PaymentRecoveryError && error.phase === 'identity') {
+            throw new ConflictException({
+              error: error.reasonCode,
+              message: 'Verified payment references conflict with canonical local records.',
+            });
+          }
+          throw error;
+        }
       }
       const result = await this.prisma.$transaction(async (tx) => {
         const current = await this.loadOpenCase(tx, caseId, input.expectedUpdatedAt);
         if (current.kind !== CommerceReconciliationKind.paid_not_fulfilled) {
           throw new ConflictException('Only failed fulfillment review can be retried.');
         }
-        this.assertRetryInvariant(current, true);
+        if (retry.alreadyFulfilled) {
+          this.assertFulfilledRetryInvariant(current);
+        } else {
+          this.assertRetryInvariant(current, true);
+        }
         return this.finalizeResolution(
           tx,
           current,
@@ -299,7 +340,9 @@ export class PaymentReconciliationService {
           CommerceReconciliationResolution.retry_succeeded,
         );
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-      await this.fulfillment.dispatchPending().catch(() => undefined);
+      if (!retry.alreadyFulfilled) {
+        await this.fulfillment.dispatchPending().catch(() => undefined);
+      }
       return {
         id: result.id,
         status: result.status.toUpperCase(),
@@ -411,6 +454,24 @@ export class PaymentReconciliationService {
       });
     }
     return { orderId: current.orderId, settlementId: settlement.id };
+  }
+
+  private assertFulfilledRetryInvariant(current: RetryCase): { orderId: string; settlementId: string } {
+    const canonicalSettlement = current.order.confirmedSettlement;
+    if (
+      !canonicalSettlement ||
+      (current.settlementId !== null && current.settlementId !== canonicalSettlement.id)
+    ) {
+      throw new ConflictException({
+        error: 'PAYMENT_SETTLEMENT_CONFLICT',
+        message: 'Verified payment references conflict with canonical local records.',
+      });
+    }
+    return this.assertRetryInvariant({
+      ...current,
+      settlementId: canonicalSettlement.id,
+      settlement: canonicalSettlement,
+    } as RetryCase, true);
   }
 
   private finalizeResolution(

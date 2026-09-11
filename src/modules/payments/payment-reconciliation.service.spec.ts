@@ -541,6 +541,76 @@ describe('PaymentReconciliationService', () => {
     );
   });
 
+  it('resolves a legacy fulfillment review from canonical fulfilled order evidence', async () => {
+    const { service, tx, fulfillment, review } = harness();
+    const canonicalSettlement = {
+      id: 'canonical-settlement-id',
+      orderId: attempt.orderId,
+      paymentAttemptId: attempt.id,
+      paymentEventId: 'canonical-event-id',
+      kind: 'provider_collection',
+      disposition: 'matched',
+      provider: 'payos',
+      providerSettlementReference: 'canonical-settlement-reference',
+      amountMinor: 125000n,
+      currency: 'VND',
+      settledAt: now,
+      paymentAttempt: {
+        id: attempt.id,
+        orderId: attempt.orderId,
+        provider: 'payos',
+        providerPaymentIdentity: 'payment-link',
+        providerOrderCode: 9001n,
+        status: 'paid',
+        amountMinor: 125000n,
+        currency: 'VND',
+      },
+      paymentEvent: {
+        id: 'canonical-event-id',
+        paymentAttemptId: attempt.id,
+        provider: 'payos',
+        providerPaymentIdentity: 'payment-link',
+        providerSettlementReference: 'canonical-settlement-reference',
+        amountMinor: 125000n,
+        currency: 'VND',
+        nextStatus: 'paid',
+        providerOccurredAt: now,
+      },
+    };
+    const legacyReview = {
+      ...review,
+      orderId: attempt.orderId,
+      kind: CommerceReconciliationKind.paid_not_fulfilled,
+      settlementId: null,
+      paymentAttemptId: attempt.id,
+      order: {
+        ...review.order,
+        status: 'confirmed',
+        fulfillmentStatus: CommerceFulfillmentStatus.fulfilled,
+        confirmedSettlementId: canonicalSettlement.id,
+        confirmedSettlement: canonicalSettlement,
+      },
+    };
+    tx.commerceReconciliationCase.findUnique.mockReset().mockResolvedValue(legacyReview);
+    tx.commerceReconciliationCase.update.mockResolvedValue({
+      ...legacyReview,
+      status: 'resolved',
+      resolution: 'retry_succeeded',
+      resolvedAt: now,
+    });
+
+    await expect(service.resolve('admin-id', reviewId(), {
+      resolution: 'retry_succeeded',
+      expectedUpdatedAt: now.toISOString(),
+    })).resolves.toMatchObject({
+      status: 'RESOLVED',
+      resolution: 'RETRY_SUCCEEDED',
+    });
+
+    expect(fulfillment.fulfillConfirmedPayment).not.toHaveBeenCalled();
+    expect(fulfillment.dispatchPending).not.toHaveBeenCalled();
+  });
+
   it('retries fulfillment outside case resolution and closes only after canonical fulfillment', async () => {
     const { service, tx, fulfillment, prisma, review } = harness();
     const canonicalReview = {
