@@ -174,6 +174,31 @@ export class PaymentReconciliationService {
         reviewRequired += 1;
       }
     }
+    const staleFulfillmentReviews = await this.prisma.commerceReconciliationCase.findMany({
+      where: {
+        status: CommerceReconciliationStatus.open,
+        kind: CommerceReconciliationKind.paid_not_fulfilled,
+        order: {
+          status: CommerceOrderStatus.confirmed,
+          fulfillmentStatus: CommerceFulfillmentStatus.fulfilled,
+        },
+      },
+      select: { id: true, updatedAt: true },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: input.limit,
+    });
+    let staleFulfillmentReviewResolved = 0;
+    for (const review of staleFulfillmentReviews) {
+      try {
+        await this.resolve(actorId, review.id, {
+          resolution: 'retry_succeeded',
+          expectedUpdatedAt: review.updatedAt.toISOString(),
+        });
+        staleFulfillmentReviewResolved += 1;
+      } catch {
+        reviewRequired += 1;
+      }
+    }
     await this.audit.record({
       actorId,
       action: AuditAction.PaymentReconciliationChecked,
@@ -183,6 +208,7 @@ export class PaymentReconciliationService {
         checkedCount: page.length,
         recoveredCount: recovered,
         reviewRequiredCount: reviewRequired,
+        staleFulfillmentReviewResolvedCount: staleFulfillmentReviewResolved,
         hasMore: attempts.length > input.limit,
       },
     });

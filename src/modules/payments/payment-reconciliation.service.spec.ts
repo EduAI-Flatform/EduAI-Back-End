@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import {
+  CommerceFulfillmentStatus,
   CommerceReconciliationKind,
   CommerceReconciliationStatus,
 } from '../../../generated/prisma/client';
@@ -73,7 +74,7 @@ function harness() {
     commerceReconciliationCase: {
       upsert: jest.fn().mockResolvedValue(review),
       count: jest.fn().mockResolvedValue(1),
-      findMany: jest.fn().mockResolvedValue([review]),
+      findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue(review),
     },
     $transaction: jest.fn((value: unknown) =>
@@ -121,6 +122,41 @@ function harness() {
 }
 
 describe('PaymentReconciliationService', () => {
+  it('closes a stale paid-not-fulfilled review after the order is fulfilled', async () => {
+    const { service, prisma } = harness();
+    const staleReview = {
+      id: '44444444-4444-4444-8444-444444444444',
+      updatedAt: now,
+    };
+    prisma.commerceReconciliationCase.findMany.mockResolvedValue([staleReview]);
+    const resolve = jest.spyOn(service, 'resolve').mockResolvedValue({
+      id: staleReview.id,
+      status: 'resolved',
+      resolution: 'retry_succeeded',
+      resolvedAt: now,
+    } as never);
+
+    await service.run('admin-id', { limit: 20 });
+
+    expect(prisma.commerceReconciliationCase.findMany).toHaveBeenCalledWith({
+      where: {
+        status: CommerceReconciliationStatus.open,
+        kind: CommerceReconciliationKind.paid_not_fulfilled,
+        order: {
+          status: 'confirmed',
+          fulfillmentStatus: CommerceFulfillmentStatus.fulfilled,
+        },
+      },
+      select: { id: true, updatedAt: true },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: 20,
+    });
+    expect(resolve).toHaveBeenCalledWith('admin-id', staleReview.id, {
+      resolution: 'retry_succeeded',
+      expectedUpdatedAt: now.toISOString(),
+    });
+  });
+
   it('recovers a missed webhook through the existing verified settlement path', async () => {
     const { service, webhook, tx } = harness();
     await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
@@ -476,7 +512,8 @@ describe('PaymentReconciliationService', () => {
   });
 
   it('paginates and sanitizes administrator review projections', async () => {
-    const { service } = harness();
+    const { service, prisma, review } = harness();
+    prisma.commerceReconciliationCase.findMany.mockResolvedValue([review]);
     await expect(
       service.list({ page: 1, pageSize: 25, status: CommerceReconciliationStatus.open }),
     ).resolves.toMatchObject({
