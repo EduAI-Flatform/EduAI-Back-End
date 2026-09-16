@@ -637,6 +637,13 @@ describe('PaymentWebhookService', () => {
       result: 'DUPLICATE',
     });
     expect(tx.commerceReconciliationCase.create).toHaveBeenCalledTimes(1);
+    expect(tx.commerceReconciliationCase.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentAttemptId: 'attempt-id',
+        settlementId: 'settlement-id',
+        sourceKey: 'attempt-id:duplicate_collection:settlement-id',
+      }),
+    });
     expect(tx.commerceOrder.update).not.toHaveBeenCalled();
   });
 
@@ -660,6 +667,13 @@ describe('PaymentWebhookService', () => {
     expect(tx.commerceOrder.update).toHaveBeenCalledWith({
       where: { id: 'order-id' },
       data: expect.objectContaining({ status: CommerceOrderStatus.late_payment_review }),
+    });
+    expect(tx.commerceReconciliationCase.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentAttemptId: 'attempt-id',
+        settlementId: 'settlement-id',
+        sourceKey: 'attempt-id:late_payment:settlement-id',
+      }),
     });
   });
 

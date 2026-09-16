@@ -509,6 +509,7 @@ export class PaymentWebhookService {
         paymentAttemptId: attempt.id,
         kind: CommerceReconciliationKind.duplicate_collection,
         reasonCode: 'DUPLICATE_COLLECTION',
+        sourceKey: `${attempt.id}:duplicate_collection:${settlement.id}`,
       },
     });
     await this.recordReconciliationAudit(tx, attempt.orderId, 'DUPLICATE_COLLECTION');
@@ -569,6 +570,7 @@ export class PaymentWebhookService {
         paymentAttemptId: attempt.id,
         kind: CommerceReconciliationKind.late_payment,
         reasonCode: 'LATE_PAYMENT',
+        sourceKey: `${attempt.id}:late_payment:${settlement.id}`,
       },
     });
     await this.recordReconciliationAudit(tx, attempt.orderId, 'LATE_PAYMENT');
