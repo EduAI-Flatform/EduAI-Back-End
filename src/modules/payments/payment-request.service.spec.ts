@@ -317,6 +317,16 @@ describe('PaymentRequestService', () => {
         },
       }),
     }));
+    expect(prisma.commerceOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        paymentAttempts: expect.objectContaining({
+          where: {
+            status: { in: ['created', 'pending'] },
+            providerExpiresAt: { gt: expect.any(Date) },
+          },
+        }),
+      }),
+    }));
   });
 
   it('keeps an ambiguous timeout in created state for reconciliation', async () => {

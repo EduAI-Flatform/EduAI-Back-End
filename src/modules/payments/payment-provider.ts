@@ -74,6 +74,11 @@ export interface VerifyPaymentWebhookInput {
   headers: Readonly<Record<string, string | undefined>>;
 }
 
+export interface PaymentReconciliationOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 export interface VerifiedPaymentWebhook {
   providerEventIdentity: string;
   providerPaymentIdentity: string;
@@ -95,5 +100,8 @@ export interface PaymentProvider {
     reason?: string,
   ): Promise<PaymentRequestStatus>;
   verifyWebhook(input: VerifyPaymentWebhookInput): Promise<VerifiedPaymentWebhook>;
-  reconcilePaymentRequest(providerPaymentIdentity: string): Promise<PaymentRequestStatus>;
+  reconcilePaymentRequest(
+    providerPaymentIdentity: string,
+    options?: PaymentReconciliationOptions,
+  ): Promise<PaymentRequestStatus>;
 }

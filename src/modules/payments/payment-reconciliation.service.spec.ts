@@ -23,7 +23,10 @@ const attempt = {
   order: { fulfillmentStatus: 'not_started' },
 };
 
-function harness() {
+function harness(options: {
+  nodeEnv?: 'test' | 'production';
+  redis?: { set: jest.Mock; eval: jest.Mock };
+} = {}) {
   const review = {
     id: '33333333-3333-4333-8333-333333333333',
     kind: 'provider_outage',
@@ -102,7 +105,9 @@ function harness() {
     }),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
-  const webhook = { ingestVerified: jest.fn().mockResolvedValue({ accepted: true }) };
+  const webhook = {
+    ingestVerified: jest.fn().mockResolvedValue({ accepted: true, result: 'CONFIRMED' }),
+  };
   const fulfillment = {
     fulfillConfirmedPayment: jest.fn().mockResolvedValue(undefined),
     fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
@@ -112,49 +117,133 @@ function harness() {
   const service = new PaymentReconciliationService(
     prisma as never,
     audit as never,
-    { commerce: { idempotencySecret: 'test-secret' } } as never,
+    {
+      app: { nodeEnv: options.nodeEnv ?? 'test' },
+      commerce: { idempotencySecret: 'test-secret' },
+      payos: { timeoutMs: 10000 },
+    } as never,
     provider as never,
     webhook as never,
     fulfillment as never,
     monitoring as never,
+    options.redis ? ({ getClient: jest.fn().mockReturnValue(options.redis) } as never) : undefined,
   );
   return { service, prisma, provider, audit, webhook, fulfillment, monitoring, tx, review };
 }
 
 describe('PaymentReconciliationService', () => {
-  it('closes a stale paid-not-fulfilled review after the order is fulfilled', async () => {
+  it('does not auto-resolve fulfilled paid-not-fulfilled reviews during a provider scan', async () => {
     const { service, prisma } = harness();
-    const staleReview = {
-      id: '44444444-4444-4444-8444-444444444444',
-      updatedAt: now,
-    };
-    prisma.commerceReconciliationCase.findMany.mockResolvedValue([staleReview]);
-    const resolve = jest.spyOn(service, 'resolve').mockResolvedValue({
-      id: staleReview.id,
-      status: 'resolved',
-      resolution: 'retry_succeeded',
-      resolvedAt: now,
-    } as never);
 
     await service.run('admin-id', { limit: 20 });
 
-    expect(prisma.commerceReconciliationCase.findMany).toHaveBeenCalledWith({
-      where: {
-        status: CommerceReconciliationStatus.open,
-        kind: CommerceReconciliationKind.paid_not_fulfilled,
-        order: {
-          status: 'confirmed',
-          fulfillmentStatus: CommerceFulfillmentStatus.fulfilled,
-        },
-      },
-      select: { id: true, updatedAt: true },
-      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
-      take: 20,
+    expect(prisma.commerceReconciliationCase.findMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects an overlapping reconciliation run on the same worker', async () => {
+    const { service, provider } = harness();
+    let releaseProvider!: () => void;
+    const pendingProviderCall = new Promise((resolve) => {
+      releaseProvider = () => resolve({
+        providerPaymentIdentity: attempt.providerPaymentIdentity,
+        receivingAccount: null,
+        localOrderReference: 9001,
+        amountMinor: 125000n,
+        amountPaidMinor: 0n,
+        amountRemainingMinor: 125000n,
+        status: 'PENDING',
+        createdAt: now,
+        transactions: [],
+      });
     });
-    expect(resolve).toHaveBeenCalledWith('admin-id', staleReview.id, {
-      resolution: 'retry_succeeded',
-      expectedUpdatedAt: now.toISOString(),
+    provider.reconcilePaymentRequest.mockReturnValue(pendingProviderCall);
+
+    const first = service.run('admin-id', { limit: 20 });
+    await Promise.resolve();
+    await expect(service.run('admin-id', { limit: 20 })).rejects.toMatchObject({ status: 409 });
+
+    releaseProvider();
+    await expect(first).resolves.toMatchObject({ checkedCount: 1 });
+  });
+
+  it('fails closed in production when a distributed reconciliation lock is unavailable', async () => {
+    const { service, prisma } = harness({ nodeEnv: 'production' });
+
+    await expect(service.run('admin-id', { limit: 20 })).rejects.toMatchObject({ status: 503 });
+    expect(prisma.commercePaymentAttempt.findMany).not.toHaveBeenCalled();
+  });
+
+  it('uses an owner-checked Redis lease for production reconciliation runs', async () => {
+    const redis = {
+      set: jest.fn().mockResolvedValue('OK'),
+      eval: jest.fn().mockResolvedValue(1),
+    };
+    const { service } = harness({ nodeEnv: 'production', redis });
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      checkedCount: 1,
     });
+
+    expect(redis.set).toHaveBeenCalledWith(
+      'eduai:commerce:payment-reconciliation:run',
+      expect.any(String),
+      'PX',
+      65000,
+      'NX',
+    );
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('GET'),
+      1,
+      'eduai:commerce:payment-reconciliation:run',
+      expect.any(String),
+    );
+  });
+
+  it('aborts a provider poll at the run-wide deadline and leaves later attempts for the next cursor', async () => {
+    jest.useFakeTimers();
+    try {
+      const { service, provider, prisma, audit } = harness();
+      const secondAttempt = { ...attempt, id: '44444444-4444-4444-8444-444444444444' };
+      prisma.commercePaymentAttempt.findMany.mockResolvedValue([attempt, secondAttempt]);
+      let started = false;
+      provider.reconcilePaymentRequest.mockImplementation((_identity, options) => {
+        started = true;
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => reject(new PaymentProviderError('timeout', true)),
+            { once: true },
+          );
+        });
+      });
+
+      const run = service.run('admin-id', { limit: 20 });
+      for (let i = 0; i < 5 && !started; i += 1) await Promise.resolve();
+      expect(started).toBe(true);
+
+      await jest.advanceTimersByTimeAsync(60000);
+      await expect(run).resolves.toMatchObject({
+        checkedCount: 1,
+        recoveredCount: 0,
+        reviewRequiredCount: 1,
+        hasMore: true,
+      });
+      expect(provider.reconcilePaymentRequest).toHaveBeenCalledTimes(1);
+      expect(provider.reconcilePaymentRequest).toHaveBeenCalledWith(
+        'payment-link',
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+          timeoutMs: 10000,
+        }),
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ checkedCount: 1, hasMore: true }),
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('recovers a missed webhook through the existing verified settlement path', async () => {
@@ -176,6 +265,19 @@ describe('PaymentReconciliationService', () => {
       expect.objectContaining({ data: { providerStatusCheckedAt: expect.any(Date) } }),
     );
   });
+
+  it.each(['DUPLICATE', 'LATE_PAYMENT_REVIEW'] as const)(
+    'does not count a %s webhook outcome as a recovered payment',
+    async (result) => {
+      const { service, webhook } = harness();
+      webhook.ingestVerified.mockResolvedValue({ accepted: true, result });
+
+      await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+        recoveredCount: 0,
+        reviewRequiredCount: 1,
+      });
+    },
+  );
 
   it('recovers a PAID payment when the provider receiver varies', async () => {
     const { service, provider, webhook, prisma } = harness();
@@ -247,7 +349,13 @@ describe('PaymentReconciliationService', () => {
       reviewRequiredCount: 0,
     });
 
-    expect(provider.reconcilePaymentRequest).toHaveBeenCalledWith('9001');
+    expect(provider.reconcilePaymentRequest).toHaveBeenCalledWith(
+      '9001',
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        timeoutMs: 10000,
+      }),
+    );
     expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -262,6 +370,40 @@ describe('PaymentReconciliationService', () => {
       }),
     );
     expect(webhook.ingestVerified).not.toHaveBeenCalled();
+  });
+
+  it('does not promote a locally created payment when the provider reports cancellation', async () => {
+    const { service, prisma, provider, tx } = harness();
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([{
+      ...attempt,
+      status: 'created',
+      providerPaymentIdentity: null,
+    }]);
+    provider.reconcilePaymentRequest.mockResolvedValue({
+      ...(await provider.reconcilePaymentRequest('seed')),
+      providerPaymentIdentity: 'payment-link',
+      amountPaidMinor: 0n,
+      amountRemainingMinor: 125000n,
+      status: 'CANCELLED',
+      transactions: [],
+    });
+
+    await expect(service.run('admin-id', { limit: 20 })).resolves.toMatchObject({
+      recoveredCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({ status: 'pending' }),
+      }),
+    );
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          reasonCode: 'PROVIDER_PAYMENT_CANCELLED',
+        }),
+      }),
+    );
   });
 
   it('opens an idempotent safe review when provider facts mismatch', async () => {
@@ -327,7 +469,7 @@ describe('PaymentReconciliationService', () => {
     expect(webhook.ingestVerified).not.toHaveBeenCalled();
   });
 
-  it('records only a sanitized outage reason and keeps a restart cursor', async () => {
+  it('records only a sanitized outage reason and keeps an opaque restart cursor', async () => {
     const { service, provider, prisma } = harness();
     prisma.commercePaymentAttempt.findMany.mockResolvedValue([
       attempt,
@@ -337,11 +479,13 @@ describe('PaymentReconciliationService', () => {
       new PaymentProviderError('timeout', true),
     );
 
-    await expect(service.run('admin-id', { limit: 1 })).resolves.toMatchObject({
+    const result = await service.run('admin-id', { limit: 1 });
+    expect(result).toMatchObject({
       checkedCount: 1,
       hasMore: true,
-      nextCursor: attempt.id,
     });
+    expect(result.nextCursor).toEqual(expect.any(String));
+    expect(result.nextCursor).not.toContain(attempt.id);
     expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
@@ -353,6 +497,36 @@ describe('PaymentReconciliationService', () => {
     expect(JSON.stringify(prisma.commerceReconciliationCase.upsert.mock.calls)).not.toContain(
       'timeout',
     );
+  });
+
+  it('decodes its opaque cursor only on the next bounded scan', async () => {
+    const { service, provider, prisma } = harness();
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([
+      attempt,
+      { ...attempt, id: '44444444-4444-4444-8444-444444444444' },
+    ]);
+    provider.reconcilePaymentRequest.mockRejectedValue(
+      new PaymentProviderError('timeout', true),
+    );
+
+    const first = await service.run('admin-id', { limit: 1 });
+    await service.run('admin-id', { limit: 1, cursor: first.nextCursor as string });
+
+    expect(prisma.commercePaymentAttempt.findMany.mock.calls[1][0].where.id).toEqual({
+      gt: attempt.id,
+    });
+  });
+
+  it('rejects a forged reconciliation cursor before querying payment attempts', async () => {
+    const { service, prisma } = harness();
+
+    await expect(service.run('admin-id', { limit: 1, cursor: 'forged.cursor.token' }))
+      .rejects.toMatchObject({
+        response: expect.objectContaining({
+          message: 'Invalid payment reconciliation cursor.',
+        }),
+      });
+    expect(prisma.commercePaymentAttempt.findMany).not.toHaveBeenCalled();
   });
 
   it('separates malformed provider status from transient provider outage', async () => {
@@ -493,8 +667,11 @@ describe('PaymentReconciliationService', () => {
     );
   });
 
-  it('refreshes a reconciliation reason when an existing case is checked again', async () => {
+  it('keeps the original reconciliation reason immutable when an existing case is checked again', async () => {
     const { service, prisma } = harness();
+    prisma.commerceReconciliationCase.findUnique.mockResolvedValue({
+      reasonCode: 'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING',
+    });
 
     await service.flagAttempt(
       attempt,
@@ -505,10 +682,38 @@ describe('PaymentReconciliationService', () => {
     expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: expect.objectContaining({
-          reasonCode: 'PROVIDER_PAID_TRANSACTION_AMOUNT_MISSING',
+          lastCheckedAt: expect.any(Date),
+          checkCount: { increment: 1 },
         }),
       }),
     );
+    expect(prisma.commerceReconciliationCase.upsert.mock.calls[0][0].update).not.toHaveProperty(
+      'reasonCode',
+    );
+  });
+
+  it('uses a distinct source identity when a later observation changes the reason', async () => {
+    const { service, prisma } = harness();
+    prisma.commerceReconciliationCase.findUnique.mockResolvedValue({
+      reasonCode: 'PROVIDER_STATUS_UNAVAILABLE',
+    });
+
+    await service.flagAttempt(
+      attempt,
+      CommerceReconciliationKind.provider_fact_mismatch,
+      'PROVIDER_AMOUNT_MISMATCH',
+    );
+
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { sourceKey: expect.any(String) },
+        create: expect.objectContaining({
+          reasonCode: 'PROVIDER_AMOUNT_MISMATCH',
+        }),
+      }),
+    );
+    expect(prisma.commerceReconciliationCase.upsert.mock.calls[0][0].where.sourceKey)
+      .not.toBe(attempt.id + ':provider_fact_mismatch');
   });
 
   it('paginates and sanitizes administrator review projections', async () => {
@@ -526,19 +731,18 @@ describe('PaymentReconciliationService', () => {
     });
   });
 
-  it('atomically resolves an operational review with lifecycle and audit evidence', async () => {
+  it('does not acknowledge a provider outage review as if its financial ambiguity were resolved', async () => {
     const { service, tx, audit } = harness();
     await expect(service.resolve('admin-id', reviewId(), {
       resolution: 'acknowledged',
       expectedUpdatedAt: now.toISOString(),
-    })).resolves.toMatchObject({ status: 'RESOLVED', resolution: 'ACKNOWLEDGED' });
-    expect(tx.commerceLifecycleEvent.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'OPERATOR_ACKNOWLEDGED' }) }),
-    );
-    expect(audit.record).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'PAYMENT_RECONCILIATION_RESOLVED' }),
-      tx,
-    );
+    })).rejects.toMatchObject({
+      response: expect.objectContaining({
+        message: 'Financial reconciliation cases require dedicated canonical resolution workflow.',
+      }),
+    });
+    expect(tx.commerceLifecycleEvent.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('resolves a legacy fulfillment review from canonical fulfilled order evidence', async () => {
@@ -569,6 +773,7 @@ describe('PaymentReconciliationService', () => {
         id: 'canonical-event-id',
         paymentAttemptId: attempt.id,
         provider: 'payos',
+        providerEventIdentity: 'canonical-event-id',
         providerPaymentIdentity: 'payment-link',
         providerSettlementReference: 'canonical-settlement-reference',
         amountMinor: 125000n,
@@ -602,9 +807,8 @@ describe('PaymentReconciliationService', () => {
     await expect(service.resolve('admin-id', reviewId(), {
       resolution: 'retry_succeeded',
       expectedUpdatedAt: now.toISOString(),
-    })).resolves.toMatchObject({
-      status: 'RESOLVED',
-      resolution: 'RETRY_SUCCEEDED',
+    })).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'FULFILLMENT_ALREADY_RECORDED' }),
     });
 
     expect(fulfillment.fulfillConfirmedPayment).not.toHaveBeenCalled();
@@ -651,6 +855,7 @@ describe('PaymentReconciliationService', () => {
           id: 'event-id',
           paymentAttemptId: attempt.id,
           provider: 'payos',
+          providerEventIdentity: 'event-id',
           providerPaymentIdentity: 'payment-link',
           providerSettlementReference: 'settlement-reference',
           amountMinor: 125000n,
@@ -701,6 +906,67 @@ describe('PaymentReconciliationService', () => {
     );
     expect(fulfillment.fulfillConfirmedOrder).not.toHaveBeenCalled();
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires replay identity evidence before retrying paid fulfillment', async () => {
+    const { service, tx, fulfillment, review } = harness();
+    const canonicalReview = {
+      ...review,
+      orderId: attempt.orderId,
+      kind: CommerceReconciliationKind.paid_not_fulfilled,
+      settlementId: 'settlement-id',
+      paymentAttemptId: attempt.id,
+      order: {
+        ...review.order,
+        status: 'confirmed',
+        confirmedSettlementId: 'settlement-id',
+        fulfillmentStatus: 'failed',
+      },
+      settlement: {
+        id: 'settlement-id',
+        orderId: attempt.orderId,
+        paymentAttemptId: attempt.id,
+        paymentEventId: 'event-id',
+        kind: 'provider_collection',
+        disposition: 'matched',
+        provider: 'payos',
+        providerSettlementReference: 'settlement-reference',
+        amountMinor: 125000n,
+        currency: 'VND',
+        settledAt: now,
+        paymentAttempt: {
+          id: attempt.id,
+          orderId: attempt.orderId,
+          provider: 'payos',
+          providerPaymentIdentity: 'payment-link',
+          providerOrderCode: 9001n,
+          status: 'paid',
+          amountMinor: 125000n,
+          currency: 'VND',
+        },
+        paymentEvent: {
+          id: 'event-id',
+          paymentAttemptId: attempt.id,
+          provider: 'payos',
+          providerEventIdentity: null,
+          providerPaymentIdentity: 'payment-link',
+          providerSettlementReference: 'settlement-reference',
+          amountMinor: 125000n,
+          currency: 'VND',
+          nextStatus: 'paid',
+          providerOccurredAt: now,
+        },
+      },
+    };
+    tx.commerceReconciliationCase.findUnique.mockReset().mockResolvedValue(canonicalReview);
+
+    await expect(service.resolve('admin-id', reviewId(), {
+      resolution: 'retry_succeeded',
+      expectedUpdatedAt: now.toISOString(),
+    })).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'PAYMENT_SETTLEMENT_CONFLICT' }),
+    });
+    expect(fulfillment.fulfillConfirmedPayment).not.toHaveBeenCalled();
   });
 
   it('does not grant access for a legacy paid-not-fulfilled case without canonical settlement evidence', async () => {

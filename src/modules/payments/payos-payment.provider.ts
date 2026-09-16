@@ -10,6 +10,7 @@ import {
   CreatedPaymentRequest,
   PaymentProvider,
   PaymentProviderError,
+  PaymentReconciliationOptions,
   PaymentProviderStatus,
   PaymentRequestStatus,
   VerifiedPaymentWebhook,
@@ -19,7 +20,10 @@ import {
 export interface PayosClientPort {
   paymentRequests: {
     create(input: object, options: { maxRetries: 0 }): Promise<unknown>;
-    get(identity: string, options: { maxRetries: 0 }): Promise<unknown>;
+    get(
+      identity: string,
+      options: { maxRetries: 0; timeout?: number; signal?: AbortSignal },
+    ): Promise<unknown>;
     cancel(
       identity: string,
       reason: string | undefined,
@@ -129,17 +133,27 @@ export class PayosPaymentProvider implements PaymentProvider {
     }
   }
 
-  async reconcilePaymentRequest(identity: string): Promise<PaymentRequestStatus> {
-    return this.getPaymentRequest(identity);
+  async reconcilePaymentRequest(
+    identity: string,
+    options?: PaymentReconciliationOptions,
+  ): Promise<PaymentRequestStatus> {
+    return this.getPaymentRequest(identity, options);
   }
 
-  private async getPaymentRequest(identity: string): Promise<PaymentRequestStatus> {
+  private async getPaymentRequest(
+    identity: string,
+    options?: PaymentReconciliationOptions,
+  ): Promise<PaymentRequestStatus> {
     const client = this.requireClient();
     validateIdentity(identity);
 
     try {
       return normalizeStatus(
-        await client.paymentRequests.get(identity, { maxRetries: 0 }),
+        await client.paymentRequests.get(identity, {
+          maxRetries: 0,
+          ...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+          ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+        }),
       );
     } catch (error) {
       throw mapProviderError(error);

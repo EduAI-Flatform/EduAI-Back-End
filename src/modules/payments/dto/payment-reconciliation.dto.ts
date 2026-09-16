@@ -1,10 +1,10 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsIn, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { CommerceReconciliationKind, CommerceReconciliationStatus } from '../../../../generated/prisma/client';
 
 export class RunPaymentReconciliationDto {
   @Type(() => Number) @IsOptional() @IsInt() @Min(1) @Max(50) limit = 20;
-  @IsOptional() @IsUUID('4') cursor?: string;
+  @IsOptional() @IsString() @MaxLength(256) cursor?: string;
 }
 
 export class ListPaymentReviewsDto {

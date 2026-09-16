@@ -55,6 +55,24 @@ const orderInclude = {
   },
 } satisfies Prisma.CommerceOrderInclude;
 
+function pendingOrderInclude(now: Date) {
+  return {
+    membershipCheckoutIntent: { select: { id: true } },
+    reservations: {
+      where: { status: CommerceReservationStatus.reserved },
+      select: { expiresAt: true },
+    },
+    paymentAttempts: {
+      where: {
+        status: { in: [CommercePaymentStatus.created, CommercePaymentStatus.pending] },
+        providerExpiresAt: { gt: now },
+      },
+      orderBy: { createdAt: 'desc' as const },
+      take: 1,
+    },
+  } satisfies Prisma.CommerceOrderInclude;
+}
+
 type OrderRecord = Prisma.CommerceOrderGetPayload<{ include: typeof orderInclude }>;
 type AttemptRecord = OrderRecord['paymentAttempts'][number];
 
@@ -189,7 +207,7 @@ export class PaymentRequestService {
       this.prisma.commerceOrder.count({ where }),
       this.prisma.commerceOrder.findMany({
         where,
-        include: orderInclude,
+        include: pendingOrderInclude(now),
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,

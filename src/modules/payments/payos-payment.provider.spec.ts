@@ -166,6 +166,23 @@ describe('PayosPaymentProvider', () => {
     });
   });
 
+  it('passes a bounded timeout and abort signal to the PayOS reconciliation request', async () => {
+    const { client, provider } = setup();
+    client.paymentRequests.get.mockResolvedValue(validStatus);
+    const controller = new AbortController();
+
+    await provider.reconcilePaymentRequest('payment-link-id', {
+      signal: controller.signal,
+      timeoutMs: 3210,
+    });
+
+    expect(client.paymentRequests.get).toHaveBeenCalledWith('payment-link-id', {
+      maxRetries: 0,
+      signal: controller.signal,
+      timeout: 3210,
+    });
+  });
+
   it('rejects malformed provider responses before returning them', async () => {
     const { client, provider } = setup();
     client.paymentRequests.create.mockResolvedValue({

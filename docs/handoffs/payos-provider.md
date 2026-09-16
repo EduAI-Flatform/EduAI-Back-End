@@ -162,6 +162,14 @@ backed cases. Provider identifiers, raw responses, checkout/QR payloads,
 receiving accounts, and credentials are intentionally absent from the
 administrator projection and operational evidence.
 
+Cross-process scan exclusion uses an owner-checked Redis lease with a 65-second
+TTL; production fails closed when Redis cannot acquire the lease. Each PayOS
+poll receives the configured request timeout plus an abort signal, and the
+provider-polling portion of each run has a 60-second deadline. A deadline abort
+records a sanitized provider-outage review and leaves the remaining page
+resumable through the opaque cursor. Non-production tests may use a process-local
+mutex, but that fallback is not a production coordination mechanism.
+
 Verified PayOS recovery has two transaction phases. Phase one commits the
 verified event, matched provider settlement, paid attempt, confirmed order,
 confirmed-settlement link, reservation consumption, lifecycle evidence, and

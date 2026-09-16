@@ -3,6 +3,7 @@ import {
   CreatedPaymentRequest,
   PaymentProvider,
   PaymentProviderError,
+  PaymentReconciliationOptions,
   PaymentRequestStatus,
   VerifiedPaymentWebhook,
   VerifyPaymentWebhookInput,
@@ -29,7 +30,10 @@ export class DisabledPaymentProvider implements PaymentProvider {
     return this.disabled();
   }
 
-  reconcilePaymentRequest(_identity: string): Promise<PaymentRequestStatus> {
+  reconcilePaymentRequest(
+    _identity: string,
+    _options?: PaymentReconciliationOptions,
+  ): Promise<PaymentRequestStatus> {
     return this.disabled();
   }
 
