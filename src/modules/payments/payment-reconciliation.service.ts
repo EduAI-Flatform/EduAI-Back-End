@@ -163,6 +163,68 @@ export class PaymentReconciliationService {
     }
   }
 
+  async probeRunLock() {
+    let redis;
+    try {
+      redis = this.redisConfig?.getClient();
+    } catch {
+      throw new ServiceUnavailableException('Payment reconciliation lock is unavailable.');
+    }
+    if (!redis) {
+      throw new ServiceUnavailableException('Payment reconciliation lock is unavailable.');
+    }
+
+    const releaseRunLock = await this.acquireRunLock();
+    let observedTtlMs: number;
+    try {
+      try {
+        observedTtlMs = await redis.pttl(RECONCILIATION_LOCK_KEY);
+      } catch {
+        throw new ServiceUnavailableException('Payment reconciliation lock is unavailable.');
+      }
+      if (
+        !Number.isInteger(observedTtlMs) ||
+        observedTtlMs <= 0 ||
+        observedTtlMs > RECONCILIATION_LOCK_TTL_MS
+      ) {
+        throw new ServiceUnavailableException('Payment reconciliation lock TTL is invalid.');
+      }
+
+      let competingRelease: (() => Promise<void>) | undefined;
+      try {
+        competingRelease = await this.acquireRunLock();
+      } catch (error) {
+        if (!(error instanceof ConflictException)) throw error;
+      }
+      if (competingRelease) {
+        await competingRelease();
+        throw new ServiceUnavailableException('Payment reconciliation lease competition was not rejected.');
+      }
+    } finally {
+      await releaseRunLock();
+    }
+
+    let remainingTtlMs: number;
+    try {
+      remainingTtlMs = await redis.pttl(RECONCILIATION_LOCK_KEY);
+    } catch {
+      throw new ServiceUnavailableException('Payment reconciliation lock cleanup could not be verified.');
+    }
+    if (remainingTtlMs !== -2) {
+      throw new ServiceUnavailableException('Payment reconciliation lock cleanup could not be verified.');
+    }
+
+    return {
+      mechanism: 'redis' as const,
+      acquisition: 'passed' as const,
+      competingAcquisition: 'rejected' as const,
+      observedTtlMs,
+      release: 'verified' as const,
+      remainingTtlMs,
+      persistentTestLock: false as const,
+    };
+  }
+
   private async runLocked(
     actorId: string,
     input: RunPaymentReconciliationDto,

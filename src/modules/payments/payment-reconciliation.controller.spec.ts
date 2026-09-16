@@ -25,6 +25,7 @@ describe('PaymentReconciliationController', () => {
   it('binds runner and resolution audit identity to the authenticated administrator', async () => {
     const service = {
       run: jest.fn().mockResolvedValue({ checkedCount: 0 }),
+      probeRunLock: jest.fn().mockResolvedValue({ mechanism: 'redis' }),
       resolve: jest.fn().mockResolvedValue({ status: 'RESOLVED' }),
     };
     const controller = new PaymentReconciliationController(service as never);
@@ -39,5 +40,23 @@ describe('PaymentReconciliationController', () => {
       '11111111-1111-4111-8111-111111111111',
       expect.objectContaining({ resolution: 'acknowledged' }),
     );
+  });
+
+  it('protects and rate limits the lease probe separately from reconciliation writes', async () => {
+    const service = {
+      run: jest.fn(),
+      probeRunLock: jest.fn().mockResolvedValue({ mechanism: 'redis' }),
+      resolve: jest.fn(),
+    };
+    const controller = new PaymentReconciliationController(service as never);
+
+    expect(Reflect.getMetadata(RATE_LIMIT_KEY, PaymentReconciliationController.prototype.probeLease)).toEqual({
+      identity: 'user',
+      limit: 2,
+      name: 'payment-reconciliation-lease-probe',
+      windowSeconds: 60,
+    });
+    await expect(controller.probeLease()).resolves.toEqual({ mechanism: 'redis' });
+    expect(service.probeRunLock).toHaveBeenCalledTimes(1);
   });
 });

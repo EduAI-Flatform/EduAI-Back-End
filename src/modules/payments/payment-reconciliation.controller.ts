@@ -24,6 +24,13 @@ export class PaymentReconciliationController {
     return this.service.run(actorId, input);
   }
 
+  @Get('lease-probe')
+  @RateLimit({ identity: 'user', limit: 2, name: 'payment-reconciliation-lease-probe', windowSeconds: 60 })
+  @ApiOkResponse({ description: 'Bounded Redis reconciliation lease diagnostic; no financial state mutation.' })
+  probeLease() {
+    return this.service.probeRunLock();
+  }
+
   @Get('cases')
   list(@Query() query: ListPaymentReviewsDto) {
     return this.service.list(query);

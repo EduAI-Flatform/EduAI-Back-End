@@ -25,7 +25,7 @@ const attempt = {
 
 function harness(options: {
   nodeEnv?: 'test' | 'production';
-  redis?: { set: jest.Mock; eval: jest.Mock };
+  redis?: { set: jest.Mock; eval: jest.Mock; pttl?: jest.Mock };
 } = {}) {
   const review = {
     id: '33333333-3333-4333-8333-333333333333',
@@ -197,6 +197,42 @@ describe('PaymentReconciliationService', () => {
       'eduai:commerce:payment-reconciliation:run',
       expect.any(String),
     );
+  });
+
+  it('proves Redis lease acquisition, competition rejection, and cleanup without financial work', async () => {
+    const redis = {
+      set: jest.fn()
+        .mockResolvedValueOnce('OK')
+        .mockResolvedValueOnce(null),
+      eval: jest.fn().mockResolvedValue(1),
+      pttl: jest.fn()
+        .mockResolvedValueOnce(65000)
+        .mockResolvedValueOnce(-2),
+    };
+    const { service, prisma } = harness({ nodeEnv: 'production', redis });
+
+    await expect(service.probeRunLock()).resolves.toEqual({
+      mechanism: 'redis',
+      acquisition: 'passed',
+      competingAcquisition: 'rejected',
+      observedTtlMs: 65000,
+      release: 'verified',
+      remainingTtlMs: -2,
+      persistentTestLock: false,
+    });
+
+    expect(redis.set).toHaveBeenCalledTimes(2);
+    expect(redis.eval).toHaveBeenCalledTimes(1);
+    expect(redis.pttl).toHaveBeenNthCalledWith(
+      1,
+      'eduai:commerce:payment-reconciliation:run',
+    );
+    expect(redis.pttl).toHaveBeenNthCalledWith(
+      2,
+      'eduai:commerce:payment-reconciliation:run',
+    );
+    expect(prisma.commercePaymentAttempt.findMany).not.toHaveBeenCalled();
+    expect(prisma.commerceReconciliationCase.upsert).not.toHaveBeenCalled();
   });
 
   it('aborts a provider poll at the run-wide deadline and leaves later attempts for the next cursor', async () => {
