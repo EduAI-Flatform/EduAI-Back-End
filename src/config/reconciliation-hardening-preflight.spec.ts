@@ -78,6 +78,75 @@ describe('SPR25-007 production migration preflight', () => {
     });
   });
 
+  it('accepts a rolled-back historical attempt followed by one successful attempt', () => {
+    const result = assertMigrationLedgerState({
+      localMigrationNames: [
+        '20260824160000_add_membership_product_type',
+        EXPECTED_RECONCILIATION_MIGRATION,
+      ],
+      migrationRows: [
+        {
+          migration_name: '20260824160000_add_membership_product_type',
+          checksum: appliedMigrationChecksum,
+          finished_at: null,
+          rolled_back_at: new Date(),
+        },
+        {
+          migration_name: '20260824160000_add_membership_product_type',
+          checksum: appliedMigrationChecksum,
+          finished_at: new Date(),
+          rolled_back_at: null,
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      pendingMigrationNames: [EXPECTED_RECONCILIATION_MIGRATION],
+      targetApplied: false,
+    });
+  });
+
+  it('still rejects unfinished attempts and duplicate successful attempts', () => {
+    const migrationName = '20260824160000_add_membership_product_type';
+    const base = {
+      localMigrationNames: [migrationName, EXPECTED_RECONCILIATION_MIGRATION],
+    };
+
+    expect(() =>
+      assertMigrationLedgerState({
+        ...base,
+        migrationRows: [
+          {
+            migration_name: migrationName,
+            checksum: appliedMigrationChecksum,
+            finished_at: null,
+            rolled_back_at: null,
+          },
+        ],
+      }),
+    ).toThrow('Production migration preflight failed');
+
+    expect(() =>
+      assertMigrationLedgerState({
+        ...base,
+        migrationRows: [
+          {
+            migration_name: migrationName,
+            checksum: appliedMigrationChecksum,
+            finished_at: new Date(),
+            rolled_back_at: null,
+          },
+          {
+            migration_name: migrationName,
+            checksum: appliedMigrationChecksum,
+            finished_at: new Date(),
+            rolled_back_at: null,
+          },
+        ],
+      }),
+    ).toThrow('Production migration preflight failed');
+  });
+
   it('fails closed when the target is already applied or another migration is pending', () => {
     expect(() =>
       assertMigrationLedgerState({
@@ -215,6 +284,30 @@ describe('SPR25-007 production migration preflight', () => {
       assertMigrationAppliedExactlyOnce({
         localMigrationNames: [EXPECTED_RECONCILIATION_MIGRATION],
         migrationRows: [
+          {
+            migration_name: EXPECTED_RECONCILIATION_MIGRATION,
+            checksum:
+              '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F',
+            finished_at: new Date(),
+            rolled_back_at: null,
+          },
+        ],
+      }),
+    ).toMatchObject({ targetApplied: true });
+  });
+
+  it('accepts rolled-back attempts when exactly one successful target row remains', () => {
+    expect(
+      assertMigrationAppliedExactlyOnce({
+        localMigrationNames: [EXPECTED_RECONCILIATION_MIGRATION],
+        migrationRows: [
+          {
+            migration_name: EXPECTED_RECONCILIATION_MIGRATION,
+            checksum:
+              '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F',
+            finished_at: null,
+            rolled_back_at: new Date(),
+          },
           {
             migration_name: EXPECTED_RECONCILIATION_MIGRATION,
             checksum:

@@ -295,15 +295,16 @@ function assertMigrationLedgerState({
 
   const applied = new Set();
   for (const row of migrationRows) {
+    const rolledBack = row?.rolled_back_at !== null;
     if (
       !row ||
       typeof row.migration_name !== 'string' ||
       typeof row.checksum !== 'string' ||
       !/^[0-9a-f]{64}$/i.test(row.checksum) ||
-      applied.has(row.migration_name) ||
-      row.rolled_back_at !== null ||
-      row.finished_at === null ||
-      row.finished_at === undefined
+      row.rolled_back_at === undefined ||
+      (rolledBack
+        ? row.finished_at !== null
+        : row.finished_at === null || row.finished_at === undefined)
     ) {
       throw migrationPreflightFailure('MIGRATION_LEDGER_STATE_DRIFT');
     }
@@ -314,6 +315,10 @@ function assertMigrationLedgerState({
           localChecksums[row.migration_name].toUpperCase())
     ) {
       throw migrationPreflightFailure('MIGRATION_LEDGER_CHECKSUM_MISMATCH');
+    }
+    if (rolledBack) continue;
+    if (applied.has(row.migration_name)) {
+      throw migrationPreflightFailure('MIGRATION_LEDGER_STATE_DRIFT');
     }
     applied.add(row.migration_name);
   }
@@ -336,7 +341,8 @@ function assertMigrationLedgerState({
 
   return {
     currentSchemaVersion:
-      migrationRows.at(-1)?.migration_name ?? null,
+      migrationRows.filter((row) => applied.has(row.migration_name)).at(-1)
+        ?.migration_name ?? null,
     pendingMigrationNames,
     targetApplied: false,
   };
@@ -1457,15 +1463,16 @@ function assertMigrationAppliedExactlyOnce({
   const applied = new Set();
   const targetRows = [];
   for (const row of migrationRows) {
+    const rolledBack = row?.rolled_back_at !== null;
     if (
       !row ||
       typeof row.migration_name !== 'string' ||
       typeof row.checksum !== 'string' ||
       !/^[0-9a-f]{64}$/i.test(row.checksum) ||
-      applied.has(row.migration_name) ||
-      row.finished_at === null ||
-      row.finished_at === undefined ||
-      row.rolled_back_at !== null
+      row.rolled_back_at === undefined ||
+      (rolledBack
+        ? row.finished_at !== null
+        : row.finished_at === null || row.finished_at === undefined)
     ) {
       throw safeDatabaseFailure('MIGRATION_LEDGER_STATE_DRIFT');
     }
@@ -1476,6 +1483,10 @@ function assertMigrationAppliedExactlyOnce({
           localChecksums[row.migration_name].toUpperCase())
     ) {
       throw safeDatabaseFailure('MIGRATION_LEDGER_CHECKSUM_MISMATCH');
+    }
+    if (rolledBack) continue;
+    if (applied.has(row.migration_name)) {
+      throw safeDatabaseFailure('MIGRATION_LEDGER_STATE_DRIFT');
     }
     applied.add(row.migration_name);
     if (row.migration_name === expectedMigrationName) targetRows.push(row);
@@ -1495,7 +1506,9 @@ function assertMigrationAppliedExactlyOnce({
   }
 
   return {
-    currentSchemaVersion: migrationRows.at(-1)?.migration_name ?? null,
+    currentSchemaVersion:
+      migrationRows.filter((row) => applied.has(row.migration_name)).at(-1)
+        ?.migration_name ?? null,
     targetApplied: true,
   };
 }
