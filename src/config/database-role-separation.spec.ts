@@ -5,6 +5,7 @@ const {
   classifyMigrationFailure,
   safeMigrationName,
   verifyDatabaseRoleSeparation,
+  buildMigrationChildEnvironment,
 }: {
   classifyMigrationFailure: (log: unknown) => string;
   safeMigrationName: (value: unknown) => string;
@@ -16,6 +17,10 @@ const {
     migrationDatabaseConfigured: boolean;
     databaseRolesSeparated: boolean;
   };
+  buildMigrationChildEnvironment: (
+    runtimeDatabaseUrl: string,
+    migrationDatabaseUrl: string,
+  ) => NodeJS.ProcessEnv;
 } = require('../../scripts/run-production-migrations.cjs');
 const {
   MEMBERSHIP_RUNTIME_TABLES,
@@ -99,12 +104,30 @@ describe('production database role separation', () => {
     );
 
     expect(workflow).toContain('npm run prisma:migrate:production');
+    expect(workflow).toContain('DEPLOYED_SOURCE_REVISION_MISMATCH');
+    expect(workflow).toContain('deployed_backend_sha');
     expect(workflow).not.toMatch(/^\s*npm run prisma:migrate:deploy\s*$/m);
     expect(prismaConfig).toContain('process.env.MIGRATION_DATABASE_URL');
     expect(runtimeClient).toContain('connectionString: env.DATABASE_URL');
     expect(runtimeClient).not.toContain('MIGRATION_DATABASE_URL');
-    expect(migrationRunner).toContain('DATABASE_URL: migrationDatabaseUrl');
+    expect(migrationRunner).toContain('DATABASE_URL: runtimeDatabaseUrl');
+    expect(migrationRunner).toContain('MIGRATION_DATABASE_URL: migrationDatabaseUrl');
     expect(migrationRunner).toContain('grantRuntimeMembershipPrivileges');
+  });
+
+  it('keeps the runtime role in the migration child environment', () => {
+    const environment = buildMigrationChildEnvironment(
+      'postgresql://eduai_runtime:runtime-secret@db.example/eduai',
+      'postgresql://eduai_migration:migration-secret@db.example/eduai',
+    );
+
+    expect(environment.DATABASE_URL).toBe(
+      'postgresql://eduai_runtime:runtime-secret@db.example/eduai',
+    );
+    expect(environment.MIGRATION_DATABASE_URL).toBe(
+      'postgresql://eduai_migration:migration-secret@db.example/eduai',
+    );
+    expect(environment.PGOPTIONS).toBe('-c search_path=public,pg_catalog');
   });
 
   it('classifies stored migration failures without returning their raw details', () => {

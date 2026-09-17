@@ -750,7 +750,7 @@ model CommerceReconciliationCase {
   paymentAttemptId String?                        @map("payment_attempt_id") @db.Uuid
   kind           CommerceReconciliationKind
   reasonCode     String                           @map("reason_code") @db.VarChar(80)
-  sourceKey      String?                          @unique @map("source_key") @db.VarChar(160)
+  sourceKey      String                           @unique @map("source_key") @db.VarChar(160)
   status         CommerceReconciliationStatus     @default(open)
   statusOperationId String?                        @map("status_operation_id") @db.Uuid
   resolution     CommerceReconciliationResolution?
@@ -765,11 +765,25 @@ model CommerceReconciliationCase {
   paymentAttempt CommercePaymentAttempt?          @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
   resolvedBy     User?                            @relation("CommerceReconciliationResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
   refund         CommerceRefund?
+  legacyAcknowledgement CommerceReconciliationLegacyAcknowledgement?
 
   @@index([status, openedAt])
   @@index([orderId, status])
   @@index([paymentAttemptId, status])
   @@map("commerce_reconciliation_cases")
+}
+
+model CommerceReconciliationLegacyAcknowledgement {
+  reconciliationCaseId String                    @id @map("reconciliation_case_id") @db.Uuid
+  historicalStatus     String                    @map("historical_status") @db.VarChar(40)
+  historicalResolution String                    @map("historical_resolution") @db.VarChar(40)
+  historicalReasonCode String                    @map("historical_reason_code") @db.VarChar(80)
+  preservationReason   String                    @map("preservation_reason") @db.VarChar(120)
+  recordedAt           DateTime                  @default(now()) @map("recorded_at")
+  migrationVersion     String                    @map("migration_version") @db.VarChar(64)
+  reconciliationCase   CommerceReconciliationCase @relation(fields: [reconciliationCaseId], references: [id], onDelete: Restrict)
+
+  @@map("commerce_reconciliation_legacy_acknowledgements")
 }
 
 model CommerceRefund {

@@ -130,13 +130,25 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
+          case "$GITHUB_SHA" in
+            ???????*)
+              if [ "${#GITHUB_SHA}" -ne 40 ]; then
+                echo "deploymentFailureClass: WORKFLOW_SHA_INVALID"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "deploymentFailureClass: WORKFLOW_SHA_INVALID"
+              exit 1
+              ;;
+          esac
           ssh \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -i ~/.ssh/eduai_deploy \
             -p "$VPS_PORT" \
-            "$VPS_USER@$VPS_HOST" << 'EOF'
+            "$VPS_USER@$VPS_HOST" "EXPECTED_DEPLOY_SHA='$GITHUB_SHA' bash -s" << 'EOF'
           set -Eeuo pipefail
 
           deployment_stage="initialization"
@@ -218,6 +230,13 @@ jobs:
             exit 1
           fi
           git reset --hard origin/main
+
+          deployed_backend_sha="$(git rev-parse --verify HEAD)"
+          if [ "$deployed_backend_sha" != "$EXPECTED_DEPLOY_SHA" ]; then
+            echo "deploymentFailureClass: DEPLOYED_SOURCE_REVISION_MISMATCH"
+            exit 1
+          fi
+          echo "deployedBackendSha: $deployed_backend_sha"
 
           if [ ! -f .env ]; then
             echo "ERROR: /var/www/eduai/backend/.env does not exist"
