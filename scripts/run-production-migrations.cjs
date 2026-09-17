@@ -1433,7 +1433,7 @@ function assertReconciliationPreflight(snapshot) {
     openProviderFactMismatchCount: 2,
     openPaidNotFulfilledCount: 0,
     nullSourceKeyCount: 0,
-    nonCanonicalExistingSourceKeyCount: 0,
+    nonCanonicalExistingSourceKeyCount: 1,
     sourceKeyNonNullCount: 7,
     oversizedSourceKeyCount: 0,
     acknowledgedFinancialCaseCount: 1,

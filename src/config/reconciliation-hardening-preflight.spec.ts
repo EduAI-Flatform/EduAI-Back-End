@@ -218,7 +218,7 @@ describe('SPR25-007 production migration preflight', () => {
       openProviderFactMismatchCount: 2,
       openPaidNotFulfilledCount: 0,
       nullSourceKeyCount: 0,
-      nonCanonicalExistingSourceKeyCount: 0,
+      nonCanonicalExistingSourceKeyCount: 1,
       sourceKeyNonNullCount: 7,
       oversizedSourceKeyCount: 0,
       unprovenLegacyCaseCount: 0,
@@ -262,7 +262,7 @@ describe('SPR25-007 production migration preflight', () => {
     expect(() =>
       assertReconciliationPreflight({
         ...safeSnapshot,
-        nonCanonicalExistingSourceKeyCount: 1,
+        nonCanonicalExistingSourceKeyCount: 0,
       }),
     ).toThrow('Production migration preflight failed');
   });
