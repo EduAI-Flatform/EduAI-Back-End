@@ -1153,11 +1153,21 @@ async function runSafePreflightStage(stage, callback) {
   try {
     return await callback();
   } catch (error) {
-    if (error && typeof error.failureClass === 'string') {
-      if (!error.preflightStage) error.preflightStage = stage;
-      throw error;
-    }
-    const safeError = safeDatabaseFailure(failureClass);
+    const attachedClass =
+      error &&
+      typeof error === 'object' &&
+      typeof error.failureClass === 'string' &&
+      /^[A-Z0-9_]+$/.test(error.failureClass)
+        ? error.failureClass
+        : failureClass;
+    const connectionSource =
+      error &&
+      typeof error === 'object' &&
+      typeof error.databaseConnectionSource === 'string' &&
+      SAFE_DATABASE_CONNECTION_SOURCES.has(error.databaseConnectionSource)
+        ? error.databaseConnectionSource
+        : undefined;
+    const safeError = safeDatabaseFailure(attachedClass, connectionSource);
     safeError.preflightStage = stage;
     throw safeError;
   }

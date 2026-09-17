@@ -376,6 +376,9 @@ describe('SPR25-007 production migration preflight', () => {
       runSafePreflightStage('SNAPSHOT', async () => {
         throw classified;
       }),
-    ).rejects.toBe(classified);
+    ).rejects.toMatchObject({
+      failureClass: 'MIGRATION_PREFLIGHT_STATE_DRIFT',
+      preflightStage: 'SNAPSHOT',
+    });
   });
 });
