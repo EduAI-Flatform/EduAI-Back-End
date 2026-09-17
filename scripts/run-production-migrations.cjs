@@ -1097,24 +1097,37 @@ const FINANCIAL_DIGEST_KEYS = [
   'reconciliation_non_null_source_keys',
 ];
 
-function safeDatabaseFailure(failureClass) {
-  return migrationPreflightFailure(failureClass);
+const SAFE_DATABASE_CONNECTION_SOURCES = new Set([
+  'DATABASE_URL',
+  'MIGRATION_DATABASE_URL',
+]);
+
+function safeDatabaseFailure(failureClass, databaseConnectionSource) {
+  const error = migrationPreflightFailure(failureClass);
+  if (SAFE_DATABASE_CONNECTION_SOURCES.has(databaseConnectionSource)) {
+    error.databaseConnectionSource = databaseConnectionSource;
+  }
+  return error;
+}
+
+function buildDatabaseClientConfig(connectionString, applicationName) {
+  return {
+    application_name: applicationName,
+    connectionString,
+    connectionTimeoutMillis: 10000,
+    query_timeout: 10000,
+  };
 }
 
 function buildDatabaseClient(connectionString, applicationName) {
-  return new Client({
-    application_name: applicationName,
-    connectionString,
-    options: '-c search_path=public,pg_catalog',
-    connectionTimeoutMillis: 10000,
-    query_timeout: 10000,
-  });
+  return new Client(buildDatabaseClientConfig(connectionString, applicationName));
 }
 
 async function withReadOnlyTransaction(
   connectionString,
   applicationName,
   callback,
+  databaseConnectionSource = 'MIGRATION_DATABASE_URL',
 ) {
   const client = buildDatabaseClient(connectionString, applicationName);
   let transactionOpen = false;
@@ -1122,7 +1135,10 @@ async function withReadOnlyTransaction(
     try {
       await client.connect();
     } catch {
-      throw safeDatabaseFailure('MIGRATION_DATABASE_CONNECTION_FAILED');
+      throw safeDatabaseFailure(
+        'MIGRATION_DATABASE_CONNECTION_FAILED',
+        databaseConnectionSource,
+      );
     }
 
     try {
@@ -1155,7 +1171,10 @@ async function inspectServerIdentity(connectionString, expectedName) {
     try {
       await client.connect();
     } catch {
-      throw safeDatabaseFailure('MIGRATION_DATABASE_CONNECTION_FAILED');
+      throw safeDatabaseFailure(
+        'MIGRATION_DATABASE_CONNECTION_FAILED',
+        expectedName,
+      );
     }
 
     let result;
@@ -1232,6 +1251,7 @@ async function verifyMigrationRolePrivileges(migrationUrl) {
       }
       return { migrationRolePrivilegesVerified: true };
     },
+    'MIGRATION_DATABASE_URL',
   );
 }
 
@@ -1270,6 +1290,7 @@ async function verifyRuntimeFinancialGuardPrivileges(runtimeUrl) {
       }
       return { runtimeFinancialGuardPrivilegesBlocked: true };
     },
+    'DATABASE_URL',
   );
 }
 
@@ -1624,11 +1645,22 @@ function createSafeMigrationPreflightDiagnostic(error) {
     error && typeof error === 'object' && typeof error.failureClass === 'string'
       ? error.failureClass
       : '';
-  if (/^[A-Z0-9_]+$/.test(attachedClass)) {
-    return { failureClass: attachedClass };
-  }
   const message = error instanceof Error ? error.message : '';
-  return { failureClass: classifyMigrationFailure(message) };
+  const diagnostic = {
+    failureClass: /^[A-Z0-9_]+$/.test(attachedClass)
+      ? attachedClass
+      : classifyMigrationFailure(message),
+  };
+  const connectionSource =
+    error &&
+    typeof error === 'object' &&
+    typeof error.databaseConnectionSource === 'string'
+      ? error.databaseConnectionSource
+      : '';
+  if (SAFE_DATABASE_CONNECTION_SOURCES.has(connectionSource)) {
+    diagnostic.databaseConnectionSource = connectionSource;
+  }
+  return diagnostic;
 }
 
 function buildMigrationChildEnvironment(runtimeDatabaseUrl, migrationDatabaseUrl) {
@@ -1687,6 +1719,7 @@ async function runMigrationPreflight({
         financialDigest,
       };
     },
+    'MIGRATION_DATABASE_URL',
   );
 
   return {
@@ -1743,6 +1776,7 @@ async function runMigrationPostflight({
         financialDigest: parseDigestSnapshot(digestResult),
       };
     },
+    'MIGRATION_DATABASE_URL',
   );
 
   const checks = assertReconciliationPostflight({
@@ -1875,6 +1909,11 @@ if (require.main === module) {
   run().catch((error) => {
     const diagnostic = createSafeMigrationPreflightDiagnostic(error);
     console.error(`migrationFailureClass: ${diagnostic.failureClass}`);
+    if (diagnostic.databaseConnectionSource) {
+      console.error(
+        `migrationDatabaseConnectionSource: ${diagnostic.databaseConnectionSource}`,
+      );
+    }
     console.error('Production migration failed closed');
     process.exitCode = 1;
   });
@@ -1900,6 +1939,7 @@ module.exports = {
   assertReviewedMigrationFingerprint,
   classifyMigrationFailure,
   createSafeMigrationPreflightDiagnostic,
+  buildDatabaseClientConfig,
   localMigrationNames,
   localMigrationChecksums,
   loadMigrationDatabaseUrl,

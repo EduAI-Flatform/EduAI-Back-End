@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Client } from 'pg';
 
 const {
   classifyMigrationFailure,
   safeMigrationName,
   verifyDatabaseRoleSeparation,
   buildMigrationChildEnvironment,
+  buildDatabaseClientConfig,
+  createSafeMigrationPreflightDiagnostic,
 }: {
   classifyMigrationFailure: (log: unknown) => string;
   safeMigrationName: (value: unknown) => string;
@@ -21,6 +24,14 @@ const {
     runtimeDatabaseUrl: string,
     migrationDatabaseUrl: string,
   ) => NodeJS.ProcessEnv;
+  buildDatabaseClientConfig: (
+    connectionString: string,
+    applicationName: string,
+  ) => Record<string, unknown>;
+  createSafeMigrationPreflightDiagnostic: (error: unknown) => {
+    failureClass: string;
+    databaseConnectionSource?: string;
+  };
 } = require('../../scripts/run-production-migrations.cjs');
 const {
   MEMBERSHIP_RUNTIME_TABLES,
@@ -128,6 +139,38 @@ describe('production database role separation', () => {
       'postgresql://eduai_migration:migration-secret@db.example/eduai',
     );
     expect(environment.PGOPTIONS).toBe('-c search_path=public,pg_catalog');
+  });
+
+  it('does not send PgBouncer-incompatible startup options to database connections', () => {
+    const config = buildDatabaseClientConfig(
+      'postgresql://migration:placeholder@pool.example/eduai',
+      'eduai-migration-role-identity',
+    );
+    const startup = (new Client(config) as unknown as {
+      getStartupConf: () => Record<string, string>;
+    }).getStartupConf();
+
+    expect(startup).not.toHaveProperty('options');
+    expect(config).toMatchObject({
+      application_name: 'eduai-migration-role-identity',
+      connectionTimeoutMillis: 10000,
+      query_timeout: 10000,
+    });
+  });
+
+  it('reports only the safe database URL source for a connection failure', () => {
+    const diagnostic = createSafeMigrationPreflightDiagnostic(
+      Object.assign(new Error('sensitive endpoint and password detail'), {
+        failureClass: 'MIGRATION_DATABASE_CONNECTION_FAILED',
+        databaseConnectionSource: 'MIGRATION_DATABASE_URL',
+      }),
+    );
+
+    expect(diagnostic).toEqual({
+      failureClass: 'MIGRATION_DATABASE_CONNECTION_FAILED',
+      databaseConnectionSource: 'MIGRATION_DATABASE_URL',
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain('sensitive');
   });
 
   it('classifies stored migration failures without returning their raw details', () => {
