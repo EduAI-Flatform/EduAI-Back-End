@@ -1148,11 +1148,18 @@ async function runSafePreflightStage(stage, callback) {
     throw safeDatabaseFailure('MIGRATION_PREFLIGHT_INTERNAL_FAILURE');
   }
 
+  console.log(`migrationPreflightStage: ${stage}`);
+
   try {
     return await callback();
   } catch (error) {
-    if (error && typeof error.failureClass === 'string') throw error;
-    throw safeDatabaseFailure(failureClass);
+    if (error && typeof error.failureClass === 'string') {
+      if (!error.preflightStage) error.preflightStage = stage;
+      throw error;
+    }
+    const safeError = safeDatabaseFailure(failureClass);
+    safeError.preflightStage = stage;
+    throw safeError;
   }
 }
 
@@ -1704,6 +1711,15 @@ function createSafeMigrationPreflightDiagnostic(error) {
       ? attachedClass
       : classifyMigrationFailure(message),
   };
+  const preflightStage =
+    error &&
+    typeof error === 'object' &&
+    typeof error.preflightStage === 'string'
+      ? error.preflightStage
+      : '';
+  if (PREFLIGHT_STAGE_FAILURE_CLASSES[preflightStage]) {
+    diagnostic.preflightStage = preflightStage;
+  }
   const connectionSource =
     error &&
     typeof error === 'object' &&
@@ -1996,6 +2012,9 @@ if (require.main === module) {
   run().catch((error) => {
     const diagnostic = createSafeMigrationPreflightDiagnostic(error);
     console.error(`migrationFailureClass: ${diagnostic.failureClass}`);
+    if (diagnostic.preflightStage) {
+      console.error(`migrationPreflightStage: ${diagnostic.preflightStage}`);
+    }
     if (diagnostic.databaseConnectionSource) {
       console.error(
         `migrationDatabaseConnectionSource: ${diagnostic.databaseConnectionSource}`,

@@ -43,6 +43,7 @@ const {
   RECONCILIATION_FINANCIAL_ROW_COUNTS: Record<string, number>;
   createSafeMigrationPreflightDiagnostic: (error: unknown) => {
     failureClass: string;
+    preflightStage?: string;
   };
   extractSafeMigrationErrorCodes: (log: unknown) => {
     prismaCode?: string;
@@ -361,6 +362,7 @@ describe('SPR25-007 production migration preflight', () => {
 
     expect(unexpected).toMatchObject({
       failureClass: 'MIGRATION_PREFLIGHT_ROLE_VERIFICATION_FAILED',
+      preflightStage: 'ROLE_VERIFICATION',
     });
     expect(unexpected.message).toBe('Production migration preflight failed');
     expect(JSON.stringify(unexpected)).not.toContain('password');
