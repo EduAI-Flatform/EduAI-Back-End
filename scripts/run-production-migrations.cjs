@@ -1130,6 +1130,32 @@ function safeDatabaseFailure(failureClass, databaseConnectionSource) {
   return error;
 }
 
+const PREFLIGHT_STAGE_FAILURE_CLASSES = Object.freeze({
+  ARTIFACT: 'MIGRATION_PREFLIGHT_ARTIFACT_FAILED',
+  CONFIGURATION: 'MIGRATION_PREFLIGHT_CONFIGURATION_FAILED',
+  ROLE_VERIFICATION: 'MIGRATION_PREFLIGHT_ROLE_VERIFICATION_FAILED',
+  ROLE_PRIVILEGE: 'MIGRATION_PREFLIGHT_ROLE_PRIVILEGE_FAILED',
+  LOCAL_ARTIFACTS: 'MIGRATION_PREFLIGHT_LOCAL_ARTIFACTS_FAILED',
+  SNAPSHOT: 'MIGRATION_PREFLIGHT_SNAPSHOT_FAILED',
+  INITIAL: 'MIGRATION_PREFLIGHT_INITIAL_FAILED',
+  REPEAT: 'MIGRATION_PREFLIGHT_REPEAT_FAILED',
+  STABILITY: 'MIGRATION_PREFLIGHT_STABILITY_FAILED',
+});
+
+async function runSafePreflightStage(stage, callback) {
+  const failureClass = PREFLIGHT_STAGE_FAILURE_CLASSES[stage];
+  if (!failureClass || typeof callback !== 'function') {
+    throw safeDatabaseFailure('MIGRATION_PREFLIGHT_INTERNAL_FAILURE');
+  }
+
+  try {
+    return await callback();
+  } catch (error) {
+    if (error && typeof error.failureClass === 'string') throw error;
+    throw safeDatabaseFailure(failureClass);
+  }
+}
+
 function buildDatabaseClientConfig(connectionString, applicationName) {
   return {
     application_name: applicationName,
@@ -1704,49 +1730,64 @@ async function runMigrationPreflight({
   runtimeUrl,
   migrationUrl,
 }) {
-  const migrationHash = assertReviewedMigrationFingerprint(rootDirectory);
-  const roles = await verifyDatabaseRoleSeparationAtServer(
-    runtimeUrl,
-    migrationUrl,
+  const migrationHash = await runSafePreflightStage(
+    'ARTIFACT',
+    () => assertReviewedMigrationFingerprint(rootDirectory),
   );
-  const privileges = await verifyMigrationRolePrivileges(migrationUrl);
-  const localNames = localMigrationNames(rootDirectory);
-  const localChecksums = localMigrationChecksums(rootDirectory, localNames);
-  const preflight = await withReadOnlyTransaction(
-    migrationUrl,
-    'eduai-migration-preflight',
-    async (client) => {
-      let ledgerResult;
-      let schemaResult;
-      let caseResult;
-      let digestResult;
-      try {
-        ledgerResult = await client.query(MIGRATION_LEDGER_QUERY);
-        schemaResult = await client.query(RECONCILIATION_SCHEMA_QUERY);
-        caseResult = await client.query(RECONCILIATION_CASE_STATE_QUERY);
-        digestResult = await client.query(RECONCILIATION_FINANCIAL_DIGEST_QUERY);
-      } catch {
-        throw safeDatabaseFailure('MIGRATION_PREFLIGHT_QUERY_FAILED');
-      }
-      if (schemaResult.rowCount !== 1 || caseResult.rowCount !== 1) {
-        throw safeDatabaseFailure('MIGRATION_PREFLIGHT_METADATA_INCOMPLETE');
-      }
-      const ledger = assertMigrationLedgerState({
-        localMigrationNames: localNames,
-        localMigrationChecksums: localChecksums,
-        migrationRows: ledgerResult.rows,
-      });
-      const caseSnapshot = assertReconciliationPreflight(caseResult.rows[0]);
-      const financialDigest = parseDigestSnapshot(digestResult);
-      assertReconciliationFinancialBaseline(financialDigest);
-      return {
-        ledger,
-        schema: schemaResult.rows[0],
-        caseSnapshot,
-        financialDigest,
-      };
-    },
-    'MIGRATION_DATABASE_URL',
+  const roles = await runSafePreflightStage(
+    'ROLE_VERIFICATION',
+    () => verifyDatabaseRoleSeparationAtServer(runtimeUrl, migrationUrl),
+  );
+  const privileges = await runSafePreflightStage(
+    'ROLE_PRIVILEGE',
+    () => verifyMigrationRolePrivileges(migrationUrl),
+  );
+  const localNames = await runSafePreflightStage(
+    'LOCAL_ARTIFACTS',
+    () => localMigrationNames(rootDirectory),
+  );
+  const localChecksums = await runSafePreflightStage(
+    'LOCAL_ARTIFACTS',
+    () => localMigrationChecksums(rootDirectory, localNames),
+  );
+  const preflight = await runSafePreflightStage(
+    'SNAPSHOT',
+    () => withReadOnlyTransaction(
+      migrationUrl,
+      'eduai-migration-preflight',
+      async (client) => {
+        let ledgerResult;
+        let schemaResult;
+        let caseResult;
+        let digestResult;
+        try {
+          ledgerResult = await client.query(MIGRATION_LEDGER_QUERY);
+          schemaResult = await client.query(RECONCILIATION_SCHEMA_QUERY);
+          caseResult = await client.query(RECONCILIATION_CASE_STATE_QUERY);
+          digestResult = await client.query(RECONCILIATION_FINANCIAL_DIGEST_QUERY);
+        } catch {
+          throw safeDatabaseFailure('MIGRATION_PREFLIGHT_QUERY_FAILED');
+        }
+        if (schemaResult.rowCount !== 1 || caseResult.rowCount !== 1) {
+          throw safeDatabaseFailure('MIGRATION_PREFLIGHT_METADATA_INCOMPLETE');
+        }
+        const ledger = assertMigrationLedgerState({
+          localMigrationNames: localNames,
+          localMigrationChecksums: localChecksums,
+          migrationRows: ledgerResult.rows,
+        });
+        const caseSnapshot = assertReconciliationPreflight(caseResult.rows[0]);
+        const financialDigest = parseDigestSnapshot(digestResult);
+        assertReconciliationFinancialBaseline(financialDigest);
+        return {
+          ledger,
+          schema: schemaResult.rows[0],
+          caseSnapshot,
+          financialDigest,
+        };
+      },
+      'MIGRATION_DATABASE_URL',
+    ),
   );
 
   return {
@@ -1819,19 +1860,31 @@ async function run() {
   const rootDirectory = process.cwd();
   dotenv.config({ quiet: true });
   const runtimeDatabaseUrl = process.env.DATABASE_URL;
-  const migrationDatabaseUrl = loadMigrationDatabaseUrl(rootDirectory);
+  const migrationDatabaseUrl = await runSafePreflightStage(
+    'CONFIGURATION',
+    () => loadMigrationDatabaseUrl(rootDirectory),
+  );
 
-  let preflight = await runMigrationPreflight({
-    rootDirectory,
-    runtimeUrl: runtimeDatabaseUrl,
-    migrationUrl: migrationDatabaseUrl,
-  });
-  const repeatPreflight = await runMigrationPreflight({
-    rootDirectory,
-    runtimeUrl: runtimeDatabaseUrl,
-    migrationUrl: migrationDatabaseUrl,
-  });
-  assertReconciliationPreflightStable(preflight, repeatPreflight);
+  let preflight = await runSafePreflightStage(
+    'INITIAL',
+    () => runMigrationPreflight({
+      rootDirectory,
+      runtimeUrl: runtimeDatabaseUrl,
+      migrationUrl: migrationDatabaseUrl,
+    }),
+  );
+  const repeatPreflight = await runSafePreflightStage(
+    'REPEAT',
+    () => runMigrationPreflight({
+      rootDirectory,
+      runtimeUrl: runtimeDatabaseUrl,
+      migrationUrl: migrationDatabaseUrl,
+    }),
+  );
+  await runSafePreflightStage(
+    'STABILITY',
+    () => assertReconciliationPreflightStable(preflight, repeatPreflight),
+  );
   preflight = repeatPreflight;
 
   console.log(`migrationFileHash: ${preflight.migrationHash}`);
@@ -1973,6 +2026,7 @@ module.exports = {
   assertReviewedMigrationFingerprint,
   classifyMigrationFailure,
   extractSafeMigrationErrorCodes,
+  runSafePreflightStage,
   createSafeMigrationPreflightDiagnostic,
   buildDatabaseClientConfig,
   localMigrationNames,

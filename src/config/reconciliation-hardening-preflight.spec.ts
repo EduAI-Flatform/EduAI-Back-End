@@ -8,6 +8,7 @@ const {
   RECONCILIATION_FINANCIAL_ROW_COUNTS,
   createSafeMigrationPreflightDiagnostic,
   extractSafeMigrationErrorCodes,
+  runSafePreflightStage,
 }: {
   EXPECTED_RECONCILIATION_MIGRATION: string;
   assertMigrationLedgerState: (input: {
@@ -47,6 +48,10 @@ const {
     prismaCode?: string;
     sqlState?: string;
   };
+  runSafePreflightStage: <T>(
+    stage: string,
+    callback: () => T | Promise<T>,
+  ) => Promise<T>;
 } = require('../../scripts/run-production-migrations.cjs');
 
 describe('SPR25-007 production migration preflight', () => {
@@ -344,5 +349,31 @@ describe('SPR25-007 production migration preflight', () => {
     expect(diagnostic).toEqual({ prismaCode: 'P3018', sqlState: '42704' });
     expect(JSON.stringify(diagnostic)).not.toContain('redacted-role');
     expect(JSON.stringify(diagnostic)).not.toContain('credential-redacted');
+  });
+
+  it('labels unexpected preflight errors without exposing raw details', async () => {
+    const unexpected = await runSafePreflightStage(
+      'ROLE_VERIFICATION',
+      async () => {
+        throw new Error('password and endpoint must never be returned');
+      },
+    ).catch((error) => error);
+
+    expect(unexpected).toMatchObject({
+      failureClass: 'MIGRATION_PREFLIGHT_ROLE_VERIFICATION_FAILED',
+    });
+    expect(unexpected.message).toBe('Production migration preflight failed');
+    expect(JSON.stringify(unexpected)).not.toContain('password');
+    expect(JSON.stringify(unexpected)).not.toContain('endpoint');
+
+    const classified = Object.assign(
+      new Error('already-safe'),
+      { failureClass: 'MIGRATION_PREFLIGHT_STATE_DRIFT' },
+    );
+    await expect(
+      runSafePreflightStage('SNAPSHOT', async () => {
+        throw classified;
+      }),
+    ).rejects.toBe(classified);
   });
 });
