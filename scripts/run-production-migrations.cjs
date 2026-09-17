@@ -1786,24 +1786,35 @@ async function runMigrationPreflight({
         let schemaResult;
         let caseResult;
         let digestResult;
+        const logSnapshotStep = (step) =>
+          console.log(`migrationPreflightSnapshotStep: ${step}`);
         try {
+          logSnapshotStep('LEDGER_QUERY');
           ledgerResult = await client.query(MIGRATION_LEDGER_QUERY);
+          logSnapshotStep('SCHEMA_QUERY');
           schemaResult = await client.query(RECONCILIATION_SCHEMA_QUERY);
+          logSnapshotStep('CASE_QUERY');
           caseResult = await client.query(RECONCILIATION_CASE_STATE_QUERY);
+          logSnapshotStep('DIGEST_QUERY');
           digestResult = await client.query(RECONCILIATION_FINANCIAL_DIGEST_QUERY);
         } catch {
           throw safeDatabaseFailure('MIGRATION_PREFLIGHT_QUERY_FAILED');
         }
+        logSnapshotStep('METADATA_ASSERT');
         if (schemaResult.rowCount !== 1 || caseResult.rowCount !== 1) {
           throw safeDatabaseFailure('MIGRATION_PREFLIGHT_METADATA_INCOMPLETE');
         }
+        logSnapshotStep('LEDGER_ASSERT');
         const ledger = assertMigrationLedgerState({
           localMigrationNames: localNames,
           localMigrationChecksums: localChecksums,
           migrationRows: ledgerResult.rows,
         });
+        logSnapshotStep('CASE_ASSERT');
         const caseSnapshot = assertReconciliationPreflight(caseResult.rows[0]);
+        logSnapshotStep('DIGEST_PARSE');
         const financialDigest = parseDigestSnapshot(digestResult);
+        logSnapshotStep('DIGEST_BASELINE');
         assertReconciliationFinancialBaseline(financialDigest);
         return {
           ledger,
