@@ -1811,7 +1811,10 @@ async function runMigrationPreflight({
           migrationRows: ledgerResult.rows,
         });
         logSnapshotStep('CASE_ASSERT');
-        const caseSnapshot = assertReconciliationPreflight(caseResult.rows[0]);
+        const caseSnapshot = assertReconciliationPreflight({
+          ...schemaResult.rows[0],
+          ...caseResult.rows[0],
+        });
         logSnapshotStep('DIGEST_PARSE');
         const financialDigest = parseDigestSnapshot(digestResult);
         logSnapshotStep('DIGEST_BASELINE');
