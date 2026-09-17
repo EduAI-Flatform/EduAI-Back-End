@@ -168,6 +168,20 @@ function classifyMigrationFailure(log) {
   return 'UNKNOWN_SCHEMA_MIGRATION_FAILURE';
 }
 
+function extractSafeMigrationErrorCodes(log) {
+  const value = typeof log === 'string' ? log : '';
+  const prismaCode = value.match(/\bError:\s*(P\d{4})\b/i)?.[1]?.toUpperCase();
+  const sqlState = (
+    value.match(/\bDatabase error code:\s*([0-9A-Z]{5})\b/i)?.[1] ??
+    value.match(/\bSQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/i)?.[1]
+  )?.toUpperCase();
+
+  return {
+    ...(prismaCode ? { prismaCode } : {}),
+    ...(sqlState ? { sqlState } : {}),
+  };
+}
+
 function emitMigrationFailure(failureClass, migrationName) {
   const migrationSuffix = migrationName ? `;migration=${migrationName}` : '';
   console.log(`migrationFailureClass: ${failureClass}`);
@@ -1890,6 +1904,13 @@ async function run() {
     const migrationOutput = [migration.stdout, migration.stderr]
       .filter((value) => typeof value === 'string' && value)
       .join('\n');
+    const safeErrorCodes = extractSafeMigrationErrorCodes(migrationOutput);
+    if (safeErrorCodes.prismaCode) {
+      console.error(`migrationPrismaErrorCode: ${safeErrorCodes.prismaCode}`);
+    }
+    if (safeErrorCodes.sqlState) {
+      console.error(`migrationSqlState: ${safeErrorCodes.sqlState}`);
+    }
     const failureClass = classifyMigrationFailure(migrationOutput);
     throw safeDatabaseFailure(failureClass);
   }
@@ -1951,6 +1972,7 @@ module.exports = {
   assertReconciliationPreflight,
   assertReviewedMigrationFingerprint,
   classifyMigrationFailure,
+  extractSafeMigrationErrorCodes,
   createSafeMigrationPreflightDiagnostic,
   buildDatabaseClientConfig,
   localMigrationNames,

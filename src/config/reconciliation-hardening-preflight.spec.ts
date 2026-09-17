@@ -7,6 +7,7 @@ const {
   assertReconciliationFinancialBaseline,
   RECONCILIATION_FINANCIAL_ROW_COUNTS,
   createSafeMigrationPreflightDiagnostic,
+  extractSafeMigrationErrorCodes,
 }: {
   EXPECTED_RECONCILIATION_MIGRATION: string;
   assertMigrationLedgerState: (input: {
@@ -41,6 +42,10 @@ const {
   RECONCILIATION_FINANCIAL_ROW_COUNTS: Record<string, number>;
   createSafeMigrationPreflightDiagnostic: (error: unknown) => {
     failureClass: string;
+  };
+  extractSafeMigrationErrorCodes: (log: unknown) => {
+    prismaCode?: string;
+    sqlState?: string;
   };
 } = require('../../scripts/run-production-migrations.cjs');
 
@@ -329,5 +334,15 @@ describe('SPR25-007 production migration preflight', () => {
 
     expect(diagnostic.failureClass).toBe('MIGRATION_DATABASE_CONNECTION_FAILED');
     expect(JSON.stringify(diagnostic)).not.toContain('migration-secret-role');
+  });
+
+  it('extracts only credential-safe Prisma and SQLSTATE identifiers', () => {
+    const diagnostic = extractSafeMigrationErrorCodes(
+      'Error: P3018 at redacted-role; Database error code: 42704; credential-redacted',
+    );
+
+    expect(diagnostic).toEqual({ prismaCode: 'P3018', sqlState: '42704' });
+    expect(JSON.stringify(diagnostic)).not.toContain('redacted-role');
+    expect(JSON.stringify(diagnostic)).not.toContain('credential-redacted');
   });
 });
