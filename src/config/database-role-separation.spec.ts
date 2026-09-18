@@ -36,11 +36,23 @@ const {
 const {
   MEMBERSHIP_RUNTIME_TABLES,
   buildRuntimePrivilegeStatement,
+  buildRuntimeLegacyMarkerRevokeStatement,
   grantRuntimeMembershipPrivileges,
+  revokeRuntimeLegacyMarkerPrivileges,
 }: {
   MEMBERSHIP_RUNTIME_TABLES: readonly string[];
   buildRuntimePrivilegeStatement: (runtimeUrl: string) => string;
+  buildRuntimeLegacyMarkerRevokeStatement: (runtimeUrl: string) => string;
   grantRuntimeMembershipPrivileges: (
+    migrationUrl: string,
+    runtimeUrl: string,
+    ClientConstructor?: new (config: Record<string, unknown>) => {
+      connect: () => Promise<void>;
+      query: (sql: string) => Promise<void>;
+      end: () => Promise<void>;
+    },
+  ) => Promise<void>;
+  revokeRuntimeLegacyMarkerPrivileges: (
     migrationUrl: string,
     runtimeUrl: string,
     ClientConstructor?: new (config: Record<string, unknown>) => {
@@ -124,6 +136,9 @@ describe('production database role separation', () => {
     expect(migrationRunner).toContain('DATABASE_URL: runtimeDatabaseUrl');
     expect(migrationRunner).toContain('MIGRATION_DATABASE_URL: migrationDatabaseUrl');
     expect(migrationRunner).toContain('grantRuntimeMembershipPrivileges');
+    expect(migrationRunner).toContain('allowAlreadyApplied: true');
+    expect(migrationRunner).toContain('SKIPPED_ALREADY_APPLIED');
+    expect(migrationRunner).toContain('revokeRuntimeLegacyMarkerPrivileges');
   });
 
   it('keeps the runtime role in the migration child environment', () => {
@@ -206,6 +221,9 @@ describe('production database role separation', () => {
     expect(classifyMigrationFailure('Runtime membership privilege grant failed')).toBe(
       'RUNTIME_PRIVILEGE_GRANT_FAILED',
     );
+    expect(classifyMigrationFailure('Runtime legacy marker privilege correction failed')).toBe(
+      'RUNTIME_LEGACY_MARKER_PRIVILEGE_CORRECTION_FAILED',
+    );
   });
 
   it('grants only membership-table DML to the URL-derived runtime role', () => {
@@ -229,6 +247,19 @@ describe('production database role separation', () => {
     expect(statement).not.toContain('_prisma_migrations');
     expect(statement).not.toMatch(/\b(ALTER|OWNER|BYPASSRLS|SUPERUSER)\b/i);
     expect(statement).not.toMatch(/\bDELETE\b/i);
+    expect(statement).not.toContain('secret');
+  });
+
+  it('revokes only marker-table mutation privileges from the runtime role', () => {
+    const statement = buildRuntimeLegacyMarkerRevokeStatement(
+      'postgresql://runtime%22role:secret@db.example/eduai',
+    );
+
+    expect(statement).toBe(
+      'REVOKE INSERT, UPDATE, DELETE ON TABLE "public"."commerce_reconciliation_legacy_acknowledgements" FROM "runtime""role"',
+    );
+    expect(statement).not.toContain('GRANT');
+    expect(statement).not.toMatch(/\b(ALTER|OWNER|BYPASSRLS|SUPERUSER)\b/i);
     expect(statement).not.toContain('secret');
   });
 
@@ -263,6 +294,41 @@ describe('production database role separation', () => {
       'postgresql://runtime:runtime-secret@db.example/eduai',
       FailingClient,
     )).rejects.toThrow('Runtime membership privilege grant failed');
+    expect(failedQueries.at(-1)).toBe('ROLLBACK');
+  });
+
+  it('commits the bounded marker privilege correction and rolls back safely', async () => {
+    const successfulQueries: string[] = [];
+    class SuccessfulClient {
+      constructor(_config: Record<string, unknown>) {}
+      connect = async () => undefined;
+      query = async (sql: string) => { successfulQueries.push(sql); };
+      end = async () => undefined;
+    }
+    await revokeRuntimeLegacyMarkerPrivileges(
+      'postgresql://migration:migration-secret@db.example/eduai',
+      'postgresql://runtime:runtime-secret@db.example/eduai',
+      SuccessfulClient,
+    );
+    expect(successfulQueries[0]).toBe('BEGIN');
+    expect(successfulQueries[1]).toContain('REVOKE INSERT, UPDATE, DELETE');
+    expect(successfulQueries.at(-1)).toBe('COMMIT');
+
+    const failedQueries: string[] = [];
+    class FailingClient {
+      constructor(_config: Record<string, unknown>) {}
+      connect = async () => undefined;
+      query = async (sql: string) => {
+        failedQueries.push(sql);
+        if (sql.startsWith('REVOKE ')) throw new Error('secret database detail');
+      };
+      end = async () => undefined;
+    }
+    await expect(revokeRuntimeLegacyMarkerPrivileges(
+      'postgresql://migration:migration-secret@db.example/eduai',
+      'postgresql://runtime:runtime-secret@db.example/eduai',
+      FailingClient,
+    )).rejects.toThrow('Runtime legacy marker privilege correction failed');
     expect(failedQueries.at(-1)).toBe('ROLLBACK');
   });
 });

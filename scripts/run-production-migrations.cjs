@@ -6,6 +6,7 @@ const dotenv = require('dotenv');
 const { Client } = require('pg');
 const {
   grantRuntimeMembershipPrivileges,
+  revokeRuntimeLegacyMarkerPrivileges,
 } = require('./membership-runtime-privileges.cjs');
 
 const MIGRATION_ENV_FILE = '.env.migration';
@@ -151,6 +152,9 @@ function classifyMigrationFailure(log) {
   }
   if (/Runtime membership privilege grant failed/i.test(value)) {
     return 'RUNTIME_PRIVILEGE_GRANT_FAILED';
+  }
+  if (/Runtime legacy marker privilege correction failed/i.test(value)) {
+    return 'RUNTIME_LEGACY_MARKER_PRIVILEGE_CORRECTION_FAILED';
   }
   if (/failed migration requires reviewed recovery/i.test(value)) {
     return 'MIGRATION_REQUIRES_REVIEWED_RECOVERY';
@@ -298,6 +302,8 @@ function localMigrationChecksums(rootDirectory, migrationNames) {
 
 function assertMigrationLedgerState({
   expectedMigrationName = EXPECTED_RECONCILIATION_MIGRATION,
+  expectedMigrationSha256 = EXPECTED_RECONCILIATION_MIGRATION_SHA256,
+  allowAlreadyApplied = false,
   localMigrationNames: localNames,
   localMigrationChecksums: localChecksums,
   migrationRows,
@@ -312,6 +318,7 @@ function assertMigrationLedgerState({
   }
 
   const applied = new Set();
+  const targetRows = [];
   for (const row of migrationRows) {
     const rolledBack = row?.rolled_back_at !== null;
     if (
@@ -339,11 +346,11 @@ function assertMigrationLedgerState({
       throw migrationPreflightFailure('MIGRATION_LEDGER_STATE_DRIFT');
     }
     applied.add(row.migration_name);
+    if (row.migration_name === expectedMigrationName) targetRows.push(row);
   }
 
   if (
     [...applied].some((name) => !localNames.includes(name)) ||
-    applied.has(expectedMigrationName) ||
     !localNames.includes(expectedMigrationName)
   ) {
     throw migrationPreflightFailure('MIGRATION_LEDGER_STATE_DRIFT');
@@ -351,6 +358,26 @@ function assertMigrationLedgerState({
 
   const pendingMigrationNames = localNames.filter((name) => !applied.has(name));
   if (
+    allowAlreadyApplied &&
+    targetRows.length === 1 &&
+    pendingMigrationNames.length === 0
+  ) {
+    if (
+      targetRows[0].checksum.toUpperCase() !== expectedMigrationSha256.toUpperCase()
+    ) {
+      throw migrationPreflightFailure('MIGRATION_ARTIFACT_CHECKSUM_MISMATCH');
+    }
+    return {
+      currentSchemaVersion:
+        migrationRows.filter((row) => applied.has(row.migration_name)).at(-1)
+          ?.migration_name ?? null,
+      pendingMigrationNames,
+      targetApplied: true,
+    };
+  }
+
+  if (
+    applied.has(expectedMigrationName) ||
     pendingMigrationNames.length !== 1 ||
     pendingMigrationNames[0] !== expectedMigrationName
   ) {
@@ -1475,6 +1502,92 @@ function assertReconciliationPreflight(snapshot) {
   return snapshot;
 }
 
+function assertReconciliationAppliedState({
+  schema,
+  caseSnapshot,
+  markerSnapshot,
+  financialDigest,
+}) {
+  const expectedBooleans = {
+    requiredTablesPresent: true,
+    requiredFunctionsPresent: true,
+    requiredTriggersPresent: true,
+    requiredTriggerBindingsPresent: true,
+    markerTablePresent: true,
+    markerTriggerPresent: true,
+    markerTriggerBindingPresent: true,
+    markerGuardFunctionPresent: true,
+    hardenedResolutionGuard: true,
+    hardenedSourceKeyGuard: true,
+    sourceKeyNullable: false,
+    sourceKeyNotNull: true,
+    sourceKeyTypeCompatible: true,
+    sourceKeyUniqueIndexPresent: true,
+    markerTriggerShapeCompatible: true,
+    markerForeignKeyPresent: true,
+  };
+  for (const [key, expected] of Object.entries(expectedBooleans)) {
+    if (requiredBoolean(schema?.[key], key) !== expected) {
+      throw safeDatabaseFailure('MIGRATION_PREFLIGHT_STATE_DRIFT');
+    }
+  }
+
+  const expectedCounts = {
+    totalCaseCount: 7,
+    openCaseCount: 4,
+    openProviderOutageCount: 2,
+    openProviderFactMismatchCount: 2,
+    openPaidNotFulfilledCount: 0,
+    nullSourceKeyCount: 0,
+    nonCanonicalExistingSourceKeyCount: 1,
+    sourceKeyNonNullCount: 7,
+    oversizedSourceKeyCount: 0,
+    acknowledgedFinancialCaseCount: 1,
+    unprovenLegacyCaseCount: 0,
+    candidateSourceKeyCount: 0,
+    missingAttemptCount: 0,
+    missingSettlementCount: 0,
+    duplicateGroupCount: 0,
+    duplicateExtraRowCount: 0,
+    existingCollisionCount: 0,
+    oversizedDerivedKeyCount: 0,
+    invalidDerivedKeyCount: 0,
+    historicalCaseCount: 1,
+    historicalAmbiguityMatchCount: 1,
+    historicalSourceKeyPresentCount: 1,
+    historicalCanonicalSourceKeyMatchCount: 1,
+    historicalProvenanceMatchCount: 1,
+    historicalFinancialFactMatchCount: 1,
+    historicalSettlementFactAbsentMatchCount: 1,
+    historicalWebhookFactAbsentMatchCount: 1,
+    historicalFulfillmentAbsentMatchCount: 1,
+    historicalAuditTransitionMatchCount: 1,
+  };
+  for (const [key, expected] of Object.entries(expectedCounts)) {
+    if (numericCount(caseSnapshot?.[key], key) !== expected) {
+      throw safeDatabaseFailure('MIGRATION_PREFLIGHT_STATE_DRIFT');
+    }
+  }
+
+  const expectedMarkerCounts = {
+    markerCount: 1,
+    acknowledgedFinancialCaseCount: 1,
+    matchedMarkerCount: 1,
+    unmarkedLegacyCaseCount: 0,
+    mismatchedLegacyMarkerCount: 0,
+    orphanMarkerCount: 0,
+    unexpectedMarkerCount: 0,
+  };
+  for (const [key, expected] of Object.entries(expectedMarkerCounts)) {
+    if (numericCount(markerSnapshot?.[key], key) !== expected) {
+      throw safeDatabaseFailure('MIGRATION_LEGACY_MARKER_INVALID');
+    }
+  }
+
+  assertReconciliationFinancialBaseline(financialDigest);
+  return { schema, caseSnapshot, markerSnapshot, financialDigest };
+}
+
 function assertReconciliationPreflightStable(before, after) {
   if (!before || !after) {
     throw safeDatabaseFailure('MIGRATION_PREFLIGHT_STATE_DRIFT');
@@ -1764,6 +1877,7 @@ async function runMigrationPreflight({
   rootDirectory,
   runtimeUrl,
   migrationUrl,
+  allowAlreadyApplied = false,
 }) {
   const migrationHash = await runSafePreflightStage(
     'ARTIFACT',
@@ -1815,23 +1929,49 @@ async function runMigrationPreflight({
         }
         logSnapshotStep('LEDGER_ASSERT');
         const ledger = assertMigrationLedgerState({
+          expectedMigrationSha256: migrationHash,
+          allowAlreadyApplied,
           localMigrationNames: localNames,
           localMigrationChecksums: localChecksums,
           migrationRows: ledgerResult.rows,
         });
-        logSnapshotStep('CASE_ASSERT');
-        const caseSnapshot = assertReconciliationPreflight({
-          ...schemaResult.rows[0],
-          ...caseResult.rows[0],
-        });
         logSnapshotStep('DIGEST_PARSE');
         const financialDigest = parseDigestSnapshot(digestResult);
-        logSnapshotStep('DIGEST_BASELINE');
-        assertReconciliationFinancialBaseline(financialDigest);
+        let markerSnapshot;
+        if (ledger.targetApplied) {
+          logSnapshotStep('MARKER_QUERY');
+          let markerResult;
+          try {
+            markerResult = await client.query(RECONCILIATION_MARKER_QUERY);
+          } catch {
+            throw safeDatabaseFailure('MIGRATION_PREFLIGHT_QUERY_FAILED');
+          }
+          if (markerResult.rowCount !== 1) {
+            throw safeDatabaseFailure('MIGRATION_PREFLIGHT_METADATA_INCOMPLETE');
+          }
+          markerSnapshot = markerResult.rows[0];
+        }
+        logSnapshotStep('CASE_ASSERT');
+        const caseSnapshot = ledger.targetApplied
+          ? assertReconciliationAppliedState({
+              schema: schemaResult.rows[0],
+              caseSnapshot: caseResult.rows[0],
+              markerSnapshot,
+              financialDigest,
+            }).caseSnapshot
+          : assertReconciliationPreflight({
+              ...schemaResult.rows[0],
+              ...caseResult.rows[0],
+            });
+        if (!ledger.targetApplied) {
+          logSnapshotStep('DIGEST_BASELINE');
+          assertReconciliationFinancialBaseline(financialDigest);
+        }
         return {
           ledger,
           schema: schemaResult.rows[0],
           caseSnapshot,
+          markerSnapshot,
           financialDigest,
         };
       },
@@ -1920,6 +2060,7 @@ async function run() {
       rootDirectory,
       runtimeUrl: runtimeDatabaseUrl,
       migrationUrl: migrationDatabaseUrl,
+      allowAlreadyApplied: true,
     }),
   );
   const repeatPreflight = await runSafePreflightStage(
@@ -1928,6 +2069,7 @@ async function run() {
       rootDirectory,
       runtimeUrl: runtimeDatabaseUrl,
       migrationUrl: migrationDatabaseUrl,
+      allowAlreadyApplied: true,
     }),
   );
   await runSafePreflightStage(
@@ -1959,6 +2101,7 @@ async function run() {
   console.log(
     `pendingMigrationName: ${safeMigrationName(preflight.ledger.pendingMigrationNames[0])}`,
   );
+  console.log(`migrationTargetApplied: ${preflight.ledger.targetApplied}`);
   console.log(
     `preflightOpenCaseCount: ${numericCount(preflight.caseSnapshot.openCaseCount, 'openCaseCount')}`,
   );
@@ -1979,42 +2122,46 @@ async function run() {
   if (migrationHashBeforeApply !== preflight.migrationHash) {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   }
-  const migration = spawnSync(
-    npmCommand,
-    ['run', 'prisma:migrate:deploy'],
-    {
-      env: buildMigrationChildEnvironment(
-        runtimeDatabaseUrl,
-        migrationDatabaseUrl,
-      ),
-      cwd: rootDirectory,
-      stdio: ['inherit', 'pipe', 'pipe'],
-      encoding: 'utf8',
-      maxBuffer: 1024 * 1024,
-      timeout: 15 * 60 * 1000,
-    },
-  );
-
-  if (migration.error) {
-    throw safeDatabaseFailure(
-      migration.error.code === 'ETIMEDOUT'
-        ? 'MIGRATION_PROCESS_TIMEOUT'
-        : 'MIGRATION_PROCESS_SPAWN_FAILED',
+  if (preflight.ledger.targetApplied) {
+    console.log('migrationApply: SKIPPED_ALREADY_APPLIED');
+  } else {
+    const migration = spawnSync(
+      npmCommand,
+      ['run', 'prisma:migrate:deploy'],
+      {
+        env: buildMigrationChildEnvironment(
+          runtimeDatabaseUrl,
+          migrationDatabaseUrl,
+        ),
+        cwd: rootDirectory,
+        stdio: ['inherit', 'pipe', 'pipe'],
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024,
+        timeout: 15 * 60 * 1000,
+      },
     );
-  }
-  if (migration.status !== 0 || migration.signal) {
-    const migrationOutput = [migration.stdout, migration.stderr]
-      .filter((value) => typeof value === 'string' && value)
-      .join('\n');
-    const safeErrorCodes = extractSafeMigrationErrorCodes(migrationOutput);
-    if (safeErrorCodes.prismaCode) {
-      console.error(`migrationPrismaErrorCode: ${safeErrorCodes.prismaCode}`);
+
+    if (migration.error) {
+      throw safeDatabaseFailure(
+        migration.error.code === 'ETIMEDOUT'
+          ? 'MIGRATION_PROCESS_TIMEOUT'
+          : 'MIGRATION_PROCESS_SPAWN_FAILED',
+      );
     }
-    if (safeErrorCodes.sqlState) {
-      console.error(`migrationSqlState: ${safeErrorCodes.sqlState}`);
+    if (migration.status !== 0 || migration.signal) {
+      const migrationOutput = [migration.stdout, migration.stderr]
+        .filter((value) => typeof value === 'string' && value)
+        .join('\n');
+      const safeErrorCodes = extractSafeMigrationErrorCodes(migrationOutput);
+      if (safeErrorCodes.prismaCode) {
+        console.error(`migrationPrismaErrorCode: ${safeErrorCodes.prismaCode}`);
+      }
+      if (safeErrorCodes.sqlState) {
+        console.error(`migrationSqlState: ${safeErrorCodes.sqlState}`);
+      }
+      const failureClass = classifyMigrationFailure(migrationOutput);
+      throw safeDatabaseFailure(failureClass);
     }
-    const failureClass = classifyMigrationFailure(migrationOutput);
-    throw safeDatabaseFailure(failureClass);
   }
 
   const postflight = await runMigrationPostflight({
@@ -2027,6 +2174,12 @@ async function run() {
   console.log(`legacyMarkerRows: ${postflight.checks.legacyMarkerRows}`);
   console.log(`financialRowsChanged: ${postflight.checks.financialRowsChanged}`);
 
+  await revokeRuntimeLegacyMarkerPrivileges(
+    migrationDatabaseUrl,
+    runtimeDatabaseUrl,
+  );
+  console.log('runtimeLegacyMarkerPrivilegesRevoked: true');
+
   const runtimeFinancialGuard = await verifyRuntimeFinancialGuardPrivileges(
     runtimeDatabaseUrl,
   );
@@ -2034,11 +2187,15 @@ async function run() {
     `runtimeFinancialGuardPrivilegesBlocked: ${runtimeFinancialGuard.runtimeFinancialGuardPrivilegesBlocked}`,
   );
 
-  await grantRuntimeMembershipPrivileges(
-    migrationDatabaseUrl,
-    runtimeDatabaseUrl,
-  );
-  console.log('runtimeMembershipPrivilegesGranted: true');
+  if (preflight.ledger.targetApplied) {
+    console.log('runtimeMembershipPrivilegesGrant: SKIPPED_ALREADY_APPLIED');
+  } else {
+    await grantRuntimeMembershipPrivileges(
+      migrationDatabaseUrl,
+      runtimeDatabaseUrl,
+    );
+    console.log('runtimeMembershipPrivilegesGranted: true');
+  }
 }
 
 if (require.main === module) {
@@ -2072,6 +2229,7 @@ module.exports = {
   assertMigrationAppliedExactlyOnce,
   assertMigrationLedgerState,
   assertReconciliationFinancialBaseline,
+  assertReconciliationAppliedState,
   assertReconciliationPreflightStable,
   assertReconciliationPostflight,
   assertReconciliationPreflight,

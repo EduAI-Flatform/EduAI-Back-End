@@ -16,6 +16,8 @@ const MEMBERSHIP_RUNTIME_TABLES = Object.freeze([
   'service_entitlement_grants',
   'service_entitlement_usage',
 ]);
+const LEGACY_RECONCILIATION_MARKER_TABLE =
+  'commerce_reconciliation_legacy_acknowledgements';
 
 function runtimeRoleFromUrl(value) {
   try {
@@ -42,6 +44,14 @@ function buildRuntimePrivilegeStatement(runtimeUrl) {
     (table) => `${quoteIdentifier('public')}.${quoteIdentifier(table)}`,
   ).join(', ');
   return `GRANT SELECT, INSERT, UPDATE ON TABLE ${tables} TO ${role}`;
+}
+
+function buildRuntimeLegacyMarkerRevokeStatement(runtimeUrl) {
+  const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
+  const table = `${quoteIdentifier('public')}.${quoteIdentifier(
+    LEGACY_RECONCILIATION_MARKER_TABLE,
+  )}`;
+  return `REVOKE INSERT, UPDATE, DELETE ON TABLE ${table} FROM ${role}`;
 }
 
 async function grantRuntimeMembershipPrivileges(
@@ -71,8 +81,38 @@ async function grantRuntimeMembershipPrivileges(
   }
 }
 
+async function revokeRuntimeLegacyMarkerPrivileges(
+  migrationUrl,
+  runtimeUrl,
+  ClientConstructor = Client,
+) {
+  const client = new ClientConstructor({
+    application_name: 'eduai-reconciliation-marker-revoke',
+    connectionString: migrationUrl,
+    connectionTimeoutMillis: 10000,
+    query_timeout: 10000,
+  });
+  let transactionOpen = false;
+  try {
+    await client.connect();
+    await client.query('BEGIN');
+    transactionOpen = true;
+    await client.query(buildRuntimeLegacyMarkerRevokeStatement(runtimeUrl));
+    await client.query('COMMIT');
+    transactionOpen = false;
+  } catch {
+    if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
+    throw new Error('Runtime legacy marker privilege correction failed');
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
 module.exports = {
   MEMBERSHIP_RUNTIME_TABLES,
+  LEGACY_RECONCILIATION_MARKER_TABLE,
   buildRuntimePrivilegeStatement,
+  buildRuntimeLegacyMarkerRevokeStatement,
   grantRuntimeMembershipPrivileges,
+  revokeRuntimeLegacyMarkerPrivileges,
 };

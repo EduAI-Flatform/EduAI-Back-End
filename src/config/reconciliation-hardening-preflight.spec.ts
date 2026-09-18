@@ -4,6 +4,7 @@ const {
   assertMigrationAppliedExactlyOnce,
   assertReviewedMigrationFingerprint,
   assertReconciliationPreflight,
+  assertReconciliationAppliedState,
   assertReconciliationFinancialBaseline,
   RECONCILIATION_FINANCIAL_ROW_COUNTS,
   createSafeMigrationPreflightDiagnostic,
@@ -13,6 +14,8 @@ const {
   EXPECTED_RECONCILIATION_MIGRATION: string;
   assertMigrationLedgerState: (input: {
     expectedMigrationName?: string;
+    expectedMigrationSha256?: string;
+    allowAlreadyApplied?: boolean;
     localMigrationNames: string[];
     migrationRows: Array<{
       migration_name: string;
@@ -37,6 +40,12 @@ const {
     }>;
   }) => { currentSchemaVersion: string | null; targetApplied: boolean };
   assertReconciliationPreflight: (snapshot: Record<string, unknown>) => Record<string, unknown>;
+  assertReconciliationAppliedState: (input: {
+    schema: Record<string, unknown>;
+    caseSnapshot: Record<string, unknown>;
+    markerSnapshot: Record<string, unknown>;
+    financialDigest: Record<string, { rowCount: string | number; digest: string }>;
+  }) => Record<string, unknown>;
   assertReconciliationFinancialBaseline: (
     digests: Record<string, { rowCount: string | number; digest: string }>,
   ) => Record<string, { rowCount: string | number; digest: string }>;
@@ -192,6 +201,136 @@ describe('SPR25-007 production migration preflight', () => {
         ],
       }),
     ).toThrow('Production migration preflight failed');
+  });
+
+  it('accepts the exact applied target only in explicit recovery mode', () => {
+    const previousMigration = '20260824160000_add_membership_product_type';
+    const result = assertMigrationLedgerState({
+      allowAlreadyApplied: true,
+      localMigrationNames: [previousMigration, EXPECTED_RECONCILIATION_MIGRATION],
+      migrationRows: [
+        {
+          migration_name: previousMigration,
+          checksum: appliedMigrationChecksum,
+          finished_at: new Date(),
+          rolled_back_at: null,
+        },
+        {
+          migration_name: EXPECTED_RECONCILIATION_MIGRATION,
+          checksum:
+            '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F',
+          finished_at: new Date(),
+          rolled_back_at: null,
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      currentSchemaVersion: EXPECTED_RECONCILIATION_MIGRATION,
+      pendingMigrationNames: [],
+      targetApplied: true,
+    });
+
+    expect(() =>
+      assertMigrationLedgerState({
+        allowAlreadyApplied: true,
+        localMigrationNames: [previousMigration, EXPECTED_RECONCILIATION_MIGRATION],
+        migrationRows: [
+          {
+            migration_name: previousMigration,
+            checksum: appliedMigrationChecksum,
+            finished_at: new Date(),
+            rolled_back_at: null,
+          },
+          {
+            migration_name: EXPECTED_RECONCILIATION_MIGRATION,
+            checksum: 'b'.repeat(64),
+            finished_at: new Date(),
+            rolled_back_at: null,
+          },
+        ],
+      }),
+    ).toThrow('Production migration preflight failed');
+  });
+
+  it('accepts only a complete hardened applied-state snapshot', () => {
+    const schema = {
+      requiredTablesPresent: true,
+      requiredFunctionsPresent: true,
+      requiredTriggersPresent: true,
+      requiredTriggerBindingsPresent: true,
+      markerTablePresent: true,
+      markerTriggerPresent: true,
+      markerTriggerBindingPresent: true,
+      markerGuardFunctionPresent: true,
+      hardenedResolutionGuard: true,
+      hardenedSourceKeyGuard: true,
+      sourceKeyNullable: false,
+      sourceKeyNotNull: true,
+      sourceKeyTypeCompatible: true,
+      sourceKeyUniqueIndexPresent: true,
+      markerTriggerShapeCompatible: true,
+      markerForeignKeyPresent: true,
+    };
+    const caseSnapshot = {
+      totalCaseCount: 7,
+      openCaseCount: 4,
+      openProviderOutageCount: 2,
+      openProviderFactMismatchCount: 2,
+      openPaidNotFulfilledCount: 0,
+      nullSourceKeyCount: 0,
+      nonCanonicalExistingSourceKeyCount: 1,
+      sourceKeyNonNullCount: 7,
+      oversizedSourceKeyCount: 0,
+      acknowledgedFinancialCaseCount: 1,
+      unprovenLegacyCaseCount: 0,
+      candidateSourceKeyCount: 0,
+      missingAttemptCount: 0,
+      missingSettlementCount: 0,
+      duplicateGroupCount: 0,
+      duplicateExtraRowCount: 0,
+      existingCollisionCount: 0,
+      oversizedDerivedKeyCount: 0,
+      invalidDerivedKeyCount: 0,
+      historicalCaseCount: 1,
+      historicalAmbiguityMatchCount: 1,
+      historicalSourceKeyPresentCount: 1,
+      historicalCanonicalSourceKeyMatchCount: 1,
+      historicalProvenanceMatchCount: 1,
+      historicalFinancialFactMatchCount: 1,
+      historicalSettlementFactAbsentMatchCount: 1,
+      historicalWebhookFactAbsentMatchCount: 1,
+      historicalFulfillmentAbsentMatchCount: 1,
+      historicalAuditTransitionMatchCount: 1,
+    };
+    const markerSnapshot = {
+      markerCount: 1,
+      acknowledgedFinancialCaseCount: 1,
+      matchedMarkerCount: 1,
+      unmarkedLegacyCaseCount: 0,
+      mismatchedLegacyMarkerCount: 0,
+      orphanMarkerCount: 0,
+      unexpectedMarkerCount: 0,
+    };
+    const financialDigest = Object.fromEntries(
+      Object.entries(RECONCILIATION_FINANCIAL_ROW_COUNTS).map(
+        ([key, rowCount]) => [key, { rowCount, digest: 'a'.repeat(32) }],
+      ),
+    );
+
+    expect(assertReconciliationAppliedState({
+      schema,
+      caseSnapshot,
+      markerSnapshot,
+      financialDigest,
+    })).toMatchObject({ caseSnapshot, markerSnapshot });
+
+    expect(() => assertReconciliationAppliedState({
+      schema: { ...schema, hardenedResolutionGuard: false },
+      caseSnapshot,
+      markerSnapshot,
+      financialDigest,
+    })).toThrow('Production migration preflight failed');
   });
 
   it('requires preserved historical ambiguity and zero structural collisions', () => {
