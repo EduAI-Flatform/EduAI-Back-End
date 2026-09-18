@@ -160,4 +160,25 @@ describe('SPR25-007 reconciliation hardening migration', () => {
       canAlterRequiredFunctions: true,
     });
   });
+
+  it('excludes only the system payment-expiry heartbeat from the audit concurrency digest', async () => {
+    await db.exec(`
+      INSERT INTO "audit_logs" (
+        "actor_kind",
+        "action",
+        "target_type",
+        "target_id",
+        "metadata_json"
+      ) VALUES
+        ('SYSTEM', 'PAYMENT_EXPIRY_CHECKED', 'commerce_payment_expiry_run', 'heartbeat-1', '{}'),
+        ('SYSTEM', 'PAYMENT_EXPIRY_CHECKED', 'unexpected_target', 'heartbeat-2', '{}'),
+        ('SYSTEM', 'PAYMENT_RECONCILIATION_CHECKED', 'commerce_reconciliation_case', 'case-1', '{}');
+    `);
+
+    const digest = await db.query<{
+      digests: Record<string, Record<string, string>>;
+    }>(RECONCILIATION_FINANCIAL_DIGEST_QUERY);
+
+    expect(digest.rows[0].digests.audit_logs.rowCount).toBe('2');
+  });
 });

@@ -58,7 +58,11 @@ const RECONCILIATION_FINANCIAL_ROW_COUNTS = Object.freeze({
   commerce_fulfillment_effects: 3,
   commerce_refunds: 0,
   commerce_lifecycle_events: 24,
-  audit_logs: 11805,
+  // Audit logs remain in the before/after digest, but the append-only
+  // PAYMENT_EXPIRY_CHECKED system heartbeat is intentionally excluded from
+  // that digest because it runs independently while the migration is gated.
+  // Its exact count must therefore not be treated as a fixed financial
+  // baseline.
 });
 
 function databaseIdentity(value, name) {
@@ -901,6 +905,11 @@ WITH table_digests AS (
       md5('')
     )
   FROM "audit_logs" AS row_data
+  WHERE NOT (
+    row_data."action" = 'PAYMENT_EXPIRY_CHECKED'
+    AND row_data."actor_kind" = 'SYSTEM'
+    AND row_data."target_type" = 'commerce_payment_expiry_run'
+  )
   UNION ALL
   SELECT
     'reconciliation_immutable',
