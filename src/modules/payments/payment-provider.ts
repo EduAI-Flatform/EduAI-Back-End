@@ -3,6 +3,10 @@ export const PAYMENT_PROVIDER_REGISTRY = Symbol('PAYMENT_PROVIDER_REGISTRY');
 
 export type PaymentProviderName = 'payos' | 'vnpay';
 
+export function isPaymentProviderName(value: unknown): value is PaymentProviderName {
+  return value === 'payos' || value === 'vnpay';
+}
+
 export type PaymentProviderErrorCode =
   | 'disabled'
   | 'invalid_request'
@@ -87,6 +91,8 @@ export interface PaymentReconciliationOptions {
 }
 
 export interface VerifiedPaymentWebhook {
+  provider: PaymentProviderName;
+  providerOrderReference: string;
   providerEventIdentity: string;
   providerPaymentIdentity: string;
   providerSettlementReference: string;
@@ -94,8 +100,11 @@ export interface VerifiedPaymentWebhook {
   amountMinor: bigint;
   currency: 'VND';
   occurredAt: Date;
+  occurredAtSource?: 'provider' | 'receipt';
   providerCode: string;
-  receivingAccount: string;
+  responseCode?: string;
+  transactionStatus?: string;
+  receivingAccount?: string;
 }
 
 export interface PaymentProvider {

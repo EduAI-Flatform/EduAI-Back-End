@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import {
   CreatePaymentRequestInput,
@@ -24,7 +24,7 @@ export interface VnPayProviderConfig {
   timeoutMs: number;
 }
 
-const VNPAY_AMOUNT_MAX = 999999999999n;
+export const VNPAY_AMOUNT_MAX = 999999999999n;
 const VN_TIMEZONE_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 export class VnPayPaymentProvider implements PaymentProvider {
@@ -157,6 +157,38 @@ export function canonicalizeVnPayParams(
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, value]) => `${encodeVnPayComponent(key)}=${encodeVnPayComponent(value)}`)
     .join('&');
+}
+
+export function canonicalizeVnPayIpnParams(
+  params: Readonly<Record<string, string>>,
+): string {
+  return canonicalizeVnPayParams(
+    Object.fromEntries(
+      Object.entries(params).filter(
+        ([key]) => key !== 'vnp_SecureHash' && key !== 'vnp_SecureHashType',
+      ),
+    ),
+  );
+}
+
+export function verifyVnPaySignature(
+  params: Readonly<Record<string, string>>,
+  secureHash: string,
+  hashSecret: string,
+): boolean {
+  if (!/^[0-9a-f]{128}$/i.test(secureHash) || hashSecret.length === 0) {
+    return false;
+  }
+
+  const expected = createHmac('sha512', hashSecret)
+    .update(canonicalizeVnPayIpnParams(params), 'utf8')
+    .digest('hex');
+  const suppliedBuffer = Buffer.from(secureHash.toLowerCase(), 'ascii');
+  const expectedBuffer = Buffer.from(expected, 'ascii');
+  return (
+    suppliedBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(suppliedBuffer, expectedBuffer)
+  );
 }
 
 export function buildVnPaySignedUrl(

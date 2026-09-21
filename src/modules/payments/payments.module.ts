@@ -24,6 +24,7 @@ import { PaymentRequestController } from './payment-request.controller';
 import { PaymentRequestService } from './payment-request.service';
 import { PaymentWebhookController } from './payment-webhook.controller';
 import { PaymentWebhookService } from './payment-webhook.service';
+import { VnPayIpnService } from './vnpay-ipn.service';
 import { PaymentReconciliationController } from './payment-reconciliation.controller';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentLifecycleService } from './payment-lifecycle.service';
@@ -39,6 +40,7 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
   providers: [
     PaymentRequestService,
     PaymentWebhookService,
+    VnPayIpnService,
     CommerceFulfillmentService,
     PaymentReconciliationService,
     PaymentLifecycleService,

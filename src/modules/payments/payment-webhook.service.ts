@@ -30,12 +30,12 @@ import {
   PAYMENT_PROVIDER,
   PaymentProvider,
   PaymentProviderError,
+  PaymentProviderName,
   VerifiedPaymentWebhook,
+  isPaymentProviderName,
 } from './payment-provider';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { PaymentRecoveryError } from './payment-recovery-error';
-
-const PROVIDER = 'payos';
 
 const attemptInclude = {
   order: {
@@ -75,16 +75,26 @@ type IdentityMismatchCode =
   | 'PAYMENT_FACT_MISMATCH'
   | 'PAYMENT_STATE_MISMATCH';
 
-type WebhookTransactionResult =
+export type PaymentWebhookProcessingResult =
   | (PaymentWebhookResponseDto & {
       orderId?: string;
       settlementId?: string;
+      replayed?: boolean;
     })
   | {
       rejected: true;
       error: IdentityMismatchCode;
       message: string;
     };
+
+export type PaymentWebhookVerificationClassification =
+  | 'KNOWN'
+  | 'UNKNOWN'
+  | 'ALREADY_CONFIRMED'
+  | 'INVALID_AMOUNT'
+  | 'INVALID_IDENTITY';
+
+type WebhookTransactionResult = PaymentWebhookProcessingResult;
 
 @Injectable()
 export class PaymentWebhookService {
@@ -119,7 +129,24 @@ export class PaymentWebhookService {
   async ingestVerified(
     verified: VerifiedPaymentWebhook,
   ): Promise<PaymentWebhookResponseDto> {
-    if (verified.providerCode !== '00') {
+    const response = await this.processVerified(verified);
+    if ('rejected' in response) {
+      throw new ConflictException({
+        error: response.error,
+        message: response.message,
+      });
+    }
+    return { accepted: response.accepted, result: response.result };
+  }
+
+  async processVerified(
+    verified: VerifiedPaymentWebhook,
+  ): Promise<PaymentWebhookProcessingResult> {
+    if (
+      !isPaymentProviderName(verified.provider) ||
+      verified.providerCode !== '00' ||
+      (verified.provider === 'vnpay' && verified.transactionStatus !== '00')
+    ) {
       throw new BadRequestException({
         error: 'WEBHOOK_NOT_SETTLED',
         message: 'Webhook does not describe an eligible settlement.',
@@ -127,10 +154,7 @@ export class PaymentWebhookService {
     }
     const response = await this.runSerializable((tx) => this.applyVerified(tx, verified));
     if ('rejected' in response) {
-      throw new ConflictException({
-        error: response.error,
-        message: response.message,
-      });
+      return response;
     }
     if (response.result === 'CONFIRMED') {
       if (!response.orderId || !response.settlementId) {
@@ -151,17 +175,58 @@ export class PaymentWebhookService {
     if (response.result !== 'UNKNOWN_PAYMENT_ACKNOWLEDGED') {
       await this.fulfillment.dispatchPending().catch(() => undefined);
     }
-    return { accepted: response.accepted, result: response.result };
+    return response;
+  }
+
+  async classifyVerified(
+    verified: VerifiedPaymentWebhook,
+  ): Promise<PaymentWebhookVerificationClassification> {
+    if (!isPaymentProviderName(verified.provider)) {
+      throw new BadRequestException({
+        error: 'WEBHOOK_PROVIDER_INVALID',
+        message: 'Webhook provider is not supported.',
+      });
+    }
+    const providerOrderCode = this.providerOrderCode(verified);
+    return this.runSerializable(async (tx) => {
+      const attempt = await tx.commercePaymentAttempt.findUnique({
+        where: {
+          provider_providerOrderCode: {
+            provider: verified.provider,
+            providerOrderCode,
+          },
+        },
+        include: attemptInclude,
+      });
+      if (!attempt) return 'UNKNOWN';
+
+      const amountMatches =
+        attempt.amountMinor === verified.amountMinor &&
+        attempt.currency === verified.currency &&
+        attempt.order.payableAmountMinor === verified.amountMinor &&
+        attempt.order.currency === verified.currency;
+      if (!amountMatches) return 'INVALID_AMOUNT';
+      if (!this.paymentFactsMatch(attempt, verified)) return 'INVALID_IDENTITY';
+      if (
+        attempt.status === CommercePaymentStatus.paid ||
+        attempt.order.status === CommerceOrderStatus.confirmed
+      ) {
+        return 'ALREADY_CONFIRMED';
+      }
+      return 'KNOWN';
+    });
   }
 
   private async applyVerified(
     tx: Prisma.TransactionClient,
     verified: VerifiedPaymentWebhook,
   ): Promise<WebhookTransactionResult> {
+    const provider = verified.provider;
+    const providerOrderCode = this.providerOrderCode(verified);
     const priorEvent = await tx.commercePaymentEvent.findUnique({
       where: {
         provider_providerEventIdentity: {
-          provider: PROVIDER,
+          provider,
           providerEventIdentity: verified.providerEventIdentity,
         },
       },
@@ -191,20 +256,22 @@ export class PaymentWebhookService {
           tx,
           lockedPriorEvent.paymentAttempt,
           'PAYMENT_EVENT_IDENTITY_MISMATCH',
+          provider,
         );
       }
       return this.resultFor(
         lockedPriorEvent.settlement.disposition,
         lockedPriorEvent.settlement.orderId,
         lockedPriorEvent.settlement.id,
+        true,
       );
     }
 
     const attempt = await tx.commercePaymentAttempt.findUnique({
       where: {
         provider_providerOrderCode: {
-          provider: PROVIDER,
-          providerOrderCode: BigInt(verified.localOrderReference),
+          provider,
+          providerOrderCode,
         },
       },
       include: attemptInclude,
@@ -213,7 +280,7 @@ export class PaymentWebhookService {
       const identityAttempt = await tx.commercePaymentAttempt.findUnique({
         where: {
           provider_providerPaymentIdentity: {
-            provider: PROVIDER,
+            provider,
             providerPaymentIdentity: verified.providerPaymentIdentity,
           },
         },
@@ -224,6 +291,7 @@ export class PaymentWebhookService {
           tx,
           identityAttempt,
           'PAYMENT_REFERENCE_MISMATCH',
+          provider,
         );
       }
       await this.recordUnknownPaymentAudit(tx, verified);
@@ -240,13 +308,13 @@ export class PaymentWebhookService {
       include: attemptInclude,
     });
     if (!this.paymentFactsMatch(locked, verified)) {
-      return this.recordIdentityMismatch(tx, locked, 'PAYMENT_FACT_MISMATCH');
+      return this.recordIdentityMismatch(tx, locked, 'PAYMENT_FACT_MISMATCH', provider);
     }
 
     const existingSettlement = await tx.commerceSettlement.findUnique({
       where: {
         provider_providerSettlementReference: {
-          provider: PROVIDER,
+          provider,
           providerSettlementReference: verified.providerSettlementReference,
         },
       },
@@ -258,12 +326,14 @@ export class PaymentWebhookService {
           tx,
           locked,
           'PAYMENT_REFERENCE_MISMATCH',
+          provider,
         );
       }
       return this.resultFor(
         existingSettlement.disposition,
         existingSettlement.orderId,
         existingSettlement.id,
+        true,
       );
     }
 
@@ -289,7 +359,7 @@ export class PaymentWebhookService {
     ) {
       return this.recordLate(tx, locked, verified);
     }
-    return this.recordIdentityMismatch(tx, locked, 'PAYMENT_STATE_MISMATCH');
+    return this.recordIdentityMismatch(tx, locked, 'PAYMENT_STATE_MISMATCH', provider);
   }
 
   private priorEventMatches(
@@ -299,24 +369,26 @@ export class PaymentWebhookService {
     const settlement = event.settlement;
     if (!settlement) return false;
     return (
-      event.provider === PROVIDER &&
+      event.provider === verified.provider &&
       event.providerEventIdentity === verified.providerEventIdentity &&
       event.providerPaymentIdentity === verified.providerPaymentIdentity &&
       event.providerSettlementReference === verified.providerSettlementReference &&
       event.amountMinor === verified.amountMinor &&
       event.currency === verified.currency &&
       event.paymentAttemptId === event.paymentAttempt.id &&
-      event.providerOccurredAt?.getTime() === verified.occurredAt.getTime() &&
+      (verified.occurredAtSource === 'receipt' ||
+        event.providerOccurredAt?.getTime() === verified.occurredAt.getTime()) &&
       this.paymentFactsMatch(event.paymentAttempt, verified) &&
       settlement.orderId === event.paymentAttempt.orderId &&
       settlement.paymentAttemptId === event.paymentAttempt.id &&
       settlement.paymentEventId === event.id &&
       settlement.kind === CommerceSettlementKind.provider_collection &&
-      settlement.provider === PROVIDER &&
+      settlement.provider === verified.provider &&
       settlement.providerSettlementReference === verified.providerSettlementReference &&
       settlement.amountMinor === verified.amountMinor &&
       settlement.currency === verified.currency &&
-      settlement.settledAt.getTime() === verified.occurredAt.getTime() &&
+      (verified.occurredAtSource === 'receipt' ||
+        settlement.settledAt.getTime() === verified.occurredAt.getTime()) &&
       (settlement.disposition !== CommerceSettlementDisposition.matched ||
         this.matchedSettlementIsCanonical(event.paymentAttempt, settlement.id))
     );
@@ -334,19 +406,21 @@ export class PaymentWebhookService {
       settlement.paymentAttemptId === attempt.id &&
       settlement.paymentEventId === event.id &&
       settlement.kind === CommerceSettlementKind.provider_collection &&
-      settlement.provider === PROVIDER &&
+      settlement.provider === verified.provider &&
       settlement.providerSettlementReference === verified.providerSettlementReference &&
       settlement.amountMinor === verified.amountMinor &&
       settlement.currency === verified.currency &&
-      settlement.settledAt.getTime() === verified.occurredAt.getTime() &&
+      (verified.occurredAtSource === 'receipt' ||
+        settlement.settledAt.getTime() === verified.occurredAt.getTime()) &&
       event.paymentAttemptId === attempt.id &&
-      event.provider === PROVIDER &&
+      event.provider === verified.provider &&
       event.providerEventIdentity === verified.providerEventIdentity &&
       event.providerPaymentIdentity === verified.providerPaymentIdentity &&
       event.providerSettlementReference === verified.providerSettlementReference &&
       event.amountMinor === verified.amountMinor &&
       event.currency === verified.currency &&
-      event.providerOccurredAt?.getTime() === verified.occurredAt.getTime() &&
+      (verified.occurredAtSource === 'receipt' ||
+        event.providerOccurredAt?.getTime() === verified.occurredAt.getTime()) &&
       (settlement.disposition !== CommerceSettlementDisposition.matched ||
         this.matchedSettlementIsCanonical(attempt, settlement.id))
     );
@@ -368,9 +442,9 @@ export class PaymentWebhookService {
     verified: VerifiedPaymentWebhook,
   ): boolean {
     return (
-      attempt.provider === PROVIDER &&
+      attempt.provider === verified.provider &&
       attempt.providerPaymentIdentity === verified.providerPaymentIdentity &&
-      attempt.providerOrderCode === BigInt(verified.localOrderReference) &&
+      attempt.providerOrderCode === this.providerOrderCode(verified) &&
       attempt.amountMinor === verified.amountMinor &&
       attempt.currency === verified.currency &&
       attempt.order.id === attempt.orderId &&
@@ -386,11 +460,23 @@ export class PaymentWebhookService {
     );
   }
 
-  private receivingAccountHash(value: string): string {
+  private providerOrderCode(verified: VerifiedPaymentWebhook): bigint {
+    if (!/^[1-9]\d{0,15}$/.test(verified.providerOrderReference)) {
+      throw new PaymentRecoveryError(
+        'identity',
+        'PAYMENT_RECOVERY_INTERNAL_ERROR',
+        false,
+        false,
+      );
+    }
+    return BigInt(verified.providerOrderReference);
+  }
+
+  private receivingAccountHash(value: string, provider: PaymentProviderName): string {
     return createHmac(
       'sha256',
       this.config.commerce.idempotencySecret as string,
-    ).update(`payos-receiving-account:${value}`).digest('hex');
+    ).update(`${provider}-receiving-account:${value}`).digest('hex');
   }
 
   private async recordReceiverVariance(
@@ -399,9 +485,12 @@ export class PaymentWebhookService {
     verified: VerifiedPaymentWebhook,
   ): Promise<void> {
     const storedFingerprint = attempt.providerReceivingAccountHash;
-    if (!storedFingerprint) return;
+    if (!storedFingerprint || !verified.receivingAccount) return;
 
-    const observedFingerprint = this.receivingAccountHash(verified.receivingAccount);
+    const observedFingerprint = this.receivingAccountHash(
+      verified.receivingAccount,
+      verified.provider,
+    );
     if (storedFingerprint === observedFingerprint) return;
 
     await this.audit.record({
@@ -478,7 +567,7 @@ export class PaymentWebhookService {
         nextStatus: 'CONFIRMED',
         amountMinor: verified.amountMinor.toString(),
         currency: verified.currency,
-        provider: PROVIDER,
+        provider: verified.provider,
       },
     }, tx);
     return {
@@ -512,7 +601,12 @@ export class PaymentWebhookService {
         sourceKey: `${attempt.id}:duplicate_collection:${settlement.id}`,
       },
     });
-    await this.recordReconciliationAudit(tx, attempt.orderId, 'DUPLICATE_COLLECTION');
+    await this.recordReconciliationAudit(
+      tx,
+      attempt.orderId,
+      'DUPLICATE_COLLECTION',
+      verified.provider,
+    );
     return { accepted: true, result: 'DUPLICATE' };
   }
 
@@ -573,7 +667,7 @@ export class PaymentWebhookService {
         sourceKey: `${attempt.id}:late_payment:${settlement.id}`,
       },
     });
-    await this.recordReconciliationAudit(tx, attempt.orderId, 'LATE_PAYMENT');
+    await this.recordReconciliationAudit(tx, attempt.orderId, 'LATE_PAYMENT', verified.provider);
     return { accepted: true, result: 'LATE_PAYMENT_REVIEW' };
   }
 
@@ -586,7 +680,7 @@ export class PaymentWebhookService {
     return tx.commercePaymentEvent.create({
       data: {
         paymentAttemptId: attempt.id,
-        provider: PROVIDER,
+        provider: verified.provider,
         providerEventIdentity: verified.providerEventIdentity,
         providerPaymentIdentity: verified.providerPaymentIdentity,
         providerSettlementReference: verified.providerSettlementReference,
@@ -612,7 +706,7 @@ export class PaymentWebhookService {
         paymentEventId,
         kind: CommerceSettlementKind.provider_collection,
         disposition,
-        provider: PROVIDER,
+        provider: verified.provider,
         providerSettlementReference: verified.providerSettlementReference,
         amountMinor: verified.amountMinor,
         currency: verified.currency,
@@ -695,12 +789,13 @@ export class PaymentWebhookService {
     tx: Prisma.TransactionClient,
     orderId: string,
     reasonCode: string,
+    provider: PaymentProviderName = 'payos',
   ): Promise<void> {
     await this.audit.record({
       actorKind: AuditActorKind.PROVIDER,
       action: AuditAction.PaymentWebhookReconciliationRequired,
       target: { type: 'commerce_order', id: orderId },
-      metadata: { operationId: randomUUID(), reasonCode, provider: PROVIDER },
+      metadata: { operationId: randomUUID(), reasonCode, provider },
     }, tx);
   }
 
@@ -708,6 +803,7 @@ export class PaymentWebhookService {
     tx: Prisma.TransactionClient,
     attempt: { id: string; orderId: string },
     reasonCode: IdentityMismatchCode,
+    provider: PaymentProviderName,
   ): Promise<Extract<WebhookTransactionResult, { rejected: true }>> {
     const now = new Date();
     const sourceKey = `${attempt.id}:${reasonCode}`;
@@ -727,7 +823,7 @@ export class PaymentWebhookService {
         checkCount: { increment: 1 },
       },
     });
-    await this.recordReconciliationAudit(tx, attempt.orderId, reasonCode);
+    await this.recordReconciliationAudit(tx, attempt.orderId, reasonCode, provider);
     return {
       rejected: true,
       error: reasonCode,
@@ -744,20 +840,26 @@ export class PaymentWebhookService {
       action: AuditAction.PaymentWebhookReconciliationRequired,
       target: {
         type: 'provider_payment_webhook',
-        id: this.webhookFingerprint('event', verified.providerEventIdentity),
+        id: this.webhookFingerprint(
+          'event',
+          verified.providerEventIdentity,
+          verified.provider,
+        ),
       },
       metadata: {
         reasonCode: 'PAYMENT_ATTEMPT_NOT_FOUND',
-        provider: PROVIDER,
+        provider: verified.provider,
         orderCodeFingerprint: this.webhookFingerprint(
           'order',
-          String(verified.localOrderReference),
+          verified.providerOrderReference,
+          verified.provider,
         ),
         amountMinor: verified.amountMinor.toString(),
         currency: verified.currency,
         providerPaymentIdentityFingerprint: this.webhookFingerprint(
           'payment',
           verified.providerPaymentIdentity,
+          verified.provider,
         ),
       },
     }, tx);
@@ -766,9 +868,10 @@ export class PaymentWebhookService {
   private webhookFingerprint(
     kind: 'event' | 'order' | 'payment',
     value: string,
+    provider: PaymentProviderName = 'payos',
   ): string {
     return createHmac('sha256', this.config.commerce.idempotencySecret as string)
-      .update(`payos-webhook-${kind}:${value}`)
+      .update(`${provider}-webhook-${kind}:${value}`)
       .digest('hex');
   }
 
@@ -776,14 +879,25 @@ export class PaymentWebhookService {
     disposition: CommerceSettlementDisposition,
     orderId?: string,
     settlementId?: string,
+    replayed = false,
   ): WebhookTransactionResult {
     if (disposition === CommerceSettlementDisposition.matched) {
-      return { accepted: true, result: 'CONFIRMED', orderId, settlementId };
+      return {
+        accepted: true,
+        result: 'CONFIRMED',
+        orderId,
+        settlementId,
+        ...(replayed ? { replayed: true } : {}),
+      };
     }
     if (disposition === CommerceSettlementDisposition.late_collection) {
       return { accepted: true, result: 'LATE_PAYMENT_REVIEW' };
     }
-    return { accepted: true, result: 'DUPLICATE' };
+    return {
+      accepted: true,
+      result: 'DUPLICATE',
+      ...(replayed ? { replayed: true } : {}),
+    };
   }
 
   private toHttpError(error: unknown): Error {

@@ -268,11 +268,14 @@ describe('PayosPaymentProvider', () => {
       currency: 'VND',
       localOrderReference: 123,
       occurredAt: new Date('2026-08-26T17:00:00+07:00'),
+      provider: 'payos',
       providerCode: '00',
       providerEventIdentity: 'settlement-reference',
+      providerOrderReference: '123',
       providerPaymentIdentity: 'payment-link-id',
       providerSettlementReference: 'settlement-reference',
       receivingAccount: 'receiving-account',
+      responseCode: '00',
     });
   });
 

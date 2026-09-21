@@ -2,23 +2,31 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   Post,
+  Req,
+  Res,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
 import { Public } from '../../common/security/public.decorator';
 import { RateLimit } from '../../common/security/rate-limit.decorator';
 import { PaymentWebhookResponseDto } from './dto/payment-webhook-response.dto';
 import { PaymentWebhookService } from './payment-webhook.service';
+import { isWellFormedVnPayQueryEncoding, VnPayIpnService } from './vnpay-ipn.service';
 
 const MAX_WEBHOOK_BYTES = 32 * 1024;
 
 @ApiTags('Payments')
 @Controller('payments/webhooks')
 export class PaymentWebhookController {
-  constructor(private readonly webhooks: PaymentWebhookService) {}
+  constructor(
+    private readonly webhooks: PaymentWebhookService,
+    private readonly vnpayIpn: VnPayIpnService,
+  ) {}
 
   @Post('payos')
   @Public()
@@ -62,5 +70,33 @@ export class PaymentWebhookController {
       });
     }
     return this.webhooks.ingest(body);
+  }
+
+  @Get('vnpay')
+  @Public()
+  @RateLimit({ identity: 'ip', limit: 120, name: 'vnpay-ipn', windowSeconds: 15 * 60 })
+  @HttpCode(200)
+  @ApiOkResponse({
+    schema: {
+      type: 'object',
+      properties: {
+        RspCode: { type: 'string', example: '00' },
+        Message: { type: 'string', example: 'Confirm Success' },
+      },
+      required: ['RspCode', 'Message'],
+    },
+  })
+  async receiveVnPay(
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    try {
+      const query = !isWellFormedVnPayQueryEncoding(request.originalUrl)
+        ? undefined
+        : request.query;
+      response.status(200).json(await this.vnpayIpn.handle(query));
+    } catch {
+      response.status(200).json({ RspCode: '99', Message: 'Invalid request' });
+    }
   }
 }

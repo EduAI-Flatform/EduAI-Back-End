@@ -24,6 +24,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CourseAccessService } from '../access/course-access.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentRecoveryError, PaymentRecoveryReasonCode } from './payment-recovery-error';
+import { isPaymentProviderName } from './payment-provider';
 
 const orderInclude = {
   lines: { orderBy: { id: 'asc' } },
@@ -84,7 +85,6 @@ type CanonicalPayment = {
   paymentAttempt: NonNullable<NonNullable<CanonicalOrder['confirmedSettlement']>['paymentAttempt']>;
 };
 
-const PROVIDER = 'payos';
 const PAID_ORDER_FULFILLMENT_RETRY_REQUIRED = 'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED';
 const FULFILLMENT_TRANSACTION_MAX_WAIT_MS = 5_000;
 const FULFILLMENT_TRANSACTION_TIMEOUT_MS = 20_000;
@@ -340,6 +340,7 @@ export class CommerceFulfillmentService {
     const settlement = order?.confirmedSettlement;
     const paymentAttempt = settlement?.paymentAttempt;
     const paymentEvent = settlement?.paymentEvent;
+    const provider = settlement?.provider;
     if (
       !order ||
       order.status !== CommerceOrderStatus.confirmed ||
@@ -349,14 +350,14 @@ export class CommerceFulfillmentService {
       settlement.orderId !== orderId ||
       settlement.kind !== CommerceSettlementKind.provider_collection ||
       settlement.disposition !== CommerceSettlementDisposition.matched ||
-      settlement.provider !== PROVIDER ||
+      !isPaymentProviderName(provider) ||
       !settlement.providerSettlementReference ||
       !settlement.paymentEventId ||
       !paymentAttempt ||
       !paymentEvent ||
       paymentEvent.id !== settlement.paymentEventId ||
       paymentEvent.paymentAttemptId !== paymentAttempt.id ||
-      paymentEvent.provider !== PROVIDER ||
+      paymentEvent.provider !== provider ||
       paymentEvent.providerPaymentIdentity !== paymentAttempt.providerPaymentIdentity ||
       paymentEvent.providerSettlementReference !== settlement.providerSettlementReference ||
       paymentEvent.amountMinor !== settlement.amountMinor ||
@@ -365,7 +366,7 @@ export class CommerceFulfillmentService {
       paymentEvent.providerOccurredAt?.getTime() !== settlement.settledAt.getTime() ||
       settlement.paymentAttemptId !== paymentAttempt.id ||
       paymentAttempt.orderId !== orderId ||
-      paymentAttempt.provider !== PROVIDER ||
+      paymentAttempt.provider !== provider ||
       !paymentAttempt.providerPaymentIdentity ||
       paymentAttempt.providerOrderCode === null ||
       paymentAttempt.status !== CommercePaymentStatus.paid ||
@@ -472,7 +473,7 @@ export class CommerceFulfillmentService {
         reasonCode: PAID_ORDER_FULFILLMENT_RETRY_REQUIRED,
         failureReasonCode,
         failurePhase: 'FULFILLMENT',
-        provider: PROVIDER,
+        provider: payment.settlement.provider,
         settlementId,
       },
     }, tx);

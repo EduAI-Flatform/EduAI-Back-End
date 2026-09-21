@@ -255,7 +255,10 @@ function requireTransactions(value: unknown): PaymentRequestStatus['transactions
 function normalizeWebhook(value: unknown): VerifiedPaymentWebhook {
   const item = requireRecord(value);
   const reference = requireString(item.reference, 128);
+  const providerCode = requireString(item.code, 32);
   return {
+    provider: 'payos',
+    providerOrderReference: String(requireSafeInteger(item.orderCode)),
     providerEventIdentity: reference,
     providerPaymentIdentity: requireString(item.paymentLinkId, 128),
     providerSettlementReference: reference,
@@ -263,7 +266,8 @@ function normalizeWebhook(value: unknown): VerifiedPaymentWebhook {
     amountMinor: BigInt(requireNonNegativeInteger(item.amount)),
     currency: requireVnd(item.currency),
     occurredAt: requireProviderDate(item.transactionDateTime),
-    providerCode: requireString(item.code, 32),
+    providerCode,
+    responseCode: providerCode,
     receivingAccount: requireString(item.accountNumber, 128),
   };
 }

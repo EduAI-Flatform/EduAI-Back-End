@@ -41,6 +41,8 @@ export function toVerifiedPaymentWebhook(
   if (!transaction) return null;
 
   return {
+    provider: 'payos',
+    providerOrderReference: String(attempt.providerOrderCode),
     providerEventIdentity: transaction.reference,
     providerPaymentIdentity: status.providerPaymentIdentity,
     providerSettlementReference: transaction.reference,

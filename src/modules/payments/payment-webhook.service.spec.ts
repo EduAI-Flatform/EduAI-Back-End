@@ -13,6 +13,8 @@ import { PaymentRecoveryError } from './payment-recovery-error';
 import { PaymentWebhookService } from './payment-webhook.service';
 
 const verified: VerifiedPaymentWebhook = {
+  provider: 'payos',
+  providerOrderReference: '1001',
   providerEventIdentity: 'provider-event',
   providerPaymentIdentity: 'provider-payment',
   providerSettlementReference: 'provider-settlement',
@@ -219,6 +221,50 @@ describe('PaymentWebhookService', () => {
       null,
     );
     expect(fulfillment.fulfillConfirmedOrder).not.toHaveBeenCalled();
+  });
+
+  it('uses the stored VNPay provider scope throughout canonical settlement', async () => {
+    const { fulfillment, service, tx } = harness();
+    const vnpayAttempt = attempt({
+      provider: 'vnpay',
+      providerPaymentIdentity: '1001',
+      providerReceivingAccountHash: null,
+    });
+    const vnpayVerified: VerifiedPaymentWebhook = {
+      ...verified,
+      provider: 'vnpay',
+      providerOrderReference: '1001',
+      providerPaymentIdentity: '1001',
+      providerEventIdentity: 'vnpay-event',
+      providerSettlementReference: '12996460',
+      transactionStatus: '00',
+      receivingAccount: undefined,
+    };
+    tx.commercePaymentAttempt.findUnique.mockResolvedValue(vnpayAttempt);
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(vnpayAttempt);
+
+    await expect(service.processVerified(vnpayVerified)).resolves.toMatchObject({
+      accepted: true,
+      result: 'CONFIRMED',
+    });
+    expect(tx.commercePaymentAttempt.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { provider_providerOrderCode: { provider: 'vnpay', providerOrderCode: 1001n } },
+    }));
+    expect(tx.commercePaymentEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ provider: 'vnpay' }),
+    });
+    expect(tx.commerceSettlement.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        provider: 'vnpay',
+        providerSettlementReference: '12996460',
+      }),
+    });
+    expect(fulfillment.fulfillConfirmedPayment).toHaveBeenCalledWith(
+      'order-id',
+      'settlement-id',
+      'provider',
+      null,
+    );
   });
 
   it('commits financial settlement before isolating a fulfillment failure', async () => {

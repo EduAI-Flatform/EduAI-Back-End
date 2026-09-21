@@ -111,6 +111,30 @@ describe('CommerceFulfillmentService', () => {
     expect(tx.commerceNotificationOutbox.createMany).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a canonical VNPay settlement while rejecting unknown providers', async () => {
+    const vnpayOrder = {
+      ...order,
+      confirmedSettlement: {
+        ...order.confirmedSettlement,
+        provider: 'vnpay',
+        paymentAttempt: { ...order.confirmedSettlement.paymentAttempt, provider: 'vnpay' },
+        paymentEvent: { ...order.confirmedSettlement.paymentEvent, provider: 'vnpay' },
+      },
+    };
+    tx.commerceOrder.findUnique.mockResolvedValue(vnpayOrder);
+    await expect(
+      service.fulfillConfirmedPayment(order.id, 'settlement-id', CommerceActorKind.provider, null),
+    ).resolves.toBeUndefined();
+
+    tx.commerceOrder.findUnique.mockResolvedValue({
+      ...vnpayOrder,
+      confirmedSettlement: { ...vnpayOrder.confirmedSettlement, provider: 'unknown' },
+    });
+    await expect(
+      service.fulfillConfirmedPayment(order.id, 'settlement-id', CommerceActorKind.provider, null),
+    ).rejects.toMatchObject({ reasonCode: 'PAYMENT_SETTLEMENT_CONFLICT' });
+  });
+
   it('returns without duplicating grants, terms, effects, history, audit, or outbox', async () => {
     tx.commerceOrder.findUnique.mockResolvedValue({ ...order, fulfillmentStatus: CommerceFulfillmentStatus.fulfilled });
 
