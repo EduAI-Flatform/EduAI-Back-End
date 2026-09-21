@@ -77,6 +77,7 @@ export interface ValidatedEnv {
   VNPAY_TMN_CODE?: string;
   VNPAY_HASH_SECRET?: string;
   VNPAY_PAYMENT_URL?: string;
+  VNPAY_API_URL?: string;
   VNPAY_RETURN_URL?: string;
   VNPAY_IPN_URL?: string;
   VNPAY_VERSION: string;
@@ -306,6 +307,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
       config.VNPAY_PAYMENT_URL,
       'VNPAY_PAYMENT_URL',
     ),
+    VNPAY_API_URL: optionalUrl(config.VNPAY_API_URL, 'VNPAY_API_URL'),
     VNPAY_RETURN_URL: optionalUrl(config.VNPAY_RETURN_URL, 'VNPAY_RETURN_URL'),
     VNPAY_IPN_URL: optionalUrl(config.VNPAY_IPN_URL, 'VNPAY_IPN_URL'),
     VNPAY_VERSION: parseVnPayVersion(config.VNPAY_VERSION),
@@ -408,6 +410,7 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
     !config.VNPAY_TMN_CODE ? 'VNPAY_TMN_CODE' : undefined,
     !config.VNPAY_HASH_SECRET ? 'VNPAY_HASH_SECRET' : undefined,
     !config.VNPAY_PAYMENT_URL ? 'VNPAY_PAYMENT_URL' : undefined,
+    !config.VNPAY_API_URL ? 'VNPAY_API_URL' : undefined,
     !config.VNPAY_RETURN_URL ? 'VNPAY_RETURN_URL' : undefined,
     !config.VNPAY_IPN_URL ? 'VNPAY_IPN_URL' : undefined,
   ].filter((value): value is string => Boolean(value));
@@ -435,17 +438,22 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
 
   for (const [name, value] of [
     ['VNPAY_PAYMENT_URL', config.VNPAY_PAYMENT_URL],
+    ['VNPAY_API_URL', config.VNPAY_API_URL],
     ['VNPAY_RETURN_URL', config.VNPAY_RETURN_URL],
     ['VNPAY_IPN_URL', config.VNPAY_IPN_URL],
   ] as const) {
     const url = new URL(value as string);
     if (
-      config.NODE_ENV === 'production' &&
+      (name === 'VNPAY_API_URL' || config.NODE_ENV === 'production') &&
       (url.protocol !== 'https:' ||
         url.username.length > 0 ||
         url.password.length > 0)
     ) {
-      throw new Error(`${name} must use https in VNPAY production mode`);
+      throw new Error(
+        name === 'VNPAY_API_URL'
+          ? `${name} must use https`
+          : `${name} must use https in VNPAY production mode`,
+      );
     }
   }
 }

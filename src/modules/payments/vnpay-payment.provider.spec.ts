@@ -5,6 +5,7 @@ const config = {
   tmnCode: 'TESTTMNC',
   hashSecret: 'test-secret',
   paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+  apiUrl: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
   returnUrl: 'https://app.example/payments/return',
   ipnUrl: 'https://api.example/payments/ipn',
   version: '2.1.0',

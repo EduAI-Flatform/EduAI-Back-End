@@ -14,6 +14,7 @@ describe('validateEnv', () => {
       PAYOS_TIMEOUT_MS: 10000,
       PAYMENT_DEFAULT_PROVIDER: 'payos',
       VNPAY_ENVIRONMENT: 'disabled',
+      VNPAY_API_URL: undefined,
       VNPAY_VERSION: '2.1.0',
       VNPAY_TIMEOUT_MS: 10000,
     });
@@ -37,7 +38,7 @@ describe('validateEnv', () => {
   it('requires complete VNPay configuration only when enabled', () => {
     expect(() =>
       validateEnv({ ...paymentBase, VNPAY_ENVIRONMENT: 'sandbox' }),
-    ).toThrow('VNPAY sandbox configuration requires');
+    ).toThrow('VNPAY_API_URL');
 
     expect(
       validateEnv({
@@ -46,6 +47,7 @@ describe('validateEnv', () => {
         VNPAY_TMN_CODE: 'TESTTMNC',
         VNPAY_HASH_SECRET: 'sandbox-secret',
         VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+        VNPAY_API_URL: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
         VNPAY_RETURN_URL: 'https://app.example/payments/return',
         VNPAY_IPN_URL: 'https://api.example/payments/ipn',
       }),
@@ -65,6 +67,7 @@ describe('validateEnv', () => {
       VNPAY_TMN_CODE: 'TESTTMNC',
       VNPAY_HASH_SECRET: 'production-secret',
       VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+      VNPAY_API_URL: 'https://merchant.example/vnpay/transaction',
       VNPAY_RETURN_URL: 'https://app.example/payments/return',
       VNPAY_IPN_URL: 'https://api.example/payments/ipn',
     };
@@ -73,6 +76,12 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...active, VNPAY_RETURN_URL: 'not-a-url' })).toThrow(
       'VNPAY_RETURN_URL must be a valid http or https URL',
     );
+    expect(() =>
+      validateEnv({
+        ...active,
+        VNPAY_API_URL: 'http://merchant.example/vnpay/transaction',
+      }),
+    ).toThrow('VNPAY_API_URL must use https');
     expect(() =>
       validateEnv({ ...active, VNPAY_IPN_URL: 'http://api.example/payments/ipn' }),
     ).toThrow('VNPAY_IPN_URL must use https');

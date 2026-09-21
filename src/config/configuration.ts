@@ -105,6 +105,7 @@ export interface BackendConfig {
     tmnCode?: string;
     hashSecret?: string;
     paymentUrl: string;
+    apiUrl?: string;
     returnUrl?: string;
     ipnUrl?: string;
     version: string;
@@ -222,6 +223,7 @@ export default function configuration(): BackendConfig {
       hashSecret: env.VNPAY_HASH_SECRET,
       paymentUrl:
         env.VNPAY_PAYMENT_URL ?? DEFAULT_VNPAY_PAYMENT_URL,
+      apiUrl: env.VNPAY_API_URL,
       returnUrl: env.VNPAY_RETURN_URL,
       ipnUrl: env.VNPAY_IPN_URL,
       version: env.VNPAY_VERSION,
