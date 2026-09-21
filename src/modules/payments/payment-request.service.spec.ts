@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   BadGatewayException,
   NotFoundException,
@@ -189,6 +190,7 @@ describe('PaymentRequestService', () => {
       paymentRequired: true,
       payment: {
         id: attemptId,
+        provider: 'payos',
         status: 'PENDING',
         amount: { amountMinor: '125000', currency: 'VND' },
         checkoutUrl: 'https://pay.payos.vn/web/example',
@@ -274,7 +276,7 @@ describe('PaymentRequestService', () => {
     const { service, provider, tx } = harness({ existingAttempt: open });
 
     await expect(service.create('student-id', orderId, 'payment-key-2')).resolves.toMatchObject({
-      payment: { id: attemptId, status: 'PENDING' },
+      payment: { id: attemptId, provider: 'payos', status: 'PENDING' },
     });
     expect(provider.createPaymentRequest).not.toHaveBeenCalled();
     expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
@@ -301,6 +303,7 @@ describe('PaymentRequestService', () => {
       orderId,
       payment: {
         id: attemptId,
+        provider: 'payos',
         status: 'PENDING',
         checkoutUrl: 'https://pay.payos.vn/web/provider-payment-id',
       },
@@ -319,6 +322,7 @@ describe('PaymentRequestService', () => {
         orderId,
         payment: {
           id: attemptId,
+          provider: 'payos',
           amount: { amountMinor: '125000', currency: 'VND' },
           checkoutUrl: 'https://pay.payos.vn/web/provider-payment-id',
         },
@@ -442,5 +446,58 @@ describe('PaymentRequestService', () => {
       NotFoundException,
     );
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns the stored VNPay provider for an existing attempt', async () => {
+    const vnpayAttempt = attempt({
+      provider: 'vnpay',
+      status: 'pending',
+      providerPaymentIdentity: 'vnpay-payment-id',
+    });
+    const { service, prisma } = harness();
+    prisma.commerceOrder.findFirst.mockResolvedValueOnce(
+      order({ paymentAttempts: [vnpayAttempt] }),
+    );
+
+    await expect(service.status('student-id', orderId)).resolves.toMatchObject({
+      payment: {
+        id: attemptId,
+        provider: 'vnpay',
+      },
+    });
+  });
+
+  it('fails closed instead of returning an unsupported stored provider', async () => {
+    const unsupportedAttempt = attempt({
+      provider: 'stripe',
+      status: 'pending',
+      providerPaymentIdentity: 'unsupported-payment-id',
+    });
+    const { service, prisma } = harness();
+    prisma.commerceOrder.findFirst.mockResolvedValueOnce(
+      order({ paymentAttempts: [unsupportedAttempt] }),
+    );
+
+    await expect(service.status('student-id', orderId)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+  });
+
+  it('returns the stored provider when an idempotent create replays an existing attempt', async () => {
+    const open = attempt({ status: 'pending', providerPaymentIdentity: 'provider-payment-id' });
+    const { service, tx, provider } = harness({ existingAttempt: open });
+    tx.commerceIdempotencyRecord.findUnique.mockResolvedValueOnce({
+      requestHash: createHash('sha256').update(orderId).digest('hex'),
+      status: CommerceIdempotencyStatus.completed,
+      resourceType: 'payment_attempt',
+      resourceId: attemptId,
+    });
+    tx.commercePaymentAttempt.findUnique.mockResolvedValueOnce(open);
+
+    await expect(service.create('student-id', orderId, 'payment-key-idempotent-replay'))
+      .resolves.toMatchObject({
+        payment: { id: attemptId, provider: 'payos', status: 'PENDING' },
+      });
+    expect(provider.createPaymentRequest).not.toHaveBeenCalled();
   });
 });

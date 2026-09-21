@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import type { PaymentProviderName } from '../payment-provider';
 
 export class PaymentAmountResponseDto {
   @ApiProperty({ example: '125000' })
@@ -13,6 +14,9 @@ export class PaymentAmountResponseDto {
 export class PaymentAttemptResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
+
+  @ApiProperty({ enum: ['payos', 'vnpay'], example: 'payos' })
+  provider!: PaymentProviderName;
 
   @ApiProperty({ example: 'PENDING' })
   status!: string;

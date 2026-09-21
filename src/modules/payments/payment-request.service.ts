@@ -35,6 +35,7 @@ import {
   PaymentProviderError,
   PAYMENT_PROVIDER_REGISTRY,
   PaymentProviderName,
+  isPaymentProviderName,
 } from './payment-provider';
 import { PaymentProviderRegistry } from './payment-provider.registry';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
@@ -579,6 +580,7 @@ export class PaymentRequestService {
       paymentRequired: order.payableAmountMinor > 0n,
       payment: attempt ? {
         id: attempt.id,
+        provider: this.requireResponseProvider(attempt.provider),
         status: attempt.status.toUpperCase(),
         amount: { amountMinor: attempt.amountMinor.toString(), currency: CURRENCY },
         expiresAt: attempt.providerExpiresAt as Date,
@@ -633,8 +635,16 @@ export class PaymentRequestService {
   }
 
   private requireProviderName(value: string): PaymentProviderName {
-    if (value === 'payos' || value === 'vnpay') return value;
+    if (isPaymentProviderName(value)) return value;
     throw new PaymentProviderError('disabled', false);
+  }
+
+  private requireResponseProvider(value: string): PaymentProviderName {
+    if (isPaymentProviderName(value)) return value;
+    throw new ServiceUnavailableException({
+      error: 'PAYMENT_PROVIDER_UNAVAILABLE',
+      message: 'Payment provider is not available.',
+    });
   }
 
   private assertIdempotencyKey(value: string | undefined): asserts value is string {
