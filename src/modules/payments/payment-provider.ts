@@ -1,4 +1,7 @@
 export const PAYMENT_PROVIDER = Symbol('PAYMENT_PROVIDER');
+export const PAYMENT_PROVIDER_REGISTRY = Symbol('PAYMENT_PROVIDER_REGISTRY');
+
+export type PaymentProviderName = 'payos' | 'vnpay';
 
 export type PaymentProviderErrorCode =
   | 'disabled'
@@ -7,7 +10,8 @@ export type PaymentProviderErrorCode =
   | 'malformed_response'
   | 'rejected'
   | 'timeout'
-  | 'unavailable';
+  | 'unavailable'
+  | 'unsupported';
 
 export type PaymentProviderStatus =
   | 'PENDING'
@@ -31,23 +35,26 @@ export class PaymentProviderError extends Error {
 
 export interface CreatePaymentRequestInput {
   paymentAttemptIdentity: string;
-  localOrderReference: number;
+  providerOrderReference: string;
+  localOrderReference?: number;
   amountMinor: bigint;
   currency: 'VND';
   description: string;
   returnUrls: { success: string; cancel: string };
+  clientIpAddress?: string;
   expiresAt?: Date;
 }
 
 export interface CreatedPaymentRequest {
   providerPaymentIdentity: string;
-  localOrderReference: number;
+  providerOrderReference: string;
+  localOrderReference?: number;
   amountMinor: bigint;
   currency: 'VND';
   status: PaymentProviderStatus;
   checkoutUrl: string;
-  qrPayload: string;
-  receivingAccount: string;
+  qrPayload?: string;
+  receivingAccount?: string;
   expiresAt?: Date;
 }
 
@@ -93,7 +100,7 @@ export interface VerifiedPaymentWebhook {
 
 export interface PaymentProvider {
   createPaymentRequest(input: CreatePaymentRequestInput): Promise<CreatedPaymentRequest>;
-  checkoutUrlFor(providerPaymentIdentity: string): string;
+  checkoutUrlFor(providerPaymentIdentity: string): string | undefined;
   retrievePaymentRequest(providerPaymentIdentity: string): Promise<PaymentRequestStatus>;
   cancelPaymentRequest(
     providerPaymentIdentity: string,

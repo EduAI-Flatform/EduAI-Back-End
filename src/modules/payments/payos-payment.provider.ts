@@ -72,13 +72,14 @@ export class PayosPaymentProvider implements PaymentProvider {
           ...(input.expiresAt
             ? { expiredAt: Math.floor(input.expiresAt.getTime() / 1000) }
             : {}),
-          orderCode: input.localOrderReference,
+          orderCode: input.localOrderReference as number,
           returnUrl: input.returnUrls.success,
         },
         { maxRetries: 0 },
       );
       const normalized = normalizeCreated(response);
       if (
+        normalized.providerOrderReference !== input.providerOrderReference ||
         normalized.localOrderReference !== input.localOrderReference ||
         normalized.amountMinor !== input.amountMinor ||
         normalized.currency !== input.currency
@@ -171,8 +172,8 @@ function validateCreateInput(input: CreatePaymentRequestInput): void {
     input.currency !== 'VND' ||
     input.amountMinor <= 0n ||
     input.amountMinor > BigInt(Number.MAX_SAFE_INTEGER) ||
-    !Number.isSafeInteger(input.localOrderReference) ||
-    input.localOrderReference <= 0 ||
+    !isSafePositiveInteger(input.localOrderReference) ||
+    String(input.localOrderReference) !== input.providerOrderReference ||
     input.description.length < 1 ||
     input.description.length > 25 ||
     !isHttpUrl(input.returnUrls.success) ||
@@ -198,6 +199,7 @@ function normalizeCreated(value: unknown): CreatedPaymentRequest {
 
   return {
     providerPaymentIdentity: requireString(item.paymentLinkId, 128),
+    providerOrderReference: String(requireSafeInteger(item.orderCode)),
     localOrderReference: requireSafeInteger(item.orderCode),
     amountMinor: BigInt(requireNonNegativeInteger(item.amount)),
     currency,
@@ -313,6 +315,10 @@ function requireSafeInteger(value: unknown): number {
     throw new PaymentProviderError('malformed_response', false);
   }
   return value as number;
+}
+
+function isSafePositiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
 }
 
 function requireNonNegativeInteger(value: unknown): number {

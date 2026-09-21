@@ -8,8 +8,17 @@ import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { DisabledPaymentProvider } from './disabled-payment.provider';
-import { PAYMENT_PROVIDER, PaymentProvider } from './payment-provider';
+import {
+  PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
+  PaymentProvider,
+} from './payment-provider';
+import {
+  DefaultPaymentProviderRegistry,
+  PaymentProviderRegistry,
+} from './payment-provider.registry';
 import { PayosClientPort, PayosPaymentProvider } from './payos-payment.provider';
+import { VnPayPaymentProvider } from './vnpay-payment.provider';
 import { PaymentExpiryScheduler } from './payment-expiry.scheduler';
 import { PaymentRequestController } from './payment-request.controller';
 import { PaymentRequestService } from './payment-request.service';
@@ -61,16 +70,44 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
       useFactory: (client: PayosClientPort | null) => new PayosPaymentProvider(client),
     },
     {
-      provide: PAYMENT_PROVIDER,
-      inject: [AppConfigService, DisabledPaymentProvider, PayosPaymentProvider],
+      provide: VnPayPaymentProvider,
+      inject: [AppConfigService],
+      useFactory: (config: AppConfigService) =>
+        new VnPayPaymentProvider(config.vnpay),
+    },
+    {
+      provide: PAYMENT_PROVIDER_REGISTRY,
+      inject: [
+        AppConfigService,
+        DisabledPaymentProvider,
+        PayosPaymentProvider,
+        VnPayPaymentProvider,
+      ],
       useFactory: (
         config: AppConfigService,
         disabled: DisabledPaymentProvider,
         payos: PayosPaymentProvider,
-      ): PaymentProvider =>
-        config.payos.environment === 'production' ? payos : disabled,
+        vnpay: VnPayPaymentProvider,
+      ): PaymentProviderRegistry =>
+        new DefaultPaymentProviderRegistry({
+          defaultProvider: config.payment.defaultProvider,
+          providers: { payos, vnpay },
+          enabled: {
+            payos: config.payos.environment === 'production',
+            vnpay: config.vnpay.environment !== 'disabled',
+          },
+          disabled,
+        }),
+    },
+    {
+      provide: PAYMENT_PROVIDER,
+      inject: [PAYMENT_PROVIDER_REGISTRY],
+      useFactory: (registry: PaymentProviderRegistry): PaymentProvider =>
+        // Webhook/lifecycle/reconciliation remain PayOS-specific until the
+        // later settlement-neutral tasks; new attempts use the registry.
+        registry.get('payos'),
     },
   ],
-  exports: [PAYMENT_PROVIDER],
+  exports: [PAYMENT_PROVIDER, PAYMENT_PROVIDER_REGISTRY],
 })
 export class PaymentsModule {}

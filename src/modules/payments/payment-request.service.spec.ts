@@ -4,7 +4,9 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { CommerceIdempotencyStatus } from '../../../generated/prisma/client';
+import { DisabledPaymentProvider } from './disabled-payment.provider';
 import { PaymentProviderError } from './payment-provider';
+import { DefaultPaymentProviderRegistry } from './payment-provider.registry';
 import { PaymentRequestService } from './payment-request.service';
 
 const now = new Date();
@@ -118,6 +120,7 @@ function harness(options: {
       events.push('provider');
       return {
         providerPaymentIdentity: 'provider-payment-id',
+        providerOrderReference: '9001',
         localOrderReference: 9001,
         amountMinor: 125000n,
         currency: 'VND' as const,
@@ -136,18 +139,32 @@ function harness(options: {
   };
   const config = {
     commerce: { idempotencySecret: 's'.repeat(32) },
+    payment: { defaultProvider: 'payos' },
     payos: {
       environment: options.environment ?? 'production',
       returnUrl: options.returnUrl ?? 'https://app.example/payments/return',
       cancelUrl: options.cancelUrl ?? 'https://app.example/payments/cancel',
     },
+    vnpay: {
+      environment: 'disabled',
+      returnUrl: undefined,
+    },
   };
+  const providerRegistry = new DefaultPaymentProviderRegistry({
+    defaultProvider: 'payos',
+    providers: { payos: provider as never, vnpay: new DisabledPaymentProvider() },
+    enabled: {
+      payos: (options.environment ?? 'production') === 'production',
+      vnpay: false,
+    },
+    disabled: new DisabledPaymentProvider(),
+  });
   return {
     service: new PaymentRequestService(
       prisma as never,
       config as never,
       audit as never,
-      provider as never,
+      providerRegistry,
       fulfillment as never,
     ),
     prisma,
@@ -261,6 +278,18 @@ describe('PaymentRequestService', () => {
     });
     expect(provider.createPaymentRequest).not.toHaveBeenCalled();
     expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
+  });
+
+  it('does not reselect an existing attempt when the configured default is unavailable', async () => {
+    const open = attempt({ status: 'pending', providerPaymentIdentity: 'provider-payment-id' });
+    const { service, provider } = harness({
+      environment: 'disabled',
+      existingAttempt: open,
+    });
+
+    await expect(service.create('student-id', orderId, 'payment-key-existing-provider'))
+      .resolves.toMatchObject({ payment: { id: attemptId, status: 'PENDING' } });
+    expect(provider.createPaymentRequest).not.toHaveBeenCalled();
   });
 
   it('returns a resumable checkout URL for the learner-owned pending attempt', async () => {
@@ -395,12 +424,13 @@ describe('PaymentRequestService', () => {
   });
 
   it('fails closed before mutation when a positive order has no active provider', async () => {
-    const { service, prisma, provider } = harness({ environment: 'disabled' });
+    const { service, prisma, provider, tx } = harness({ environment: 'disabled' });
 
     await expect(service.create('student-id', orderId, 'payment-key-6')).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
     expect(provider.createPaymentRequest).not.toHaveBeenCalled();
   });
 

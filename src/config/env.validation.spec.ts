@@ -12,7 +12,87 @@ describe('validateEnv', () => {
       PAYOS_API_BASE_URL: 'https://api-merchant.payos.vn',
       PAYOS_ENVIRONMENT: 'disabled',
       PAYOS_TIMEOUT_MS: 10000,
+      PAYMENT_DEFAULT_PROVIDER: 'payos',
+      VNPAY_ENVIRONMENT: 'disabled',
+      VNPAY_VERSION: '2.1.0',
+      VNPAY_TIMEOUT_MS: 10000,
     });
+  });
+
+  it('allows disabled VNPay configuration without secrets', () => {
+    expect(
+      validateEnv({
+        ...paymentBase,
+        VNPAY_ENVIRONMENT: 'disabled',
+        VNPAY_TMN_CODE: '',
+        VNPAY_HASH_SECRET: '',
+      }),
+    ).toMatchObject({
+      VNPAY_ENVIRONMENT: 'disabled',
+      VNPAY_TMN_CODE: undefined,
+      VNPAY_HASH_SECRET: undefined,
+    });
+  });
+
+  it('requires complete VNPay configuration only when enabled', () => {
+    expect(() =>
+      validateEnv({ ...paymentBase, VNPAY_ENVIRONMENT: 'sandbox' }),
+    ).toThrow('VNPAY sandbox configuration requires');
+
+    expect(
+      validateEnv({
+        ...paymentBase,
+        VNPAY_ENVIRONMENT: 'sandbox',
+        VNPAY_TMN_CODE: 'TESTTMNC',
+        VNPAY_HASH_SECRET: 'sandbox-secret',
+        VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+        VNPAY_RETURN_URL: 'https://app.example/payments/return',
+        VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+      }),
+    ).toMatchObject({
+      VNPAY_ENVIRONMENT: 'sandbox',
+      VNPAY_TMN_CODE: 'TESTTMNC',
+      VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+    });
+  });
+
+  it('rejects invalid VNPay URLs and incomplete production configuration', () => {
+    const active = {
+      ...paymentBase,
+      NODE_ENV: 'production',
+      COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+      VNPAY_ENVIRONMENT: 'production',
+      VNPAY_TMN_CODE: 'TESTTMNC',
+      VNPAY_HASH_SECRET: 'production-secret',
+      VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+      VNPAY_RETURN_URL: 'https://app.example/payments/return',
+      VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+    };
+
+    expect(validateEnv(active).VNPAY_ENVIRONMENT).toBe('production');
+    expect(() => validateEnv({ ...active, VNPAY_RETURN_URL: 'not-a-url' })).toThrow(
+      'VNPAY_RETURN_URL must be a valid http or https URL',
+    );
+    expect(() =>
+      validateEnv({ ...active, VNPAY_IPN_URL: 'http://api.example/payments/ipn' }),
+    ).toThrow('VNPAY_IPN_URL must use https');
+    expect(() =>
+      validateEnv({
+        ...active,
+        VNPAY_HASH_SECRET: undefined,
+      }),
+    ).toThrow('VNPAY production configuration requires');
+  });
+
+  it('preserves PayOS as the only production default during foundation work', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        NODE_ENV: 'production',
+        COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+        PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+      }),
+    ).toThrow('PAYMENT_DEFAULT_PROVIDER=vnpay is not allowed in production');
   });
 
   it('requires complete production-only PayOS configuration when activated', () => {

@@ -1,4 +1,5 @@
 import {
+  DEFAULT_VNPAY_PAYMENT_URL,
   loadBackendEnv,
   NodeEnvironment,
   ValidatedEnv,
@@ -85,6 +86,9 @@ export interface BackendConfig {
   commerce: {
     idempotencySecret?: string;
   };
+  payment: {
+    defaultProvider: ValidatedEnv['PAYMENT_DEFAULT_PROVIDER'];
+  };
   payos: {
     environment: ValidatedEnv['PAYOS_ENVIRONMENT'];
     clientId?: string;
@@ -94,6 +98,16 @@ export interface BackendConfig {
     returnUrl?: string;
     cancelUrl?: string;
     webhookUrl?: string;
+    timeoutMs: number;
+  };
+  vnpay: {
+    environment: ValidatedEnv['VNPAY_ENVIRONMENT'];
+    tmnCode?: string;
+    hashSecret?: string;
+    paymentUrl: string;
+    returnUrl?: string;
+    ipnUrl?: string;
+    version: string;
     timeoutMs: number;
   };
 }
@@ -188,6 +202,9 @@ export default function configuration(): BackendConfig {
     commerce: {
       idempotencySecret: env.COMMERCE_IDEMPOTENCY_SECRET,
     },
+    payment: {
+      defaultProvider: env.PAYMENT_DEFAULT_PROVIDER,
+    },
     payos: {
       environment: env.PAYOS_ENVIRONMENT,
       clientId: env.PAYOS_CLIENT_ID,
@@ -198,6 +215,17 @@ export default function configuration(): BackendConfig {
       cancelUrl: env.PAYOS_CANCEL_URL,
       webhookUrl: env.PAYOS_WEBHOOK_URL,
       timeoutMs: env.PAYOS_TIMEOUT_MS,
+    },
+    vnpay: {
+      environment: env.VNPAY_ENVIRONMENT,
+      tmnCode: env.VNPAY_TMN_CODE,
+      hashSecret: env.VNPAY_HASH_SECRET,
+      paymentUrl:
+        env.VNPAY_PAYMENT_URL ?? DEFAULT_VNPAY_PAYMENT_URL,
+      returnUrl: env.VNPAY_RETURN_URL,
+      ipnUrl: env.VNPAY_IPN_URL,
+      version: env.VNPAY_VERSION,
+      timeoutMs: env.VNPAY_TIMEOUT_MS,
     },
   };
 }

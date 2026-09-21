@@ -70,6 +70,7 @@ describe('PayosPaymentProvider', () => {
         amountMinor: 125000n,
         currency: 'VND',
         description: 'EDUAI 123',
+        providerOrderReference: '123',
         expiresAt: new Date('2026-09-22T01:46:40Z'),
         localOrderReference: 123,
         paymentAttemptIdentity: 'attempt-id',
@@ -195,6 +196,7 @@ describe('PayosPaymentProvider', () => {
         amountMinor: 125000n,
         currency: 'VND',
         description: 'EDUAI 123',
+        providerOrderReference: '123',
         localOrderReference: 123,
         paymentAttemptIdentity: 'attempt-id',
         returnUrls: {
@@ -213,6 +215,7 @@ describe('PayosPaymentProvider', () => {
         amountMinor: 125000n,
         currency: 'VND',
         description: 'EDUAI 123',
+        providerOrderReference: '123',
         localOrderReference: 123,
         paymentAttemptIdentity: 'attempt-id',
         returnUrls: {
@@ -231,6 +234,7 @@ describe('PayosPaymentProvider', () => {
         amountMinor: 125000n,
         currency: 'VND',
         description: 'EDUAI 123',
+        providerOrderReference: '123',
         localOrderReference: 123,
         paymentAttemptIdentity: 'attempt-id',
         returnUrls: {

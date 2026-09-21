@@ -2,8 +2,12 @@ export type NodeEnvironment = 'development' | 'test' | 'production';
 export type AiProviderName = 'gemini' | 'openai' | 'mock';
 export type EmailProviderName = 'disabled' | 'preview' | 'resend';
 export type PayosEnvironment = 'disabled' | 'production';
+export type PaymentDefaultProvider = 'payos' | 'vnpay';
+export type VnpayEnvironment = 'disabled' | 'sandbox' | 'production';
 
 const OFFICIAL_PAYOS_API_BASE_URL = 'https://api-merchant.payos.vn';
+export const DEFAULT_VNPAY_PAYMENT_URL =
+  'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
 
 export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
@@ -59,6 +63,7 @@ export interface ValidatedEnv {
   MONITORING_ENABLED: boolean;
   MONITORING_ENDPOINT?: string;
   COMMERCE_IDEMPOTENCY_SECRET?: string;
+  PAYMENT_DEFAULT_PROVIDER: PaymentDefaultProvider;
   PAYOS_ENVIRONMENT: PayosEnvironment;
   PAYOS_CLIENT_ID?: string;
   PAYOS_API_KEY?: string;
@@ -68,6 +73,14 @@ export interface ValidatedEnv {
   PAYOS_CANCEL_URL?: string;
   PAYOS_WEBHOOK_URL?: string;
   PAYOS_TIMEOUT_MS: number;
+  VNPAY_ENVIRONMENT: VnpayEnvironment;
+  VNPAY_TMN_CODE?: string;
+  VNPAY_HASH_SECRET?: string;
+  VNPAY_PAYMENT_URL?: string;
+  VNPAY_RETURN_URL?: string;
+  VNPAY_IPN_URL?: string;
+  VNPAY_VERSION: string;
+  VNPAY_TIMEOUT_MS: number;
 }
 
 export function loadBackendEnv(): ValidatedEnv {
@@ -157,7 +170,11 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 
   const aiProvider = parseAiProvider(config.AI_PROVIDER);
   const emailProvider = parseEmailProvider(config.EMAIL_PROVIDER);
+  const paymentDefaultProvider = parsePaymentDefaultProvider(
+    config.PAYMENT_DEFAULT_PROVIDER,
+  );
   const payosEnvironment = parsePayosEnvironment(config.PAYOS_ENVIRONMENT);
+  const vnpayEnvironment = parseVnpayEnvironment(config.VNPAY_ENVIRONMENT);
   const resendApiKey = optionalString(config.RESEND_API_KEY);
   const emailFrom = optionalString(config.EMAIL_FROM);
   const aiApiKey = optionalString(config.AI_API_KEY);
@@ -264,6 +281,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     MONITORING_ENABLED: parseBoolean(config.MONITORING_ENABLED, false, 'MONITORING_ENABLED'),
     MONITORING_ENDPOINT: optionalUrl(config.MONITORING_ENDPOINT, 'MONITORING_ENDPOINT'),
     COMMERCE_IDEMPOTENCY_SECRET: optionalString(config.COMMERCE_IDEMPOTENCY_SECRET),
+    PAYMENT_DEFAULT_PROVIDER: paymentDefaultProvider,
     PAYOS_ENVIRONMENT: payosEnvironment,
     PAYOS_CLIENT_ID: optionalString(config.PAYOS_CLIENT_ID),
     PAYOS_API_KEY: optionalString(config.PAYOS_API_KEY),
@@ -277,6 +295,23 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     PAYOS_TIMEOUT_MS: parseBoundedInteger(
       config.PAYOS_TIMEOUT_MS,
       'PAYOS_TIMEOUT_MS',
+      10000,
+      1000,
+      60000,
+    ),
+    VNPAY_ENVIRONMENT: vnpayEnvironment,
+    VNPAY_TMN_CODE: optionalString(config.VNPAY_TMN_CODE),
+    VNPAY_HASH_SECRET: optionalString(config.VNPAY_HASH_SECRET),
+    VNPAY_PAYMENT_URL: optionalUrl(
+      config.VNPAY_PAYMENT_URL,
+      'VNPAY_PAYMENT_URL',
+    ),
+    VNPAY_RETURN_URL: optionalUrl(config.VNPAY_RETURN_URL, 'VNPAY_RETURN_URL'),
+    VNPAY_IPN_URL: optionalUrl(config.VNPAY_IPN_URL, 'VNPAY_IPN_URL'),
+    VNPAY_VERSION: parseVnPayVersion(config.VNPAY_VERSION),
+    VNPAY_TIMEOUT_MS: parseBoundedInteger(
+      config.VNPAY_TIMEOUT_MS,
+      'VNPAY_TIMEOUT_MS',
       10000,
       1000,
       60000,
@@ -353,7 +388,66 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     }
   }
 
+  validateVnPayConfiguration(validated);
+
   return validated;
+}
+
+function validateVnPayConfiguration(config: ValidatedEnv): void {
+  if (
+    config.NODE_ENV === 'production' &&
+    config.PAYMENT_DEFAULT_PROVIDER === 'vnpay'
+  ) {
+    throw new Error(
+      'PAYMENT_DEFAULT_PROVIDER=vnpay is not allowed in production during the VNPay foundation phase',
+    );
+  }
+  if (config.VNPAY_ENVIRONMENT === 'disabled') return;
+
+  const required = [
+    !config.VNPAY_TMN_CODE ? 'VNPAY_TMN_CODE' : undefined,
+    !config.VNPAY_HASH_SECRET ? 'VNPAY_HASH_SECRET' : undefined,
+    !config.VNPAY_PAYMENT_URL ? 'VNPAY_PAYMENT_URL' : undefined,
+    !config.VNPAY_RETURN_URL ? 'VNPAY_RETURN_URL' : undefined,
+    !config.VNPAY_IPN_URL ? 'VNPAY_IPN_URL' : undefined,
+  ].filter((value): value is string => Boolean(value));
+
+  if (required.length > 0) {
+    throw new Error(
+      `VNPAY ${config.VNPAY_ENVIRONMENT} configuration requires ${required.join(', ')}`,
+    );
+  }
+
+  if (
+    config.NODE_ENV === 'production' &&
+    config.VNPAY_ENVIRONMENT !== 'production'
+  ) {
+    throw new Error(
+      'VNPAY_ENVIRONMENT=sandbox is not allowed when NODE_ENV=production',
+    );
+  }
+  if (
+    config.VNPAY_ENVIRONMENT === 'production' &&
+    config.NODE_ENV !== 'production'
+  ) {
+    throw new Error('VNPAY_ENVIRONMENT=production requires NODE_ENV=production');
+  }
+
+  for (const [name, value] of [
+    ['VNPAY_PAYMENT_URL', config.VNPAY_PAYMENT_URL],
+    ['VNPAY_RETURN_URL', config.VNPAY_RETURN_URL],
+    ['VNPAY_IPN_URL', config.VNPAY_IPN_URL],
+  ] as const) {
+    const url = new URL(value as string);
+    if (
+      config.NODE_ENV === 'production' &&
+      (url.protocol !== 'https:' ||
+        url.username.length > 0 ||
+        url.password.length > 0)
+    ) {
+      throw new Error(`${name} must use https in VNPAY production mode`);
+    }
+  }
 }
 
 function parseBoolean(value: unknown, fallback: boolean, name: string): boolean {
@@ -422,6 +516,38 @@ function parsePayosEnvironment(value: unknown): PayosEnvironment {
   }
 
   return environment;
+}
+
+function parsePaymentDefaultProvider(value: unknown): PaymentDefaultProvider {
+  const provider = optionalString(value) ?? 'payos';
+
+  if (provider !== 'payos' && provider !== 'vnpay') {
+    throw new Error('PAYMENT_DEFAULT_PROVIDER must be payos or vnpay');
+  }
+
+  return provider;
+}
+
+function parseVnpayEnvironment(value: unknown): VnpayEnvironment {
+  const environment = optionalString(value) ?? 'disabled';
+
+  if (
+    environment !== 'disabled' &&
+    environment !== 'sandbox' &&
+    environment !== 'production'
+  ) {
+    throw new Error('VNPAY_ENVIRONMENT must be disabled, sandbox, or production');
+  }
+
+  return environment;
+}
+
+function parseVnPayVersion(value: unknown): string {
+  const version = optionalString(value) ?? '2.1.0';
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error('VNPAY_VERSION must use semantic version format');
+  }
+  return version;
 }
 
 function parsePositiveInteger(value: unknown, name: string, fallback: number): number {

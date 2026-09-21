@@ -6,9 +6,11 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { RoleName } from '../../../generated/prisma/client';
 import { RateLimit } from '../../common/security/rate-limit.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -50,8 +52,9 @@ export class PaymentRequestController {
     @CurrentUser('id') learnerId: string,
     @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Req() request: Request,
   ): Promise<PaymentRequestResponseDto> {
-    return this.payments.create(learnerId, orderId, idempotencyKey);
+    return this.payments.create(learnerId, orderId, idempotencyKey, request.ip);
   }
 
   @Get(':orderId/request')

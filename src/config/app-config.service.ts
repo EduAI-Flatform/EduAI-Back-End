@@ -62,8 +62,16 @@ export class AppConfigService {
     return this.getConfigValue('commerce');
   }
 
+  get payment(): BackendConfig['payment'] {
+    return this.getConfigValue('payment');
+  }
+
   get payos(): BackendConfig['payos'] {
     return this.getConfigValue('payos');
+  }
+
+  get vnpay(): BackendConfig['vnpay'] {
+    return this.getConfigValue('vnpay');
   }
 
   private getConfigValue<T extends keyof BackendConfig>(key: T): BackendConfig[T] {

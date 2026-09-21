@@ -30,17 +30,18 @@ import {
   PaymentRequestResponseDto,
 } from './dto/payment-request-response.dto';
 import {
-  PAYMENT_PROVIDER,
   CreatedPaymentRequest,
   PaymentProvider,
   PaymentProviderError,
+  PAYMENT_PROVIDER_REGISTRY,
+  PaymentProviderName,
 } from './payment-provider';
+import { PaymentProviderRegistry } from './payment-provider.registry';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 
 const CURRENCY = 'VND';
 const IDEMPOTENCY_OPERATION = 'payment.create-request';
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
-const PROVIDER = 'payos';
 const REQUEST_LIFETIME_MS = 15 * 60_000;
 
 const orderInclude = {
@@ -88,7 +89,8 @@ export class PaymentRequestService {
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
     private readonly audit: AuditService,
-    @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
+    @Inject(PAYMENT_PROVIDER_REGISTRY)
+    private readonly providerRegistry: PaymentProviderRegistry,
     private readonly fulfillment: CommerceFulfillmentService,
   ) {}
 
@@ -96,6 +98,7 @@ export class PaymentRequestService {
     learnerId: string,
     orderId: string,
     idempotencyKey: string | undefined,
+    clientIpAddress?: string,
   ): Promise<PaymentRequestResponseDto> {
     this.assertIdempotencyKey(idempotencyKey);
     const paymentRequirement = await this.prisma.commerceOrder.findFirst({
@@ -105,9 +108,6 @@ export class PaymentRequestService {
     if (!paymentRequirement) {
       throw new NotFoundException('Payment request was not found.');
     }
-    if (paymentRequirement.payableAmountMinor > 0n) {
-      this.assertProviderEnabled();
-    }
     const keyHash = createHmac(
       'sha256',
       this.config.commerce.idempotencySecret as string,
@@ -115,30 +115,44 @@ export class PaymentRequestService {
       .update(idempotencyKey)
       .digest('hex');
     const requestHash = createHash('sha256').update(orderId).digest('hex');
+    const defaultProvider = this.providerRegistry.getDefaultProvider();
     const prepared = await this.runSerializable((tx) =>
-      this.prepare(tx, learnerId, orderId, keyHash, requestHash),
+      this.prepare(tx, learnerId, orderId, keyHash, requestHash, defaultProvider),
     );
     await this.fulfillment.dispatchPending();
 
     if (!prepared.attempt || !prepared.shouldCallProvider) {
       return this.toResponse(prepared.order, prepared.attempt, this.checkoutFor(prepared.attempt));
     }
+    if (prepared.attempt.providerOrderCode === null) {
+      throw new ServiceUnavailableException({
+        error: 'PAYMENT_CONFIGURATION_INVALID',
+        message: 'Payment provider is not available.',
+      });
+    }
 
     let created: CreatedPaymentRequest;
     try {
-      created = await this.provider.createPaymentRequest({
+      const provider = this.providerRegistry.requireEnabled(prepared.attempt.provider);
+      const providerName = this.requireProviderName(prepared.attempt.provider);
+      created = await provider.createPaymentRequest({
         paymentAttemptIdentity: prepared.attempt.localRequestIdentity,
+        providerOrderReference: prepared.attempt.providerOrderCode.toString(),
         localOrderReference: Number(prepared.attempt.providerOrderCode),
         amountMinor: prepared.attempt.amountMinor,
         currency: CURRENCY,
         description: this.description(prepared.order.orderNumber),
-        returnUrls: {
-          success: this.withOrderIdentity(this.config.payos.returnUrl as string, orderId),
-          cancel: this.withOrderIdentity(this.config.payos.cancelUrl as string, orderId),
-        },
+        returnUrls: this.callbackUrls(providerName, orderId),
+        clientIpAddress,
         expiresAt: prepared.attempt.providerExpiresAt as Date,
       });
       if (created.status !== 'PENDING') {
+        throw new PaymentProviderError('malformed_response', false);
+      }
+      if (
+        created.providerOrderReference !==
+        prepared.attempt.providerOrderCode.toString()
+      ) {
         throw new PaymentProviderError('malformed_response', false);
       }
     } catch (error) {
@@ -146,11 +160,13 @@ export class PaymentRequestService {
       throw this.toHttpError(error);
     }
 
-    const qrCodeDataUrl = await QRCode.toDataURL(created.qrPayload, {
-      errorCorrectionLevel: 'M',
-      margin: 1,
-      width: 320,
-    });
+    const qrCodeDataUrl = created.qrPayload
+      ? await QRCode.toDataURL(created.qrPayload, {
+          errorCorrectionLevel: 'M',
+          margin: 1,
+          width: 320,
+        })
+      : undefined;
     const completed = await this.runSerializable((tx) =>
       this.completeProviderRequest(
         tx,
@@ -160,10 +176,12 @@ export class PaymentRequestService {
         created,
       ),
     );
-    return this.toResponse(completed.order, completed.attempt, {
-      checkoutUrl: created.checkoutUrl,
-      qrCodeDataUrl,
-    });
+    const checkout = { checkoutUrl: created.checkoutUrl } as {
+      checkoutUrl?: string;
+      qrCodeDataUrl?: string;
+    };
+    if (qrCodeDataUrl) checkout.qrCodeDataUrl = qrCodeDataUrl;
+    return this.toResponse(completed.order, completed.attempt, checkout);
   }
 
   private withOrderIdentity(callbackUrl: string, orderId: string): string {
@@ -231,6 +249,7 @@ export class PaymentRequestService {
     orderId: string,
     keyHash: string,
     requestHash: string,
+    defaultProvider: PaymentProviderName,
   ): Promise<PreparedRequest> {
     const existing = await tx.commerceIdempotencyRecord.findUnique({
       where: {
@@ -296,12 +315,13 @@ export class PaymentRequestService {
       return { order, attempt: openAttempt, shouldCallProvider: false };
     }
 
+    this.assertProviderEnabled(defaultProvider);
     const localRequestIdentity = randomUUID();
     const providerExpiresAt = this.paymentExpiry(order, now);
     const attempt = await tx.commercePaymentAttempt.create({
       data: {
         orderId,
-        provider: PROVIDER,
+        provider: defaultProvider,
         localRequestIdentity,
         providerOrderCode: this.orderCode(localRequestIdentity),
         providerExpiresAt,
@@ -329,7 +349,9 @@ export class PaymentRequestService {
       where: { id: attempt.id },
       data: {
         providerPaymentIdentity: created.providerPaymentIdentity,
-        providerReceivingAccountHash: this.receivingAccountHash(created.receivingAccount),
+        providerReceivingAccountHash: created.receivingAccount
+          ? this.receivingAccountHash(attempt.provider, created.receivingAccount)
+          : null,
         status: CommercePaymentStatus.pending,
         statusOperationId: operationId,
       },
@@ -358,7 +380,7 @@ export class PaymentRequestService {
           nextStatus: 'PENDING',
           amountMinor: attempt.amountMinor.toString(),
           currency: attempt.currency,
-          provider: PROVIDER,
+          provider: attempt.provider,
         },
       },
       tx,
@@ -566,19 +588,53 @@ export class PaymentRequestService {
   }
 
   private checkoutFor(attempt: AttemptRecord | null): { checkoutUrl: string } | undefined {
-    if (this.config.payos.environment !== 'production' || !attempt?.providerPaymentIdentity) {
+    if (!attempt?.providerPaymentIdentity || !this.providerRegistry.isEnabled(attempt.provider)) {
       return undefined;
     }
-    return { checkoutUrl: this.provider.checkoutUrlFor(attempt.providerPaymentIdentity) };
+    const checkoutUrl = this.providerRegistry
+      .get(attempt.provider)
+      .checkoutUrlFor(attempt.providerPaymentIdentity);
+    return checkoutUrl ? { checkoutUrl } : undefined;
   }
 
-  private assertProviderEnabled(): void {
-    if (this.config.payos.environment !== 'production') {
+  private assertProviderEnabled(providerName: PaymentProviderName): void {
+    try {
+      this.providerRegistry.requireEnabled(providerName);
+    } catch (error) {
+      throw this.toHttpError(error);
+    }
+  }
+
+  private callbackUrls(
+    providerName: PaymentProviderName,
+    orderId: string,
+  ): { success: string; cancel: string } {
+    if (providerName === 'vnpay') {
+      if (!this.config.vnpay.returnUrl) {
+        throw new ServiceUnavailableException({
+          error: 'PAYMENT_CONFIGURATION_INVALID',
+          message: 'Payment provider is not available.',
+        });
+      }
+      const returnUrl = this.withOrderIdentity(this.config.vnpay.returnUrl, orderId);
+      return { success: returnUrl, cancel: returnUrl };
+    }
+
+    if (!this.config.payos.returnUrl || !this.config.payos.cancelUrl) {
       throw new ServiceUnavailableException({
-        error: 'PAYMENT_PROVIDER_DISABLED',
+        error: 'PAYMENT_CONFIGURATION_INVALID',
         message: 'Payment provider is not available.',
       });
     }
+    return {
+      success: this.withOrderIdentity(this.config.payos.returnUrl, orderId),
+      cancel: this.withOrderIdentity(this.config.payos.cancelUrl, orderId),
+    };
+  }
+
+  private requireProviderName(value: string): PaymentProviderName {
+    if (value === 'payos' || value === 'vnpay') return value;
+    throw new PaymentProviderError('disabled', false);
   }
 
   private assertIdempotencyKey(value: string | undefined): asserts value is string {
@@ -605,11 +661,12 @@ export class PaymentRequestService {
     return `EDUAI ${orderNumber.slice(-19)}`;
   }
 
-  private receivingAccountHash(value: string): string {
+  private receivingAccountHash(provider: string, value: string): string {
+    const namespace = provider === 'payos' ? 'payos' : provider;
     return createHmac(
       'sha256',
       this.config.commerce.idempotencySecret as string,
-    ).update(`payos-receiving-account:${value}`).digest('hex');
+    ).update(`${namespace}-receiving-account:${value}`).digest('hex');
   }
 
   private toHttpError(error: unknown): Error {
