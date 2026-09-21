@@ -137,6 +137,73 @@ function harness(options: {
 }
 
 describe('PaymentReconciliationService', () => {
+  it('exposes one provider-aware VNPay lifecycle check without settling pending state', async () => {
+    const vnpayProvider = {
+      queryTransaction: jest.fn().mockResolvedValue({
+        provider: 'vnpay',
+        queryRequestStatus: 'success',
+        transactionStatus: 'pending',
+        providerOrderReference: '9001',
+        providerTransactionIdentity: '777001',
+        amountMinor: 125000n,
+        currency: 'VND',
+        responseCode: '00',
+        transactionStatusCode: '01',
+        trusted: true,
+      }),
+    };
+    const registry = { requireEnabled: jest.fn().mockReturnValue(vnpayProvider) };
+    const { service, webhook, tx } = harness({ registry });
+    const vnpayAttempt = { ...attempt, provider: 'vnpay', providerPaymentIdentity: null };
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(vnpayAttempt);
+
+    await expect(service.recoverVnPayAttemptForLifecycle(vnpayAttempt as never)).resolves.toMatchObject({
+      outcome: 'pending',
+      observation: expect.objectContaining({ transactionStatus: 'pending' }),
+    });
+    expect(registry.requireEnabled).toHaveBeenCalledWith('vnpay');
+    expect(webhook.ingestVerified).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ providerPaymentIdentity: '9001' }),
+    }));
+  });
+
+  it('classifies an invalid VNPay QueryDR response as unsafe for lifecycle transitions', async () => {
+    const vnpayProvider = {
+      queryTransaction: jest.fn().mockRejectedValue(
+        new VnPayQueryDrError('invalid_response_signature', false),
+      ),
+    };
+    const registry = { requireEnabled: jest.fn().mockReturnValue(vnpayProvider) };
+    const { service, prisma, webhook } = harness({ registry });
+    const vnpayAttempt = { ...attempt, provider: 'vnpay', providerPaymentIdentity: '9001' };
+
+    await expect(service.recoverVnPayAttemptForLifecycle(vnpayAttempt as never)).resolves.toEqual({
+      outcome: 'invalid_provider_response',
+    });
+    expect(webhook.ingestVerified).not.toHaveBeenCalled();
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ reasonCode: 'PROVIDER_STATUS_INVALID_SIGNATURE' }),
+      }),
+    );
+  });
+
+  it('fails closed when lifecycle recovery is asked to handle a non-VNPay attempt', async () => {
+    const registry = { requireEnabled: jest.fn() };
+    const { service, prisma } = harness({ registry });
+
+    await expect(service.recoverVnPayAttemptForLifecycle(attempt as never)).resolves.toEqual({
+      outcome: 'provider_error',
+    });
+    expect(registry.requireEnabled).not.toHaveBeenCalled();
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ reasonCode: 'PROVIDER_UNSUPPORTED' }),
+      }),
+    );
+  });
+
   it('routes a VNPay attempt through the registry QueryDR path and canonical settlement ingestion', async () => {
     const vnpayProvider = {
       queryTransaction: jest.fn().mockResolvedValue({

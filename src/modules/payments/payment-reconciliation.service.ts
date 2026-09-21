@@ -172,6 +172,35 @@ type ReconciliationAttempt = {
   };
 };
 
+export type VnPayLifecycleAttempt = Pick<
+  ReconciliationAttempt,
+  | 'id'
+  | 'orderId'
+  | 'provider'
+  | 'providerPaymentIdentity'
+  | 'providerOrderCode'
+  | 'amountMinor'
+  | 'currency'
+  | 'status'
+  | 'createdAt'
+>;
+
+export type VnPayLifecycleOutcome =
+  | 'paid'
+  | 'pending'
+  | 'not_found'
+  | 'failed'
+  | 'expired'
+  | 'special'
+  | 'unknown_status'
+  | 'provider_error'
+  | 'invalid_provider_response';
+
+export type VnPayLifecycleRecovery = {
+  outcome: VnPayLifecycleOutcome;
+  observation?: VnPayQueryDrObservation;
+};
+
 type ReconciliationCounts = {
   recovered: number;
   reviewRequired: number;
@@ -206,6 +235,37 @@ export class PaymentReconciliationService {
       return await this.runLocked(actorId, input, cursorId);
     } finally {
       await releaseRunLock();
+    }
+  }
+
+  async recoverVnPayAttemptForLifecycle(
+    attempt: VnPayLifecycleAttempt,
+  ): Promise<VnPayLifecycleRecovery> {
+    if (attempt.provider !== 'vnpay') {
+      await this.flagAttempt(
+        attempt,
+        CommerceReconciliationKind.unknown_provider_status,
+        'PROVIDER_UNSUPPORTED',
+      );
+      return { outcome: 'provider_error' };
+    }
+
+    try {
+      const observation = await this.queryVnPayWithDeadline(
+        attempt,
+        Date.now() + this.providerTimeoutMs('vnpay'),
+      );
+      await this.processVnPayObservation(attempt, observation);
+      return {
+        outcome: this.lifecycleOutcome(observation),
+        observation,
+      };
+    } catch (error) {
+      const classification = this.classifyProviderError(error);
+      await this.flagAttempt(attempt, classification.kind, classification.reasonCode);
+      return {
+        outcome: this.lifecycleErrorOutcome(error),
+      };
     }
   }
 
@@ -518,7 +578,7 @@ export class PaymentReconciliationService {
   }
 
   private async queryVnPayWithDeadline(
-    attempt: ReconciliationAttempt,
+    attempt: VnPayLifecycleAttempt,
     deadline: number,
   ): Promise<VnPayQueryDrObservation> {
     const provider = this.resolveProvider('vnpay') as PaymentProvider &
@@ -551,7 +611,7 @@ export class PaymentReconciliationService {
   }
 
   private async processVnPayObservation(
-    attempt: ReconciliationAttempt,
+    attempt: VnPayLifecycleAttempt,
     observation: VnPayQueryDrObservation,
   ): Promise<ReconciliationCounts> {
     if (observation.trusted !== true) {
@@ -646,7 +706,7 @@ export class PaymentReconciliationService {
   }
 
   private vnpayFactMismatch(
-    attempt: ReconciliationAttempt,
+    attempt: VnPayLifecycleAttempt,
     observation: VnPayQueryDrObservation,
   ): string | null {
     if (
@@ -677,9 +737,9 @@ export class PaymentReconciliationService {
   }
 
   private async persistVnPayCheckedFacts(
-    attempt: ReconciliationAttempt,
+    attempt: VnPayLifecycleAttempt,
     observation: VnPayQueryDrObservation,
-  ): Promise<ReconciliationAttempt & { providerPaymentIdentity: string }> {
+  ): Promise<VnPayLifecycleAttempt & { providerPaymentIdentity: string }> {
     const providerPaymentIdentity = observation.providerOrderReference;
     let effectiveStatus = attempt.status;
     await this.prisma.$transaction(async (tx) => {
@@ -811,6 +871,51 @@ export class PaymentReconciliationService {
           reasonCode: 'UNKNOWN_PROVIDER_STATUS',
         };
     }
+  }
+
+  private lifecycleOutcome(
+    observation: VnPayQueryDrObservation,
+  ): VnPayLifecycleOutcome {
+    if (observation.queryRequestStatus === 'not_found') return 'not_found';
+    if (observation.queryRequestStatus !== 'success') return 'provider_error';
+
+    switch (observation.transactionStatus) {
+      case 'paid':
+        return 'paid';
+      case 'pending':
+        return 'pending';
+      case 'failed':
+        return 'failed';
+      case 'expired':
+        return 'expired';
+      case 'unknown':
+        return 'unknown_status';
+      default:
+        return 'special';
+    }
+  }
+
+  private lifecycleErrorOutcome(error: unknown): VnPayLifecycleOutcome {
+    if (error instanceof VnPayQueryDrError) {
+      return [
+        'invalid_response_signature',
+        'malformed_response',
+        'provider_fact_mismatch',
+      ].includes(error.code)
+        ? 'invalid_provider_response'
+        : 'provider_error';
+    }
+    if (error instanceof PaymentProviderError) {
+      return [
+        'invalid_signature',
+        'malformed_response',
+        'rejected',
+        'invalid_request',
+      ].includes(error.code)
+        ? 'invalid_provider_response'
+        : 'provider_error';
+    }
+    return 'provider_error';
   }
 
   private async withReconciliationDeadline<T>(

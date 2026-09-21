@@ -16,12 +16,15 @@ const receivingAccountHash = createHmac('sha256', secret)
 const attempt = {
   id: 'attempt-id',
   orderId: 'order-id',
+  provider: 'payos',
   providerPaymentIdentity: 'provider-id',
   providerReceivingAccountHash: receivingAccountHash,
   providerOrderCode: 42n,
   amountMinor: 100000n,
   currency: 'VND',
   status: CommercePaymentStatus.pending,
+  createdAt: new Date('2026-09-09T08:00:00Z'),
+  providerExpiresAt: new Date('2026-09-09T09:00:00Z'),
 };
 
 const providerStatus = {

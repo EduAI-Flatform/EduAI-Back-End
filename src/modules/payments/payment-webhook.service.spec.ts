@@ -784,6 +784,46 @@ describe('PaymentWebhookService', () => {
     });
   });
 
+  it.each([
+    ['expired', CommercePaymentStatus.expired, CommerceOrderStatus.expired],
+    ['cancelled', CommercePaymentStatus.cancelled, CommerceOrderStatus.cancelled],
+  ] as const)(
+    'preserves VNPay late-payment review after a local %s transition',
+    async (_label, paymentStatus, orderStatus) => {
+      const { service, tx } = harness();
+      const lateAttempt = attempt({
+        provider: 'vnpay',
+        providerPaymentIdentity: '1001',
+        status: paymentStatus,
+        order: { status: orderStatus, reservations: [] },
+      });
+      const vnpayVerified: VerifiedPaymentWebhook = {
+        ...verified,
+        provider: 'vnpay',
+        providerOrderReference: '1001',
+        providerPaymentIdentity: '1001',
+        providerEventIdentity: `vnpay-${_label}-event`,
+        providerSettlementReference: `vnpay-${_label}-settlement`,
+        transactionStatus: '00',
+      };
+      tx.commercePaymentAttempt.findUnique.mockResolvedValue(lateAttempt);
+      tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(lateAttempt);
+
+      await expect(service.processVerified(vnpayVerified)).resolves.toMatchObject({
+        accepted: true,
+        result: 'LATE_PAYMENT_REVIEW',
+      });
+      expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith({
+        where: { id: 'attempt-id' },
+        data: expect.objectContaining({ status: CommercePaymentStatus.late_paid }),
+      });
+      expect(tx.commerceOrder.update).toHaveBeenCalledWith({
+        where: { id: 'order-id' },
+        data: expect.objectContaining({ status: CommerceOrderStatus.late_payment_review }),
+      });
+    },
+  );
+
   it('retries a concurrent uniqueness conflict and returns the committed result', async () => {
     const { prisma, service, tx } = harness();
     const conflict = new Prisma.PrismaClientKnownRequestError('conflict', {
