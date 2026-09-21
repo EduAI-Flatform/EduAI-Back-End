@@ -226,6 +226,36 @@ describe('PaymentLifecycleService cancellation', () => {
     }));
   });
 
+  it('does not close VNPay when canonical payment wins after QueryDR returns pending', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const { service, prisma, provider, reconciliation, tx } = setup(order({
+      paymentAttempts: [vnpayAttempt],
+    }));
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([vnpayAttempt]);
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'pending' });
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue({
+      ...vnpayAttempt,
+      status: CommercePaymentStatus.paid,
+    });
+    tx.commerceOrder.findUniqueOrThrow.mockResolvedValue(order({
+      status: CommerceOrderStatus.confirmed,
+      paymentAttempts: [{ ...vnpayAttempt, status: CommercePaymentStatus.paid }],
+      reservations: [],
+    }));
+
+    await expect(service.runExpiry(null, { limit: 20 })).resolves.toMatchObject({
+      expiredCount: 0,
+      settledCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
+  });
+
   it.each(['provider_error', 'invalid_provider_response', 'special', 'unknown_status'] as const)(
     'does not expire a VNPay attempt after an unsafe lifecycle result: %s',
     async (outcome) => {
@@ -319,5 +349,34 @@ describe('PaymentLifecycleService VNPay cancellation', () => {
     });
     expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
     expect(tx.commerceOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('does not cancel VNPay when canonical payment wins after the pre-cancel check', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const pendingOrder = order({ paymentAttempts: [vnpayAttempt] });
+    const confirmedOrder = order({
+      status: CommerceOrderStatus.confirmed,
+      paymentAttempts: [{ ...vnpayAttempt, status: CommercePaymentStatus.paid }],
+      reservations: [],
+    });
+    const { service, provider, reconciliation, tx } = setup(pendingOrder);
+    tx.commerceOrder.findFirst
+      .mockReset()
+      .mockResolvedValueOnce(pendingOrder)
+      .mockResolvedValueOnce(confirmedOrder);
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue({
+      ...vnpayAttempt,
+      status: CommercePaymentStatus.paid,
+    });
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'pending' });
+
+    await expect(service.cancel('learner-id', 'order-id', 'cancel-key-123'))
+      .rejects.toBeInstanceOf(ConflictException);
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
   });
 });
