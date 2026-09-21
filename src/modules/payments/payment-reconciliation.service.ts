@@ -36,12 +36,31 @@ import { RedisConfigService } from '../../config/redis-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { ListPaymentReviewsDto, ResolvePaymentReviewDto, RunPaymentReconciliationDto } from './dto/payment-reconciliation.dto';
-import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus } from './payment-provider';
+import {
+  PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
+  PaymentProvider,
+  PaymentProviderError,
+  PaymentProviderName,
+  PaymentRequestStatus,
+  isPaymentProviderName,
+} from './payment-provider';
+import {
+  PaymentProviderRegistry,
+} from './payment-provider.registry';
 import { PaymentWebhookService } from './payment-webhook.service';
-import { toVerifiedPaymentWebhook } from './payment-verified-webhook';
+import {
+  toVerifiedPaymentWebhook,
+  toVerifiedVnPayQueryDrWebhook,
+} from './payment-verified-webhook';
 import { PaymentRecoveryError } from './payment-recovery-error';
+import {
+  VnPayPaymentProvider,
+  VnPayQueryDrAttempt,
+  VnPayQueryDrError,
+  VnPayQueryDrObservation,
+} from './vnpay-payment.provider';
 
-const PROVIDER = 'payos';
 const PAID_ORDER_FULFILLMENT_RETRY_REQUIRED = 'PAID_ORDER_FULFILLMENT_RETRY_REQUIRED';
 const RECONCILIATION_CURSOR_VERSION = 1;
 const RECONCILIATION_CURSOR_CONTEXT = 'payment-reconciliation-cursor';
@@ -49,6 +68,7 @@ const RECONCILIATION_CURSOR_SEPARATOR = '.';
 const RECONCILIATION_RUN_TIMEOUT_MS = 60_000;
 const RECONCILIATION_LOCK_TTL_MS = RECONCILIATION_RUN_TIMEOUT_MS + 5_000;
 const RECONCILIATION_LOCK_KEY = 'eduai:commerce:payment-reconciliation:run';
+const VNPAY_QUERYDR_REQUEST_IP = '127.0.0.1';
 const RELEASE_RECONCILIATION_LOCK_SCRIPT =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
 const ELIGIBLE_STATUSES = [
@@ -134,6 +154,29 @@ type RetryCase = Prisma.CommerceReconciliationCaseGetPayload<{
   include: typeof retryCaseInclude;
 }>;
 
+type ReconciliationAttempt = {
+  id: string;
+  orderId: string;
+  provider: string;
+  providerPaymentIdentity: string | null;
+  providerReceivingAccountHash: string | null;
+  providerOrderCode: bigint | null;
+  amountMinor: bigint;
+  currency: string;
+  status: CommercePaymentStatus;
+  createdAt: Date;
+  order: {
+    status: CommerceOrderStatus;
+    fulfillmentStatus: CommerceFulfillmentStatus;
+    confirmedSettlementId: string | null;
+  };
+};
+
+type ReconciliationCounts = {
+  recovered: number;
+  reviewRequired: number;
+};
+
 class ReconciliationRunTimeoutError extends Error {
   readonly name = 'ReconciliationRunTimeoutError';
 }
@@ -151,6 +194,9 @@ export class PaymentReconciliationService {
     private readonly fulfillment: CommerceFulfillmentService,
     private readonly monitoring: MonitoringService,
     @Optional() private readonly redisConfig?: RedisConfigService,
+    @Optional()
+    @Inject(PAYMENT_PROVIDER_REGISTRY)
+    private readonly providerRegistry?: PaymentProviderRegistry,
   ) {}
 
   async run(actorId: string, input: RunPaymentReconciliationDto) {
@@ -234,7 +280,6 @@ export class PaymentReconciliationService {
     const attempts = await this.prisma.commercePaymentAttempt.findMany({
       where: {
         id: cursorId ? { gt: cursorId } : undefined,
-        provider: PROVIDER,
         providerOrderCode: { not: null },
         status: { in: [...ELIGIBLE_STATUSES] },
         OR: [
@@ -248,13 +293,21 @@ export class PaymentReconciliationService {
       select: {
         id: true,
         orderId: true,
+        provider: true,
         providerPaymentIdentity: true,
         providerReceivingAccountHash: true,
         providerOrderCode: true,
         amountMinor: true,
         currency: true,
         status: true,
-        order: { select: { fulfillmentStatus: true } },
+        createdAt: true,
+        order: {
+          select: {
+            status: true,
+            fulfillmentStatus: true,
+            confirmedSettlementId: true,
+          },
+        },
       },
       orderBy: { id: 'asc' },
       take: input.limit + 1,
@@ -273,9 +326,31 @@ export class PaymentReconciliationService {
       checkedCount += 1;
       lastCheckedAttemptId = attempt.id;
       try {
+        if (!isPaymentProviderName(attempt.provider)) {
+          throw new PaymentProviderError('unsupported', false);
+        }
+
+        if (this.hasCanonicalPaidSettlement(attempt)) {
+          const fulfillmentResult = await this.retryCanonicalFulfillment(attempt);
+          recovered += fulfillmentResult.recovered;
+          reviewRequired += fulfillmentResult.reviewRequired;
+          continue;
+        }
+
+        if (attempt.provider === 'vnpay') {
+          const observation = await this.queryVnPayWithDeadline(attempt, deadline);
+          const result = await this.processVnPayObservation(attempt, observation);
+          recovered += result.recovered;
+          reviewRequired += result.reviewRequired;
+          continue;
+        }
+
+        const provider = this.resolveProvider('payos');
         const status = await this.reconcileWithDeadline(
+          provider,
           attempt.providerPaymentIdentity ?? String(attempt.providerOrderCode),
           deadline,
+          this.providerTimeoutMs('payos'),
         );
         const reason = this.factMismatch(attempt, status);
         if (reason) {
@@ -390,10 +465,359 @@ export class PaymentReconciliationService {
     };
   }
 
-  private async reconcileWithDeadline(
-    providerPaymentIdentity: string,
+  private resolveProvider(providerName: PaymentProviderName): PaymentProvider {
+    if (this.providerRegistry) {
+      return this.providerRegistry.requireEnabled(providerName);
+    }
+    if (providerName === 'payos') return this.provider;
+    throw new PaymentProviderError('disabled', false);
+  }
+
+  private hasCanonicalPaidSettlement(attempt: ReconciliationAttempt): boolean {
+    return (
+      attempt.status === CommercePaymentStatus.paid &&
+      attempt.order.status === CommerceOrderStatus.confirmed &&
+      !!attempt.order.confirmedSettlementId &&
+      attempt.order.fulfillmentStatus !== CommerceFulfillmentStatus.fulfilled
+    );
+  }
+
+  private async retryCanonicalFulfillment(
+    attempt: ReconciliationAttempt,
+  ): Promise<ReconciliationCounts> {
+    const settlementId = attempt.order.confirmedSettlementId as string;
+    try {
+      await this.fulfillment.fulfillConfirmedPayment(
+        attempt.orderId,
+        settlementId,
+        CommerceActorKind.system,
+        null,
+      );
+      return { recovered: 1, reviewRequired: 0 };
+    } catch (error) {
+      const classification =
+        error instanceof PaymentRecoveryError && error.phase !== 'fulfillment'
+          ? this.classifyRecoveryError(error)
+          : {
+              kind: CommerceReconciliationKind.paid_not_fulfilled,
+              reasonCode: PAID_ORDER_FULFILLMENT_RETRY_REQUIRED,
+              financiallyCommitted: true,
+              settlementId,
+            };
+      await this.flagAttempt(
+        attempt,
+        classification.kind,
+        classification.reasonCode,
+        classification.settlementId ?? settlementId,
+      );
+      return {
+        recovered: classification.financiallyCommitted ? 1 : 0,
+        reviewRequired: 1,
+      };
+    }
+  }
+
+  private async queryVnPayWithDeadline(
+    attempt: ReconciliationAttempt,
     deadline: number,
-  ): Promise<PaymentRequestStatus> {
+  ): Promise<VnPayQueryDrObservation> {
+    const provider = this.resolveProvider('vnpay') as PaymentProvider &
+      Pick<VnPayPaymentProvider, 'queryTransaction'>;
+    if (typeof provider.queryTransaction !== 'function') {
+      throw new PaymentProviderError('unsupported', false);
+    }
+    if (
+      attempt.providerOrderCode === null ||
+      !(attempt.createdAt instanceof Date) ||
+      !Number.isFinite(attempt.createdAt.getTime())
+    ) {
+      throw new PaymentProviderError('invalid_request', false);
+    }
+
+    const queryAttempt: VnPayQueryDrAttempt = {
+      provider: 'vnpay',
+      providerOrderCode: attempt.providerOrderCode,
+      amountMinor: attempt.amountMinor,
+      currency: 'VND',
+      transactionCreatedAt: attempt.createdAt,
+      requestIpAddress: VNPAY_QUERYDR_REQUEST_IP,
+    };
+    return this.withReconciliationDeadline(
+      (signal, timeoutMs) =>
+        provider.queryTransaction(queryAttempt, { signal, timeoutMs }),
+      deadline,
+      this.providerTimeoutMs('vnpay'),
+    );
+  }
+
+  private async processVnPayObservation(
+    attempt: ReconciliationAttempt,
+    observation: VnPayQueryDrObservation,
+  ): Promise<ReconciliationCounts> {
+    if (observation.trusted !== true) {
+      await this.flagAttempt(
+        attempt,
+        CommerceReconciliationKind.unknown_provider_status,
+        'PROVIDER_STATUS_UNTRUSTED',
+      );
+      return { recovered: 0, reviewRequired: 1 };
+    }
+
+    const mismatch = this.vnpayFactMismatch(attempt, observation);
+    if (mismatch) {
+      await this.flagAttempt(
+        attempt,
+        CommerceReconciliationKind.provider_fact_mismatch,
+        mismatch,
+      );
+      return { recovered: 0, reviewRequired: 1 };
+    }
+
+    const checkedAttempt = await this.persistVnPayCheckedFacts(attempt, observation);
+    if (observation.queryRequestStatus !== 'success') {
+      const classification = this.classifyVnPayQueryStatus(observation);
+      await this.flagAttempt(
+        attempt,
+        classification.kind,
+        classification.reasonCode,
+      );
+      return { recovered: 0, reviewRequired: 1 };
+    }
+
+    if (observation.transactionStatus === 'pending') {
+      return { recovered: 0, reviewRequired: 0 };
+    }
+
+    if (observation.transactionStatus !== 'paid') {
+      const classification = this.classifyVnPayTransactionStatus(observation);
+      await this.flagAttempt(
+        attempt,
+        classification.kind,
+        classification.reasonCode,
+      );
+      return { recovered: 0, reviewRequired: 1 };
+    }
+
+    const verified = toVerifiedVnPayQueryDrWebhook(checkedAttempt, observation);
+    if (!verified) {
+      await this.flagAttempt(
+        attempt,
+        CommerceReconciliationKind.provider_fact_mismatch,
+        'PROVIDER_PAID_FACTS_INCOMPLETE',
+      );
+      return { recovered: 0, reviewRequired: 1 };
+    }
+
+    try {
+      const result = await this.webhook.ingestVerified(verified);
+      if (result.result === 'CONFIRMED') {
+        return { recovered: 1, reviewRequired: 0 };
+      }
+      if (
+        result.result !== 'DUPLICATE' &&
+        result.result !== 'LATE_PAYMENT_REVIEW'
+      ) {
+        await this.flagAttempt(
+          attempt,
+          CommerceReconciliationKind.provider_fact_mismatch,
+          'PAYMENT_RECOVERY_NOT_CONFIRMED',
+        );
+      }
+      return { recovered: 0, reviewRequired: 1 };
+    } catch (error) {
+      const classification = this.classifyRecoveryError(error);
+      if (classification.financiallyCommitted) {
+        await this.flagAttempt(
+          attempt,
+          classification.kind,
+          classification.reasonCode,
+          classification.settlementId,
+        );
+        return { recovered: 1, reviewRequired: 1 };
+      }
+      await this.flagAttempt(
+        attempt,
+        classification.kind,
+        classification.reasonCode,
+        classification.settlementId,
+      );
+      return { recovered: 0, reviewRequired: 1 };
+    }
+  }
+
+  private vnpayFactMismatch(
+    attempt: ReconciliationAttempt,
+    observation: VnPayQueryDrObservation,
+  ): string | null {
+    if (
+      observation.provider !== 'vnpay' ||
+      !/^[1-9]\d{0,15}$/.test(observation.providerOrderReference) ||
+      attempt.providerOrderCode === null ||
+      attempt.providerOrderCode !== BigInt(observation.providerOrderReference)
+    ) {
+      return 'PROVIDER_ORDER_REFERENCE_MISMATCH';
+    }
+    if (
+      attempt.providerPaymentIdentity &&
+      attempt.providerPaymentIdentity !== observation.providerOrderReference
+    ) {
+      return 'PROVIDER_PAYMENT_IDENTITY_MISMATCH';
+    }
+    if (observation.queryRequestStatus === 'success') {
+      if (
+        observation.currency !== 'VND' ||
+        attempt.currency !== 'VND' ||
+        observation.amountMinor === undefined ||
+        observation.amountMinor !== attempt.amountMinor
+      ) {
+        return 'PROVIDER_AMOUNT_MISMATCH';
+      }
+    }
+    return null;
+  }
+
+  private async persistVnPayCheckedFacts(
+    attempt: ReconciliationAttempt,
+    observation: VnPayQueryDrObservation,
+  ): Promise<ReconciliationAttempt & { providerPaymentIdentity: string }> {
+    const providerPaymentIdentity = observation.providerOrderReference;
+    let effectiveStatus = attempt.status;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${attempt.id}::uuid FOR UPDATE`,
+      );
+      const current = await tx.commercePaymentAttempt.findUniqueOrThrow({
+        where: { id: attempt.id },
+      });
+      if (
+        current.provider !== 'vnpay' ||
+        (current.providerPaymentIdentity !== null &&
+          current.providerPaymentIdentity !== providerPaymentIdentity)
+      ) {
+        throw new PaymentProviderError('invalid_request', false);
+      }
+      const recoverableCreate =
+        current.status === CommercePaymentStatus.created &&
+        observation.queryRequestStatus === 'success' &&
+        (observation.transactionStatus === 'pending' ||
+          observation.transactionStatus === 'paid');
+      effectiveStatus = recoverableCreate
+        ? CommercePaymentStatus.pending
+        : current.status;
+      const operationId = recoverableCreate ? randomUUID() : null;
+      await tx.commercePaymentAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          providerStatusCheckedAt: new Date(),
+          ...(!current.providerPaymentIdentity
+            ? { providerPaymentIdentity }
+            : {}),
+          ...(recoverableCreate
+            ? {
+                status: CommercePaymentStatus.pending,
+                statusOperationId: operationId,
+              }
+            : {}),
+        },
+      });
+      if (recoverableCreate) {
+        await tx.commerceLifecycleEvent.create({
+          data: {
+            entityType: 'payment',
+            entityId: attempt.id,
+            previousStatus: CommercePaymentStatus.created,
+            nextStatus: CommercePaymentStatus.pending,
+            actorKind: CommerceActorKind.system,
+            actorId: null,
+            operationId: operationId as string,
+            reasonCode: 'PROVIDER_REQUEST_RECOVERED',
+          },
+        });
+      }
+    });
+    return {
+      ...attempt,
+      providerPaymentIdentity,
+      status: effectiveStatus,
+    };
+  }
+
+  private classifyVnPayQueryStatus(observation: VnPayQueryDrObservation): {
+    kind: CommerceReconciliationKind;
+    reasonCode: string;
+  } {
+    switch (observation.queryRequestStatus) {
+      case 'not_found':
+        return {
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_TRANSACTION_NOT_FOUND',
+        };
+      case 'duplicate_request':
+        return {
+          kind: CommerceReconciliationKind.provider_outage,
+          reasonCode: 'PROVIDER_STATUS_DUPLICATE_REQUEST',
+        };
+      default:
+        return {
+          kind: CommerceReconciliationKind.provider_outage,
+          reasonCode: 'PROVIDER_STATUS_PROVIDER_ERROR',
+        };
+    }
+  }
+
+  private classifyVnPayTransactionStatus(observation: VnPayQueryDrObservation): {
+    kind: CommerceReconciliationKind;
+    reasonCode: string;
+  } {
+    switch (observation.transactionStatus) {
+      case 'failed':
+        return {
+          kind: CommerceReconciliationKind.provider_fact_mismatch,
+          reasonCode: 'PROVIDER_PAYMENT_FAILED',
+        };
+      case 'expired':
+        return {
+          kind: CommerceReconciliationKind.provider_fact_mismatch,
+          reasonCode: 'PROVIDER_PAYMENT_EXPIRED',
+        };
+      case 'reversed':
+        return {
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_PAYMENT_REVERSED',
+        };
+      case 'fraud_suspected':
+        return {
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_FRAUD_SUSPECTED',
+        };
+      case 'refund_processing':
+        return {
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_REFUND_PROCESSING',
+        };
+      case 'refund_sent':
+        return {
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_REFUND_SENT',
+        };
+      case 'refund_rejected':
+        return {
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'PROVIDER_REFUND_REJECTED',
+        };
+      default:
+        return {
+          kind: CommerceReconciliationKind.unknown_provider_status,
+          reasonCode: 'UNKNOWN_PROVIDER_STATUS',
+        };
+    }
+  }
+
+  private async withReconciliationDeadline<T>(
+    operation: (signal: AbortSignal, timeoutMs: number) => Promise<T>,
+    deadline: number,
+    providerTimeoutMs: number,
+  ): Promise<T> {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new ReconciliationRunTimeoutError();
 
@@ -410,10 +834,10 @@ export class PaymentReconciliationService {
 
     try {
       return await Promise.race([
-        this.provider.reconcilePaymentRequest(providerPaymentIdentity, {
-          signal: controller.signal,
-          timeoutMs: Math.min(this.providerTimeoutMs(), remainingMs),
-        }),
+        operation(
+          controller.signal,
+          Math.min(Math.max(1, providerTimeoutMs), remainingMs),
+        ),
         timeoutPromise,
       ]);
     } catch (error) {
@@ -426,8 +850,28 @@ export class PaymentReconciliationService {
     }
   }
 
-  private providerTimeoutMs(): number {
-    const timeoutMs = this.config.payos?.timeoutMs;
+  private async reconcileWithDeadline(
+    provider: PaymentProvider,
+    providerPaymentIdentity: string,
+    deadline: number,
+    timeoutMs: number,
+  ): Promise<PaymentRequestStatus> {
+    return this.withReconciliationDeadline(
+      (signal, boundedTimeoutMs) =>
+        provider.reconcilePaymentRequest(providerPaymentIdentity, {
+          signal,
+          timeoutMs: boundedTimeoutMs,
+        }),
+      deadline,
+      timeoutMs,
+    );
+  }
+
+  private providerTimeoutMs(provider: PaymentProviderName): number {
+    const timeoutMs =
+      provider === 'vnpay'
+        ? this.config.vnpay?.timeoutMs
+        : this.config.payos?.timeoutMs;
     return typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
       ? timeoutMs
       : 10_000;
@@ -629,19 +1073,19 @@ export class PaymentReconciliationService {
       settlement.paymentAttemptId !== paymentAttempt?.id ||
       settlement.kind !== CommerceSettlementKind.provider_collection ||
       settlement.disposition !== CommerceSettlementDisposition.matched ||
-      settlement.provider !== PROVIDER ||
+      !isPaymentProviderName(settlement.provider) ||
       !settlement.providerSettlementReference ||
       !settlement.paymentEventId ||
       !paymentAttempt ||
       paymentAttempt.orderId !== current.orderId ||
-      paymentAttempt.provider !== PROVIDER ||
+      paymentAttempt.provider !== settlement.provider ||
       !paymentAttempt.providerPaymentIdentity ||
       paymentAttempt.providerOrderCode === null ||
       paymentAttempt.status !== CommercePaymentStatus.paid ||
       !paymentEvent ||
       paymentEvent.id !== settlement.paymentEventId ||
       paymentEvent.paymentAttemptId !== paymentAttempt.id ||
-      paymentEvent.provider !== PROVIDER ||
+      paymentEvent.provider !== settlement.provider ||
       !paymentEvent.providerEventIdentity ||
       paymentEvent.providerPaymentIdentity !== paymentAttempt.providerPaymentIdentity ||
       paymentEvent.providerSettlementReference !== settlement.providerSettlementReference ||
@@ -960,8 +1404,52 @@ export class PaymentReconciliationService {
     kind: CommerceReconciliationKind;
     reasonCode: string;
   } {
+    if (error instanceof VnPayQueryDrError) {
+      switch (error.code) {
+        case 'network_timeout':
+          return {
+            kind: CommerceReconciliationKind.provider_outage,
+            reasonCode: 'PROVIDER_STATUS_TIMEOUT',
+          };
+        case 'provider_unavailable':
+          return {
+            kind: CommerceReconciliationKind.provider_outage,
+            reasonCode: 'PROVIDER_STATUS_UNAVAILABLE',
+          };
+        case 'provider_fact_mismatch':
+          return {
+            kind: CommerceReconciliationKind.provider_fact_mismatch,
+            reasonCode: 'PROVIDER_FACT_MISMATCH',
+          };
+        case 'invalid_response_signature':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_STATUS_INVALID_SIGNATURE',
+          };
+        case 'malformed_response':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_STATUS_MALFORMED',
+          };
+        default:
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_STATUS_INVALID_REQUEST',
+          };
+      }
+    }
     if (error instanceof PaymentProviderError) {
       switch (error.code) {
+        case 'disabled':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_DISABLED',
+          };
+        case 'invalid_request':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_STATUS_INVALID_REQUEST',
+          };
         case 'malformed_response':
           return {
             kind: CommerceReconciliationKind.unknown_provider_status,
@@ -986,6 +1474,11 @@ export class PaymentReconciliationService {
           return {
             kind: CommerceReconciliationKind.provider_outage,
             reasonCode: 'PROVIDER_STATUS_UNAVAILABLE',
+          };
+        case 'unsupported':
+          return {
+            kind: CommerceReconciliationKind.unknown_provider_status,
+            reasonCode: 'PROVIDER_UNSUPPORTED',
           };
         default:
           break;
