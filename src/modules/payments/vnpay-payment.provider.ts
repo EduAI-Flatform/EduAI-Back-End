@@ -26,6 +26,7 @@ export interface VnPayProviderConfig {
 }
 
 export const VNPAY_AMOUNT_MAX = 999999999999n;
+const VNPAY_TMN_CODE_PATTERN = /^[A-Za-z0-9]{8}$/;
 const VN_TIMEZONE_OFFSET_MS = 7 * 60 * 60 * 1000;
 const VNPAY_QUERYDR_RESPONSE_MAX_BYTES = 64 * 1024;
 
@@ -212,12 +213,12 @@ export class VnPayPaymentProvider implements PaymentProvider {
 
   private validateConfiguration(): void {
     if (
-      !isBoundedString(this.config.tmnCode, 32) ||
+      !isValidVnPayTmnCode(this.config.tmnCode) ||
       !isBoundedString(this.config.hashSecret, 512) ||
-      !isHttpUrl(this.config.paymentUrl) ||
+      !isHttpsUrl(this.config.paymentUrl) ||
       !isHttpsUrl(this.config.apiUrl) ||
-      !isHttpUrl(this.config.returnUrl) ||
-      !isHttpUrl(this.config.ipnUrl) ||
+      !isHttpsUrl(this.config.returnUrl) ||
+      !isHttpsUrl(this.config.ipnUrl) ||
       !isBoundedString(this.config.version, 32)
     ) {
       throw new PaymentProviderError('invalid_request', false);
@@ -413,7 +414,7 @@ export function buildVnPayQueryDrRequest(
   if (!/^[A-Za-z0-9]{1,32}$/.test(requestId)) {
     throw new VnPayQueryDrError('invalid_request', false);
   }
-  if (!isBoundedString(config.tmnCode, 32) || !isBoundedString(config.hashSecret, 512)) {
+  if (!isValidVnPayTmnCode(config.tmnCode) || !isBoundedString(config.hashSecret, 512)) {
     throw new VnPayQueryDrError('invalid_request', false);
   }
 
@@ -842,6 +843,10 @@ function encodeVnPayComponent(value: string): string {
 
 function isBoundedString(value: unknown, maximum: number): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum;
+}
+
+export function isValidVnPayTmnCode(value: unknown): value is string {
+  return typeof value === 'string' && VNPAY_TMN_CODE_PATTERN.test(value);
 }
 
 function isHttpUrl(value: unknown): value is string {

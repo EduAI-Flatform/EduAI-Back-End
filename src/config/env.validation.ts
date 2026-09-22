@@ -406,6 +406,13 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
   }
   if (config.VNPAY_ENVIRONMENT === 'disabled') return;
 
+  if (
+    config.VNPAY_TMN_CODE !== undefined &&
+    !/^[A-Za-z0-9]{8}$/.test(config.VNPAY_TMN_CODE)
+  ) {
+    throw new Error('VNPAY_TMN_CODE must be exactly 8 alphanumeric characters');
+  }
+
   const required = [
     !config.VNPAY_TMN_CODE ? 'VNPAY_TMN_CODE' : undefined,
     !config.VNPAY_HASH_SECRET ? 'VNPAY_HASH_SECRET' : undefined,
@@ -444,15 +451,14 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
   ] as const) {
     const url = new URL(value as string);
     if (
-      (name === 'VNPAY_API_URL' || config.NODE_ENV === 'production') &&
-      (url.protocol !== 'https:' ||
-        url.username.length > 0 ||
-        url.password.length > 0)
+      url.protocol !== 'https:' ||
+      url.username.length > 0 ||
+      url.password.length > 0
     ) {
       throw new Error(
         name === 'VNPAY_API_URL'
           ? `${name} must use https`
-          : `${name} must use https in VNPAY production mode`,
+          : `${name} must use https in VNPAY ${config.VNPAY_ENVIRONMENT} mode`,
       );
     }
   }

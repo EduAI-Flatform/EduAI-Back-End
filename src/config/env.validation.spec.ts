@@ -93,6 +93,32 @@ describe('validateEnv', () => {
     ).toThrow('VNPAY production configuration requires');
   });
 
+  it('enforces the official sandbox merchant-code and HTTPS URL contract', () => {
+    const sandbox = {
+      ...paymentBase,
+      VNPAY_ENVIRONMENT: 'sandbox',
+      VNPAY_TMN_CODE: 'TESTTMNC',
+      VNPAY_HASH_SECRET: 'sandbox-secret',
+      VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+      VNPAY_API_URL: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
+      VNPAY_RETURN_URL: 'https://app.example/payments/return',
+      VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+    };
+
+    expect(() => validateEnv({ ...sandbox, VNPAY_TMN_CODE: 'SHORT' })).toThrow(
+      'VNPAY_TMN_CODE must be exactly 8 alphanumeric characters',
+    );
+    expect(() =>
+      validateEnv({ ...sandbox, VNPAY_RETURN_URL: 'http://app.example/payments/return' }),
+    ).toThrow('VNPAY_RETURN_URL must use https in VNPAY sandbox mode');
+    expect(() =>
+      validateEnv({ ...sandbox, VNPAY_IPN_URL: 'http://api.example/payments/ipn' }),
+    ).toThrow('VNPAY_IPN_URL must use https in VNPAY sandbox mode');
+    expect(() =>
+      validateEnv({ ...sandbox, VNPAY_PAYMENT_URL: 'http://sandbox.vnpayment.vn/paymentv2/vpcpay.html' }),
+    ).toThrow('VNPAY_PAYMENT_URL must use https in VNPAY sandbox mode');
+  });
+
   it('preserves PayOS as the only production default during foundation work', () => {
     expect(() =>
       validateEnv({

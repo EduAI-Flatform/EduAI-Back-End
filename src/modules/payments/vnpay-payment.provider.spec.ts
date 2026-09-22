@@ -142,4 +142,16 @@ describe('VnPayPaymentProvider', () => {
       retryable: false,
     });
   });
+
+  it('rejects malformed merchant configuration before creating or querying', async () => {
+    const malformed = new VnPayPaymentProvider(
+      { ...config, tmnCode: 'SHORT' },
+      () => now,
+    );
+
+    await expect(malformed.createPaymentRequest(input())).rejects.toMatchObject({
+      code: 'invalid_request',
+      retryable: false,
+    });
+  });
 });
