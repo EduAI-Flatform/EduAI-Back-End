@@ -267,6 +267,67 @@ describe('PaymentWebhookService', () => {
     );
   });
 
+  it('accepts a distinct QueryDR observation for an already-settled VNPay transaction', async () => {
+    const { fulfillment, service, tx } = harness();
+    const vnpayAttempt = attempt({
+      provider: 'vnpay',
+      providerPaymentIdentity: '1001',
+      providerReceivingAccountHash: null,
+      status: CommercePaymentStatus.paid,
+      order: {
+        status: CommerceOrderStatus.confirmed,
+        confirmedSettlementId: 'settlement-id',
+      },
+    });
+    const queryDrVerified: VerifiedPaymentWebhook = {
+      ...verified,
+      provider: 'vnpay',
+      providerOrderReference: '1001',
+      providerPaymentIdentity: '1001',
+      providerEventIdentity: 'vnpay-querydr-event',
+      providerSettlementReference: '12996460',
+      transactionStatus: '00',
+    };
+    tx.commercePaymentAttempt.findUnique.mockResolvedValue(vnpayAttempt);
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(vnpayAttempt);
+    tx.commerceSettlement.findUnique.mockResolvedValue({
+      id: 'settlement-id',
+      orderId: 'order-id',
+      paymentAttemptId: 'attempt-id',
+      paymentEventId: 'ipn-event-id',
+      kind: 'provider_collection',
+      disposition: CommerceSettlementDisposition.matched,
+      provider: 'vnpay',
+      providerSettlementReference: '12996460',
+      amountMinor: 100000n,
+      currency: 'VND',
+      settledAt: verified.occurredAt,
+      paymentEvent: {
+        id: 'ipn-event-id',
+        paymentAttemptId: 'attempt-id',
+        provider: 'vnpay',
+        providerEventIdentity: 'vnpay-ipn-event',
+        providerPaymentIdentity: '1001',
+        providerSettlementReference: '12996460',
+        amountMinor: 100000n,
+        currency: 'VND',
+        providerOccurredAt: verified.occurredAt,
+      },
+    });
+
+    await expect(service.processVerified(queryDrVerified)).resolves.toMatchObject({
+      accepted: true,
+      result: 'CONFIRMED',
+    });
+    expect(tx.commerceSettlement.create).not.toHaveBeenCalled();
+    expect(fulfillment.fulfillConfirmedPayment).toHaveBeenCalledWith(
+      'order-id',
+      'settlement-id',
+      'provider',
+      null,
+    );
+  });
+
   it('commits financial settlement before isolating a fulfillment failure', async () => {
     const { fulfillment, prisma, service, tx } = harness();
     const phases: string[] = [];
@@ -722,6 +783,46 @@ describe('PaymentWebhookService', () => {
       }),
     });
   });
+
+  it.each([
+    ['expired', CommercePaymentStatus.expired, CommerceOrderStatus.expired],
+    ['cancelled', CommercePaymentStatus.cancelled, CommerceOrderStatus.cancelled],
+  ] as const)(
+    'preserves VNPay late-payment review after a local %s transition',
+    async (_label, paymentStatus, orderStatus) => {
+      const { service, tx } = harness();
+      const lateAttempt = attempt({
+        provider: 'vnpay',
+        providerPaymentIdentity: '1001',
+        status: paymentStatus,
+        order: { status: orderStatus, reservations: [] },
+      });
+      const vnpayVerified: VerifiedPaymentWebhook = {
+        ...verified,
+        provider: 'vnpay',
+        providerOrderReference: '1001',
+        providerPaymentIdentity: '1001',
+        providerEventIdentity: `vnpay-${_label}-event`,
+        providerSettlementReference: `vnpay-${_label}-settlement`,
+        transactionStatus: '00',
+      };
+      tx.commercePaymentAttempt.findUnique.mockResolvedValue(lateAttempt);
+      tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(lateAttempt);
+
+      await expect(service.processVerified(vnpayVerified)).resolves.toMatchObject({
+        accepted: true,
+        result: 'LATE_PAYMENT_REVIEW',
+      });
+      expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith({
+        where: { id: 'attempt-id' },
+        data: expect.objectContaining({ status: CommercePaymentStatus.late_paid }),
+      });
+      expect(tx.commerceOrder.update).toHaveBeenCalledWith({
+        where: { id: 'order-id' },
+        data: expect.objectContaining({ status: CommerceOrderStatus.late_payment_review }),
+      });
+    },
+  );
 
   it('retries a concurrent uniqueness conflict and returns the committed result', async () => {
     const { prisma, service, tx } = harness();

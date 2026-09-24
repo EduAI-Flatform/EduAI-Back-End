@@ -5,6 +5,7 @@ const config = {
   tmnCode: 'TESTTMNC',
   hashSecret: 'test-secret',
   paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+  apiUrl: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
   returnUrl: 'https://app.example/payments/return',
   ipnUrl: 'https://api.example/payments/ipn',
   version: '2.1.0',
@@ -138,6 +139,18 @@ describe('VnPayPaymentProvider', () => {
     });
     await expect(disabled.verifyWebhook({ body: {}, headers: {} })).rejects.toMatchObject({
       code: 'unsupported',
+      retryable: false,
+    });
+  });
+
+  it('rejects malformed merchant configuration before creating or querying', async () => {
+    const malformed = new VnPayPaymentProvider(
+      { ...config, tmnCode: 'SHORT' },
+      () => now,
+    );
+
+    await expect(malformed.createPaymentRequest(input())).rejects.toMatchObject({
+      code: 'invalid_request',
       retryable: false,
     });
   });

@@ -7,9 +7,11 @@ const secret = 's'.repeat(32);
 const account = 'safe-account';
 const accountHash = createHmac('sha256', secret).update(`payos-receiving-account:${account}`).digest('hex');
 const attempt = {
-  id: 'attempt-id', orderId: 'order-id', providerPaymentIdentity: 'provider-id',
+  id: 'attempt-id', orderId: 'order-id', provider: 'payos', providerPaymentIdentity: 'provider-id',
   providerReceivingAccountHash: accountHash, providerOrderCode: 42n,
   amountMinor: 100000n, currency: 'VND', status: CommercePaymentStatus.pending,
+  createdAt: new Date('2026-08-27T08:00:00Z'),
+  providerExpiresAt: new Date('2026-08-27T09:00:00Z'),
 };
 const order = (overrides: Record<string, unknown> = {}) => ({
   id: 'order-id', buyerId: 'learner-id', status: CommerceOrderStatus.pending_payment,
@@ -57,7 +59,10 @@ function setup(initial = order()) {
   };
   const provider: any = { cancelPaymentRequest: jest.fn().mockResolvedValue(providerStatus()) };
   const audit: any = { record: jest.fn() };
-  const reconciliation: any = { flagAttempt: jest.fn() };
+  const reconciliation: any = {
+    flagAttempt: jest.fn(),
+    recoverVnPayAttemptForLifecycle: jest.fn(),
+  };
   const webhook: any = { ingestVerified: jest.fn() };
   const service = new PaymentLifecycleService(
     prisma, { commerce: { idempotencySecret: secret } } as never,
@@ -164,5 +169,214 @@ describe('PaymentLifecycleService cancellation', () => {
     }));
     expect(webhook.ingestVerified).toHaveBeenCalled();
     expect(tx.commerceOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('uses the stored VNPay provider path before expiring a due attempt', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const { service, prisma, provider, reconciliation, tx } = setup(order({
+      paymentAttempts: [vnpayAttempt],
+    }));
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([vnpayAttempt]);
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'paid' });
+
+    await expect(service.runExpiry(null, { limit: 20 })).resolves.toMatchObject({
+      checkedCount: 1,
+      expiredCount: 0,
+      settledCount: 1,
+      reviewRequiredCount: 0,
+    });
+    expect(reconciliation.recoverVnPayAttemptForLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'vnpay', providerOrderCode: 42n }),
+    );
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commerceOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('locally expires a due VNPay attempt only after a trusted pending check', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const { service, prisma, provider, reconciliation, tx } = setup(order({
+      paymentAttempts: [vnpayAttempt],
+    }));
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([vnpayAttempt]);
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'pending' });
+    tx.commerceOrder.findUniqueOrThrow
+      .mockResolvedValueOnce(order({ paymentAttempts: [vnpayAttempt] }))
+      .mockResolvedValueOnce(order({
+        status: CommerceOrderStatus.expired,
+        paymentAttempts: [{ ...vnpayAttempt, status: CommercePaymentStatus.expired }],
+        reservations: [],
+      }));
+
+    await expect(service.runExpiry(null, { limit: 20 })).resolves.toMatchObject({
+      expiredCount: 1,
+      settledCount: 0,
+      reviewRequiredCount: 0,
+    });
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: CommercePaymentStatus.expired }),
+    }));
+  });
+
+  it('does not close VNPay when canonical payment wins after QueryDR returns pending', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const { service, prisma, provider, reconciliation, tx } = setup(order({
+      paymentAttempts: [vnpayAttempt],
+    }));
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([vnpayAttempt]);
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'pending' });
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue({
+      ...vnpayAttempt,
+      status: CommercePaymentStatus.paid,
+    });
+    tx.commerceOrder.findUniqueOrThrow.mockResolvedValue(order({
+      status: CommerceOrderStatus.confirmed,
+      paymentAttempts: [{ ...vnpayAttempt, status: CommercePaymentStatus.paid }],
+      reservations: [],
+    }));
+
+    await expect(service.runExpiry(null, { limit: 20 })).resolves.toMatchObject({
+      expiredCount: 0,
+      settledCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['provider_error', 'invalid_provider_response', 'special', 'unknown_status'] as const)(
+    'does not expire a VNPay attempt after an unsafe lifecycle result: %s',
+    async (outcome) => {
+      const vnpayAttempt = {
+        ...attempt,
+        provider: 'vnpay',
+        providerPaymentIdentity: '42',
+      };
+      const { service, prisma, provider, reconciliation, tx } = setup(order({
+        paymentAttempts: [vnpayAttempt],
+      }));
+      prisma.commercePaymentAttempt.findMany.mockResolvedValue([vnpayAttempt]);
+      reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome });
+
+      await expect(service.runExpiry(null, { limit: 20 })).resolves.toMatchObject({
+        expiredCount: 0,
+        settledCount: 0,
+        reviewRequiredCount: 1,
+      });
+      expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+      expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not expire a VNPay attempt when the local deadline moved forward during the check', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+      providerExpiresAt: new Date(Date.now() + 60_000),
+    };
+    const { service, prisma, provider, reconciliation, tx } = setup(order({
+      paymentAttempts: [vnpayAttempt],
+    }));
+    prisma.commercePaymentAttempt.findMany.mockResolvedValue([vnpayAttempt]);
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'not_found' });
+
+    await expect(service.runExpiry(null, { limit: 20 })).resolves.toMatchObject({
+      expiredCount: 0,
+      settledCount: 0,
+      reviewRequiredCount: 1,
+    });
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('PaymentLifecycleService VNPay cancellation', () => {
+  it('uses QueryDR as a pre-cancellation check instead of an unsupported remote cancel API', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const vnpayOrder = order({ paymentAttempts: [vnpayAttempt] });
+    const { service, provider, reconciliation, tx } = setup(vnpayOrder);
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(vnpayAttempt);
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'pending' });
+
+    await expect(service.cancel('learner-id', 'order-id', 'cancel-key-123')).resolves.toEqual({
+      orderId: 'order-id', orderStatus: 'CANCELLED', paymentStatus: 'CANCELLED',
+    });
+    expect(reconciliation.recoverVnPayAttemptForLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'vnpay' }),
+    );
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.not.objectContaining({ providerCancellationRequestedAt: expect.anything() }),
+    }));
+  });
+
+  it('lets canonical VNPay payment recovery win a cancellation race', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const { service, provider, prisma, reconciliation, tx } = setup(order({
+      paymentAttempts: [vnpayAttempt],
+    }));
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(vnpayAttempt);
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'paid' });
+    prisma.commerceOrder.findFirst.mockResolvedValue(order({
+      status: CommerceOrderStatus.confirmed,
+      paymentAttempts: [{ ...vnpayAttempt, status: CommercePaymentStatus.paid }],
+      reservations: [],
+    }));
+
+    await expect(service.cancel('learner-id', 'order-id', 'cancel-key-123')).resolves.toEqual({
+      orderId: 'order-id', orderStatus: 'CONFIRMED', paymentStatus: 'PAID',
+    });
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commerceOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('does not cancel VNPay when canonical payment wins after the pre-cancel check', async () => {
+    const vnpayAttempt = {
+      ...attempt,
+      provider: 'vnpay',
+      providerPaymentIdentity: '42',
+    };
+    const pendingOrder = order({ paymentAttempts: [vnpayAttempt] });
+    const confirmedOrder = order({
+      status: CommerceOrderStatus.confirmed,
+      paymentAttempts: [{ ...vnpayAttempt, status: CommercePaymentStatus.paid }],
+      reservations: [],
+    });
+    const { service, provider, reconciliation, tx } = setup(pendingOrder);
+    tx.commerceOrder.findFirst
+      .mockReset()
+      .mockResolvedValueOnce(pendingOrder)
+      .mockResolvedValueOnce(confirmedOrder);
+    tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue({
+      ...vnpayAttempt,
+      status: CommercePaymentStatus.paid,
+    });
+    reconciliation.recoverVnPayAttemptForLifecycle.mockResolvedValue({ outcome: 'pending' });
+
+    await expect(service.cancel('learner-id', 'order-id', 'cancel-key-123'))
+      .rejects.toBeInstanceOf(ConflictException);
+    expect(provider.cancelPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
   });
 });
