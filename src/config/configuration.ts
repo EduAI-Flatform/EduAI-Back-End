@@ -1,5 +1,6 @@
 import {
   DEFAULT_VNPAY_PAYMENT_URL,
+  DeploymentClass,
   loadBackendEnv,
   NodeEnvironment,
   ValidatedEnv,
@@ -8,6 +9,7 @@ import {
 export interface BackendConfig {
   app: {
     nodeEnv: NodeEnvironment;
+    deploymentClass: DeploymentClass;
     port: number;
     publicAppUrl?: string;
     corsAllowedOrigins: string[];
@@ -119,6 +121,7 @@ export default function configuration(): BackendConfig {
   return {
     app: {
       nodeEnv: env.NODE_ENV,
+      deploymentClass: env.DEPLOYMENT_CLASS,
       port: env.PORT,
       publicAppUrl: env.PUBLIC_APP_URL,
       corsAllowedOrigins: env.CORS_ALLOWED_ORIGINS,

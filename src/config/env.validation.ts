@@ -1,4 +1,5 @@
 export type NodeEnvironment = 'development' | 'test' | 'production';
+export type DeploymentClass = 'uat' | 'production';
 export type AiProviderName = 'gemini' | 'openai' | 'mock';
 export type EmailProviderName = 'disabled' | 'preview' | 'resend';
 export type PayosEnvironment = 'disabled' | 'production';
@@ -11,6 +12,7 @@ export const DEFAULT_VNPAY_PAYMENT_URL =
 
 export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
+  DEPLOYMENT_CLASS: DeploymentClass;
   PORT: number;
   PUBLIC_APP_URL?: string;
   CORS_ALLOWED_ORIGINS: string[];
@@ -94,6 +96,11 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   if (!isNodeEnvironment(nodeEnv)) {
     throw new Error('NODE_ENV must be development, test, or production');
   }
+
+  const deploymentClass = parseDeploymentClass(
+    config.DEPLOYMENT_CLASS,
+    nodeEnv,
+  );
 
   const firebaseProjectId = optionalString(config.FIREBASE_PROJECT_ID);
   const firebaseClientEmail = optionalString(config.FIREBASE_CLIENT_EMAIL);
@@ -187,6 +194,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 
   const validated: ValidatedEnv = {
     NODE_ENV: nodeEnv,
+    DEPLOYMENT_CLASS: deploymentClass,
     PORT: parsePort(config.PORT),
     PUBLIC_APP_URL: optionalUrl(config.PUBLIC_APP_URL, 'PUBLIC_APP_URL'),
     CORS_ALLOWED_ORIGINS: parseCorsOrigins(config.CORS_ALLOWED_ORIGINS),
@@ -397,11 +405,12 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 
 function validateVnPayConfiguration(config: ValidatedEnv): void {
   if (
-    config.NODE_ENV === 'production' &&
-    config.PAYMENT_DEFAULT_PROVIDER === 'vnpay'
+    config.DEPLOYMENT_CLASS === 'production' &&
+    config.PAYMENT_DEFAULT_PROVIDER === 'vnpay' &&
+    config.VNPAY_ENVIRONMENT !== 'production'
   ) {
     throw new Error(
-      'PAYMENT_DEFAULT_PROVIDER=vnpay is not allowed in production during the VNPay foundation phase',
+      'PAYMENT_DEFAULT_PROVIDER=vnpay requires VNPAY_ENVIRONMENT=production for DEPLOYMENT_CLASS=production',
     );
   }
   if (config.VNPAY_ENVIRONMENT === 'disabled') return;
@@ -429,11 +438,11 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
   }
 
   if (
-    config.NODE_ENV === 'production' &&
-    config.VNPAY_ENVIRONMENT !== 'production'
+    config.DEPLOYMENT_CLASS === 'production' &&
+    config.VNPAY_ENVIRONMENT === 'sandbox'
   ) {
     throw new Error(
-      'VNPAY_ENVIRONMENT=sandbox is not allowed when NODE_ENV=production',
+      'VNPAY_ENVIRONMENT=sandbox is not allowed for DEPLOYMENT_CLASS=production',
     );
   }
   if (
@@ -441,6 +450,14 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
     config.NODE_ENV !== 'production'
   ) {
     throw new Error('VNPAY_ENVIRONMENT=production requires NODE_ENV=production');
+  }
+  if (
+    config.VNPAY_ENVIRONMENT === 'production' &&
+    config.DEPLOYMENT_CLASS !== 'production'
+  ) {
+    throw new Error(
+      'VNPAY_ENVIRONMENT=production requires DEPLOYMENT_CLASS=production',
+    );
   }
 
   for (const [name, value] of [
@@ -540,6 +557,22 @@ function parsePaymentDefaultProvider(value: unknown): PaymentDefaultProvider {
   }
 
   return provider;
+}
+
+function parseDeploymentClass(
+  value: unknown,
+  nodeEnv: NodeEnvironment,
+): DeploymentClass {
+  const deploymentClass = optionalString(value);
+  if (deploymentClass === undefined) {
+    return nodeEnv === 'production' ? 'production' : 'uat';
+  }
+
+  if (deploymentClass !== 'uat' && deploymentClass !== 'production') {
+    throw new Error('DEPLOYMENT_CLASS must be uat or production');
+  }
+
+  return deploymentClass;
 }
 
 function parseVnpayEnvironment(value: unknown): VnpayEnvironment {
