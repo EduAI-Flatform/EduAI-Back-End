@@ -9,6 +9,7 @@ import {
   VnPayProviderConfig,
   VnPayQueryDrAttempt,
   VnPayQueryDrError,
+  isValidVnPayIpAddress,
 } from './vnpay-payment.provider';
 
 const HASH_SECRET = 'querydr-test-secret';
@@ -58,7 +59,7 @@ function queryResponse(
     vnp_TransactionNo: '123456',
     vnp_TransactionType: '01',
     vnp_TransactionStatus: '00',
-    vnp_OrderInfo: 'Query transaction, tranid=9001',
+    vnp_OrderInfo: 'Query transaction 9001',
     vnp_PromotionCode: '',
     vnp_PromotionAmount: '',
     ...overrides,
@@ -109,14 +110,14 @@ describe('VNPay QueryDR signing', () => {
       vnp_TransactionDate: '20260921235959',
       vnp_CreateDate: '20260922084640',
       vnp_IpAddr: '127.0.0.1',
-      vnp_OrderInfo: 'Query transaction, tranid=9001',
+      vnp_OrderInfo: 'Query transaction 9001',
     };
 
     expect(buildVnPayQueryDrRequestSignatureSource(params)).toBe(
-      'QUERYREQUEST001|2.1.0|querydr|TESTTMNC|9001|20260921235959|20260922084640|127.0.0.1|Query transaction, tranid=9001',
+      'QUERYREQUEST001|2.1.0|querydr|TESTTMNC|9001|20260921235959|20260922084640|127.0.0.1|Query transaction 9001',
     );
     expect(signVnPayQueryDrRequest(params, HASH_SECRET)).toBe(
-      '1d5c9d57047e3164a28a0a0704b002f8f6d66cd616393510d8876d40ffbaf00cc565c6cb026b861d85268fa22c09cd5489807671f7712f2c0ab246753cbc9683',
+      'e77ff6f27761966bcf3b46944fb10fc1813ab4df5f95803d2acb9dc12a7acd70528c2b64df66eae5db49085c3764090997bd7472af6afe9fc8355ecb34a73476',
     );
   });
 
@@ -127,10 +128,10 @@ describe('VNPay QueryDR signing', () => {
     });
 
     expect(buildVnPayQueryDrResponseSignatureSource(response)).toBe(
-      'response-9001|querydr|00|Query successful|TESTTMNC|9001|12500000|NCB|20260921235959|123456|01|00|Query transaction, tranid=9001||',
+      'response-9001|querydr|00|Query successful|TESTTMNC|9001|12500000|NCB|20260921235959|123456|01|00|Query transaction 9001||',
     );
     expect(signVnPayQueryDrResponse(response, HASH_SECRET)).toBe(
-      '98e67999f64eba0edbb57c83c4218761dc0016e7468139ed01d56a60e8fdaf61531ce68f906c421f72f16f7fb49ef13a0961b783fb08c7c74e72c1bb5c3d3f1d',
+      '9f2e466c94b7e9ad7ae835f57a1391a9714f2e22a91fbfb3f370a7a5c8ad6d03e543f1f8f905f50289961361e1e5bc07a6d6fe99ba1fb6bebf7b170ab8e2c928',
     );
   });
 });
@@ -165,7 +166,7 @@ describe('VnPayPaymentProvider QueryDR client', () => {
       vnp_TransactionDate: '20260921235959',
       vnp_CreateDate: '20260922084640',
       vnp_IpAddr: '127.0.0.1',
-      vnp_OrderInfo: 'Query transaction, tranid=9001',
+      vnp_OrderInfo: 'Query transaction 9001',
     });
     expect(body.vnp_SecureHash).toBe(
       signVnPayQueryDrRequest(body, HASH_SECRET),
@@ -190,6 +191,26 @@ describe('VnPayPaymentProvider QueryDR client', () => {
         typeof value === 'bigint' ? value.toString() : value,
       ),
     ).not.toContain(HASH_SECRET);
+  });
+
+  it('normalizes QueryDR order info and accepts the observed valid IPv4 address', async () => {
+    const fetcher = mockHttpClient().mockResolvedValue(
+      jsonResponse(signedResponse()),
+    );
+
+    await provider(fetcher).queryTransaction(
+      attempt({ requestIpAddress: '171.232.71.228' }),
+    );
+
+    const body = JSON.parse(String(fetcher.mock.calls[0][1]?.body)) as Record<
+      string,
+      string
+    >;
+    expect(body.vnp_OrderInfo).toBe('Query transaction 9001');
+    expect(body.vnp_OrderInfo).toMatch(/^[A-Za-z0-9]+(?: [A-Za-z0-9]+)*$/);
+    expect(body.vnp_OrderInfo).not.toMatch(/[,=]/);
+    expect(body.vnp_IpAddr).toBe('171.232.71.228');
+    expect(isValidVnPayIpAddress(body.vnp_IpAddr)).toBe(true);
   });
 
   it('accepts omitted optional response fields as empty signed segments', async () => {
@@ -221,6 +242,7 @@ describe('VnPayPaymentProvider QueryDR client', () => {
     ['USD currency', { currency: 'USD' }],
     ['zero amount', { amountMinor: 0n }],
     ['zero provider reference', { providerOrderCode: 0n }],
+    ['too-short IP', { requestIpAddress: '::1' }],
   ])('rejects unsafe %s input before HTTP', async (_name, overrides) => {
     const fetcher = mockHttpClient();
     await expect(

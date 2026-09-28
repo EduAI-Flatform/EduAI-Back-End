@@ -27,6 +27,7 @@ export interface VnPayProviderConfig {
 
 export const VNPAY_AMOUNT_MAX = 999999999999n;
 const VNPAY_TMN_CODE_PATTERN = /^[A-Za-z0-9]{8}$/;
+const VNPAY_ORDER_INFO_MAX_LENGTH = 255;
 const VN_TIMEZONE_OFFSET_MS = 7 * 60 * 60 * 1000;
 const VNPAY_QUERYDR_RESPONSE_MAX_BYTES = 64 * 1024;
 
@@ -134,7 +135,7 @@ export class VnPayPaymentProvider implements PaymentProvider {
       vnp_Amount: amountMinorToVnPay(input.amountMinor),
       vnp_CurrCode: 'VND',
       vnp_TxnRef: normalized.providerOrderReference,
-      vnp_OrderInfo: input.description,
+      vnp_OrderInfo: normalized.orderInfo,
       vnp_OrderType: 'other',
       vnp_Locale: 'vn',
       vnp_ReturnUrl: input.returnUrls.success,
@@ -461,8 +462,7 @@ function validateQueryDrInput(
     input.currency !== 'VND' ||
     typeof input.amountMinor !== 'bigint' ||
     !isValidDate(input.transactionCreatedAt) ||
-    !isBoundedString(input.requestIpAddress, 45) ||
-    isIP(input.requestIpAddress) === 0
+    !isValidVnPayIpAddress(input.requestIpAddress)
   ) {
     throw new VnPayQueryDrError('invalid_request', false);
   }
@@ -484,7 +484,9 @@ function validateQueryDrInput(
   return {
     ...input,
     providerOrderReference: input.providerOrderCode.toString(),
-    orderInfo: `Query transaction, tranid=${input.providerOrderCode.toString()}`,
+    orderInfo: normalizeVnPayOrderInfo(
+      `Query transaction ${input.providerOrderCode.toString()}`,
+    ),
   };
 }
 
@@ -798,18 +800,21 @@ export function buildVnPaySignedUrl(
 function validateCreateInput(
   input: CreatePaymentRequestInput,
   currentTime: Date,
-): { providerOrderReference: string; localOrderReference: number; expiresAt: Date } {
+): {
+  providerOrderReference: string;
+  localOrderReference: number;
+  orderInfo: string;
+  expiresAt: Date;
+} {
   const providerOrderReference = input.providerOrderReference;
   if (
     !isBoundedString(input.paymentAttemptIdentity, 128) ||
     !/^[1-9]\d{0,15}$/.test(providerOrderReference) ||
     input.currency !== 'VND' ||
-    !isBoundedString(input.description, 255) ||
+    !isBoundedString(input.description, VNPAY_ORDER_INFO_MAX_LENGTH) ||
     /[\u0000-\u001f\u007f]/.test(input.description) ||
     !isHttpUrl(input.returnUrls.success) ||
-    !input.clientIpAddress ||
-    input.clientIpAddress.length > 45 ||
-    isIP(input.clientIpAddress) === 0 ||
+    !isValidVnPayIpAddress(input.clientIpAddress) ||
     input.expiresAt === undefined ||
     !Number.isFinite(input.expiresAt.getTime()) ||
     input.expiresAt.getTime() <= currentTime.getTime()
@@ -826,9 +831,12 @@ function validateCreateInput(
     throw new PaymentProviderError('invalid_request', false);
   }
 
+  const orderInfo = normalizeVnPayOrderInfo(input.description);
+
   return {
     providerOrderReference,
     localOrderReference: numericReference,
+    orderInfo,
     expiresAt: input.expiresAt,
   };
 }
@@ -843,6 +851,43 @@ function encodeVnPayComponent(value: string): string {
 
 function isBoundedString(value: unknown, maximum: number): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum;
+}
+
+export function normalizeVnPayOrderInfo(value: string): string {
+  if (typeof value !== 'string') {
+    throw new PaymentProviderError('invalid_request', false);
+  }
+
+  const withoutDiacritics = value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/Đ/g, 'D')
+    .replace(/đ/g, 'd');
+  const normalized = withoutDiacritics
+    .replace(/[^A-Za-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, VNPAY_ORDER_INFO_MAX_LENGTH)
+    .trim();
+
+  if (
+    normalized.length < 1 ||
+    normalized.length > VNPAY_ORDER_INFO_MAX_LENGTH ||
+    !/^[A-Za-z0-9]+(?: [A-Za-z0-9]+)*$/.test(normalized)
+  ) {
+    throw new PaymentProviderError('invalid_request', false);
+  }
+
+  return normalized;
+}
+
+export function isValidVnPayIpAddress(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length >= 7 &&
+    value.length <= 45 &&
+    isIP(value) !== 0
+  );
 }
 
 export function isValidVnPayTmnCode(value: unknown): value is string {
