@@ -8,6 +8,7 @@ import {
 import { VerifiedPaymentWebhook } from './payment-provider';
 import {
   canonicalizeVnPayIpnParams,
+  isValidVnPayTmnCode,
   verifyVnPaySignature,
   VNPAY_AMOUNT_MAX,
 } from './vnpay-payment.provider';
@@ -189,8 +190,8 @@ export function normalizeVnPayIpn(
   params: Readonly<Record<string, string>>,
   expected: { tmnCode: string; version: string },
 ): VerifiedPaymentWebhook {
-  const tmnCode = required(params, 'vnp_TmnCode', 32, /^[A-Za-z0-9]+$/);
-  if (tmnCode !== expected.tmnCode) {
+  const tmnCode = required(params, 'vnp_TmnCode', 8, /^[A-Za-z0-9]{8}$/);
+  if (!isValidVnPayTmnCode(expected.tmnCode) || tmnCode !== expected.tmnCode) {
     throw new VnPayIpnValidationError('merchant');
   }
   if (

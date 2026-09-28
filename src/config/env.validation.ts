@@ -1,4 +1,5 @@
 export type NodeEnvironment = 'development' | 'test' | 'production';
+export type DeploymentClass = 'uat' | 'production';
 export type AiProviderName = 'gemini' | 'openai' | 'mock';
 export type EmailProviderName = 'disabled' | 'preview' | 'resend';
 export type PayosEnvironment = 'disabled' | 'production';
@@ -11,6 +12,7 @@ export const DEFAULT_VNPAY_PAYMENT_URL =
 
 export interface ValidatedEnv {
   NODE_ENV: NodeEnvironment;
+  DEPLOYMENT_CLASS: DeploymentClass;
   PORT: number;
   PUBLIC_APP_URL?: string;
   CORS_ALLOWED_ORIGINS: string[];
@@ -77,6 +79,7 @@ export interface ValidatedEnv {
   VNPAY_TMN_CODE?: string;
   VNPAY_HASH_SECRET?: string;
   VNPAY_PAYMENT_URL?: string;
+  VNPAY_API_URL?: string;
   VNPAY_RETURN_URL?: string;
   VNPAY_IPN_URL?: string;
   VNPAY_VERSION: string;
@@ -93,6 +96,11 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   if (!isNodeEnvironment(nodeEnv)) {
     throw new Error('NODE_ENV must be development, test, or production');
   }
+
+  const deploymentClass = parseDeploymentClass(
+    config.DEPLOYMENT_CLASS,
+    nodeEnv,
+  );
 
   const firebaseProjectId = optionalString(config.FIREBASE_PROJECT_ID);
   const firebaseClientEmail = optionalString(config.FIREBASE_CLIENT_EMAIL);
@@ -186,6 +194,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 
   const validated: ValidatedEnv = {
     NODE_ENV: nodeEnv,
+    DEPLOYMENT_CLASS: deploymentClass,
     PORT: parsePort(config.PORT),
     PUBLIC_APP_URL: optionalUrl(config.PUBLIC_APP_URL, 'PUBLIC_APP_URL'),
     CORS_ALLOWED_ORIGINS: parseCorsOrigins(config.CORS_ALLOWED_ORIGINS),
@@ -306,6 +315,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
       config.VNPAY_PAYMENT_URL,
       'VNPAY_PAYMENT_URL',
     ),
+    VNPAY_API_URL: optionalUrl(config.VNPAY_API_URL, 'VNPAY_API_URL'),
     VNPAY_RETURN_URL: optionalUrl(config.VNPAY_RETURN_URL, 'VNPAY_RETURN_URL'),
     VNPAY_IPN_URL: optionalUrl(config.VNPAY_IPN_URL, 'VNPAY_IPN_URL'),
     VNPAY_VERSION: parseVnPayVersion(config.VNPAY_VERSION),
@@ -395,19 +405,28 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 
 function validateVnPayConfiguration(config: ValidatedEnv): void {
   if (
-    config.NODE_ENV === 'production' &&
-    config.PAYMENT_DEFAULT_PROVIDER === 'vnpay'
+    config.DEPLOYMENT_CLASS === 'production' &&
+    config.PAYMENT_DEFAULT_PROVIDER === 'vnpay' &&
+    config.VNPAY_ENVIRONMENT !== 'production'
   ) {
     throw new Error(
-      'PAYMENT_DEFAULT_PROVIDER=vnpay is not allowed in production during the VNPay foundation phase',
+      'PAYMENT_DEFAULT_PROVIDER=vnpay requires VNPAY_ENVIRONMENT=production for DEPLOYMENT_CLASS=production',
     );
   }
   if (config.VNPAY_ENVIRONMENT === 'disabled') return;
+
+  if (
+    config.VNPAY_TMN_CODE !== undefined &&
+    !/^[A-Za-z0-9]{8}$/.test(config.VNPAY_TMN_CODE)
+  ) {
+    throw new Error('VNPAY_TMN_CODE must be exactly 8 alphanumeric characters');
+  }
 
   const required = [
     !config.VNPAY_TMN_CODE ? 'VNPAY_TMN_CODE' : undefined,
     !config.VNPAY_HASH_SECRET ? 'VNPAY_HASH_SECRET' : undefined,
     !config.VNPAY_PAYMENT_URL ? 'VNPAY_PAYMENT_URL' : undefined,
+    !config.VNPAY_API_URL ? 'VNPAY_API_URL' : undefined,
     !config.VNPAY_RETURN_URL ? 'VNPAY_RETURN_URL' : undefined,
     !config.VNPAY_IPN_URL ? 'VNPAY_IPN_URL' : undefined,
   ].filter((value): value is string => Boolean(value));
@@ -419,11 +438,11 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
   }
 
   if (
-    config.NODE_ENV === 'production' &&
-    config.VNPAY_ENVIRONMENT !== 'production'
+    config.DEPLOYMENT_CLASS === 'production' &&
+    config.VNPAY_ENVIRONMENT === 'sandbox'
   ) {
     throw new Error(
-      'VNPAY_ENVIRONMENT=sandbox is not allowed when NODE_ENV=production',
+      'VNPAY_ENVIRONMENT=sandbox is not allowed for DEPLOYMENT_CLASS=production',
     );
   }
   if (
@@ -432,20 +451,32 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
   ) {
     throw new Error('VNPAY_ENVIRONMENT=production requires NODE_ENV=production');
   }
+  if (
+    config.VNPAY_ENVIRONMENT === 'production' &&
+    config.DEPLOYMENT_CLASS !== 'production'
+  ) {
+    throw new Error(
+      'VNPAY_ENVIRONMENT=production requires DEPLOYMENT_CLASS=production',
+    );
+  }
 
   for (const [name, value] of [
     ['VNPAY_PAYMENT_URL', config.VNPAY_PAYMENT_URL],
+    ['VNPAY_API_URL', config.VNPAY_API_URL],
     ['VNPAY_RETURN_URL', config.VNPAY_RETURN_URL],
     ['VNPAY_IPN_URL', config.VNPAY_IPN_URL],
   ] as const) {
     const url = new URL(value as string);
     if (
-      config.NODE_ENV === 'production' &&
-      (url.protocol !== 'https:' ||
-        url.username.length > 0 ||
-        url.password.length > 0)
+      url.protocol !== 'https:' ||
+      url.username.length > 0 ||
+      url.password.length > 0
     ) {
-      throw new Error(`${name} must use https in VNPAY production mode`);
+      throw new Error(
+        name === 'VNPAY_API_URL'
+          ? `${name} must use https`
+          : `${name} must use https in VNPAY ${config.VNPAY_ENVIRONMENT} mode`,
+      );
     }
   }
 }
@@ -526,6 +557,22 @@ function parsePaymentDefaultProvider(value: unknown): PaymentDefaultProvider {
   }
 
   return provider;
+}
+
+function parseDeploymentClass(
+  value: unknown,
+  nodeEnv: NodeEnvironment,
+): DeploymentClass {
+  const deploymentClass = optionalString(value);
+  if (deploymentClass === undefined) {
+    return nodeEnv === 'production' ? 'production' : 'uat';
+  }
+
+  if (deploymentClass !== 'uat' && deploymentClass !== 'production') {
+    throw new Error('DEPLOYMENT_CLASS must be uat or production');
+  }
+
+  return deploymentClass;
 }
 
 function parseVnpayEnvironment(value: unknown): VnpayEnvironment {

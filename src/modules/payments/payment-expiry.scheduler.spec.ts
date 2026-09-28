@@ -52,6 +52,50 @@ describe('PaymentExpiryScheduler', () => {
     expect(lifecycle.runExpiry).not.toHaveBeenCalled();
   });
 
+  it('schedules expiry work when the provider registry has VNPay enabled', async () => {
+    const lifecycle = {
+      runExpiry: jest.fn().mockResolvedValue({
+        checkedCount: 0,
+        expiredCount: 0,
+        settledCount: 0,
+        reviewRequiredCount: 0,
+        hasMore: false,
+        nextCursor: null,
+      }),
+    };
+    const registry = {
+      isEnabled: jest.fn((provider: string) => provider === 'vnpay'),
+    };
+    const scheduler = new PaymentExpiryScheduler(
+      lifecycle as never,
+      { payos: { environment: 'disabled' } } as never,
+      registry as never,
+    );
+
+    scheduler.onApplicationBootstrap();
+    await Promise.resolve();
+
+    expect(registry.isEnabled).toHaveBeenCalledWith('payos');
+    expect(registry.isEnabled).toHaveBeenCalledWith('vnpay');
+    expect(lifecycle.runExpiry).toHaveBeenCalledTimes(1);
+    scheduler.onApplicationShutdown();
+  });
+
+  it('does not schedule expiry work when all registered providers are disabled', async () => {
+    const lifecycle = { runExpiry: jest.fn() };
+    const registry = { isEnabled: jest.fn().mockReturnValue(false) };
+    const scheduler = new PaymentExpiryScheduler(
+      lifecycle as never,
+      { payos: { environment: 'production' } } as never,
+      registry as never,
+    );
+
+    scheduler.onApplicationBootstrap();
+    await jest.advanceTimersByTimeAsync(120_000);
+
+    expect(lifecycle.runExpiry).not.toHaveBeenCalled();
+  });
+
   it('does not overlap expiry checkpoints in the same process', async () => {
     let resolveRun: ((value: unknown) => void) | undefined;
     const firstRun = new Promise((resolve) => {

@@ -1,10 +1,17 @@
-import { VnPayPaymentProvider, canonicalizeVnPayParams } from './vnpay-payment.provider';
+import { createHmac } from 'node:crypto';
+import {
+  VnPayPaymentProvider,
+  canonicalizeVnPayParams,
+  isValidVnPayIpAddress,
+  normalizeVnPayOrderInfo,
+} from './vnpay-payment.provider';
 
 const config = {
   environment: 'sandbox' as const,
   tmnCode: 'TESTTMNC',
   hashSecret: 'test-secret',
   paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+  apiUrl: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
   returnUrl: 'https://app.example/payments/return',
   ipnUrl: 'https://api.example/payments/ipn',
   version: '2.1.0',
@@ -41,6 +48,19 @@ describe('VnPayPaymentProvider', () => {
         vnp_Empty: '',
       }),
     ).toBe('vnp_Amount=12500000&vnp_OrderInfo=EDUAI+ORDER+1');
+  });
+
+  it('normalizes hyphens, diacritics, punctuation, and whitespace for PAY order info', () => {
+    expect(
+      normalizeVnPayOrderInfo('  Đơn   hàng\tU-MUF92O81-8C7072A4!  '),
+    ).toBe('Don hang UMUF92O818C7072A4');
+  });
+
+  it('bounds normalized order info to the VNPay maximum', () => {
+    const normalized = normalizeVnPayOrderInfo('A'.repeat(300));
+
+    expect(normalized).toHaveLength(255);
+    expect(normalized).toMatch(/^[A-Za-z0-9]+$/);
   });
 
   it('creates a deterministic signed URL from canonical server-side payment data', async () => {
@@ -93,6 +113,32 @@ describe('VnPayPaymentProvider', () => {
     expect(second.checkoutUrl).toBe(first.checkoutUrl);
   });
 
+  it('signs the normalized PAY order info value rather than the raw description', async () => {
+    const provider = new VnPayPaymentProvider(config, () => now);
+    const created = await provider.createPaymentRequest(
+      input({ description: 'Đơn hàng U-MUF92O81-8C7072A4!' }),
+    );
+    const url = new URL(created.checkoutUrl);
+    const secureHash = url.searchParams.get('vnp_SecureHash');
+    const params = Object.fromEntries(url.searchParams.entries());
+    delete params.vnp_SecureHash;
+
+    expect(url.searchParams.get('vnp_OrderInfo')).toBe(
+      'Don hang UMUF92O818C7072A4',
+    );
+    expect(url.searchParams.get('vnp_OrderInfo')).not.toContain('-');
+    expect(secureHash).toBe(
+      createHmac('sha512', config.hashSecret)
+        .update(canonicalizeVnPayParams(params), 'utf8')
+        .digest('hex'),
+    );
+  });
+
+  it('accepts a documented-length public IPv4 address and rejects too-short IPv6', () => {
+    expect(isValidVnPayIpAddress('171.232.71.228')).toBe(true);
+    expect(isValidVnPayIpAddress('::1')).toBe(false);
+  });
+
   it('omits optional empty presentation fields without inventing VNPay parameters', async () => {
     const provider = new VnPayPaymentProvider(config, () => now);
 
@@ -113,6 +159,7 @@ describe('VnPayPaymentProvider', () => {
     ['amount overflow', { amountMinor: 10000000000n }],
     ['non-numeric provider reference', { providerOrderReference: 'user-9001' }],
     ['missing client IP', { clientIpAddress: undefined }],
+    ['too-short IP', { clientIpAddress: '::1' }],
   ])('rejects %s before constructing a payment URL', async (_name, overrides) => {
     const provider = new VnPayPaymentProvider(config, () => now);
 
@@ -138,6 +185,18 @@ describe('VnPayPaymentProvider', () => {
     });
     await expect(disabled.verifyWebhook({ body: {}, headers: {} })).rejects.toMatchObject({
       code: 'unsupported',
+      retryable: false,
+    });
+  });
+
+  it('rejects malformed merchant configuration before creating or querying', async () => {
+    const malformed = new VnPayPaymentProvider(
+      { ...config, tmnCode: 'SHORT' },
+      () => now,
+    );
+
+    await expect(malformed.createPaymentRequest(input())).rejects.toMatchObject({
+      code: 'invalid_request',
       retryable: false,
     });
   });

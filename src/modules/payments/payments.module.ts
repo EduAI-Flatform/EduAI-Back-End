@@ -105,8 +105,8 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
       provide: PAYMENT_PROVIDER,
       inject: [PAYMENT_PROVIDER_REGISTRY],
       useFactory: (registry: PaymentProviderRegistry): PaymentProvider =>
-        // Webhook/lifecycle/reconciliation remain PayOS-specific until the
-        // later settlement-neutral tasks; new attempts use the registry.
+        // Legacy direct provider consumers remain PayOS-scoped; reconciliation
+        // resolves the stored attempt provider through the registry.
         registry.get('payos'),
     },
   ],
