@@ -48,6 +48,8 @@ jobs:
           modules/payments/vnpay-ipn.service.spec.ts
           modules/payments/vnpay-uat-deployment.spec.ts
           config/env.validation.spec.ts
+          config/reconciliation-hardening-preflight.spec.ts
+          config/production-runtime-role.spec.ts
 
       - name: Bounded Sandbox evidence safety tests
         run: node --test scripts/vnpay-sandbox-evidence.test.cjs
