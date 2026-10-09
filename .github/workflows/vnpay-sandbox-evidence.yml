@@ -68,6 +68,7 @@ jobs:
           cd /var/www/eduai/backend
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           if [ "$MODE" = migration ]; then
+            git diff --quiet -- scripts/run-production-migrations.cjs
             timeout --signal=TERM --kill-after=10s 90s node <<'NODE'
           const { Client } = require('pg');
           const guards = require('./scripts/run-production-migrations.cjs');
