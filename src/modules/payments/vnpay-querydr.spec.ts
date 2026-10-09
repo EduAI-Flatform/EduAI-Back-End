@@ -415,6 +415,52 @@ describe('VnPayPaymentProvider QueryDR client', () => {
     }
   });
 
+  it('accepts a signed UTF-8 response split across chunks at the exact byte limit', async () => {
+    const json = JSON.stringify(signedResponse({ vnp_Message: 'Truy vấn thành công' }));
+    const body = Buffer.from(`\uFEFF${json}`, 'utf8');
+    const split = body.indexOf(Buffer.from('ấ', 'utf8')) + 1;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(body.subarray(0, split));
+        controller.enqueue(body.subarray(split));
+        controller.enqueue(Buffer.alloc(64 * 1024 - body.byteLength, 32));
+        controller.close();
+      },
+    });
+    const fetcher = mockHttpClient().mockResolvedValue(new Response(stream, {
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    await expect(provider(fetcher).queryTransaction(attempt())).resolves.toMatchObject({
+      transactionStatus: 'paid',
+      trusted: true,
+    });
+  });
+
+  it.each([undefined, '1'])('stops an oversized streamed response with content-length %s', async (contentLength) => {
+    let chunksRead = 0;
+    const cancel = jest.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        chunksRead += 1;
+        controller.enqueue(new Uint8Array(16 * 1024));
+        if (chunksRead === 9) controller.close();
+      },
+      cancel,
+    }, { highWaterMark: 0 });
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (contentLength !== undefined) headers['content-length'] = contentLength;
+    const fetcher = mockHttpClient().mockResolvedValue(new Response(stream, { headers }));
+
+    await expect(provider(fetcher).queryTransaction(attempt())).rejects.toMatchObject({
+      code: 'malformed_response',
+      retryable: false,
+    });
+    expect(chunksRead).toBe(5);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+
   it('never logs secrets or sends a request to an arbitrary host', async () => {
     const fetcher = mockHttpClient().mockRejectedValue(new Error('network'));
     const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);

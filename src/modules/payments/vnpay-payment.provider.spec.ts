@@ -40,6 +40,12 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('VnPayPaymentProvider', () => {
+  it('signs the persisted attempt time even when URL creation is delayed', async () => {
+    const provider = new VnPayPaymentProvider(config, () => new Date(now.getTime() + 5_000));
+    const created = await provider.createPaymentRequest(input({ transactionCreatedAt: now }));
+    expect(new URL(created.checkoutUrl).searchParams.get('vnp_CreateDate')).toBe('20260922084640');
+  });
+
   it('canonicalizes sorted form parameters and encodes spaces deterministically', () => {
     expect(
       canonicalizeVnPayParams({

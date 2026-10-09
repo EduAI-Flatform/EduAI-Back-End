@@ -145,6 +145,7 @@ export class PaymentRequestService {
         description: this.description(prepared.order.orderNumber),
         returnUrls: this.callbackUrls(providerName, orderId),
         clientIpAddress,
+        transactionCreatedAt: prepared.attempt.createdAt,
         expiresAt: prepared.attempt.providerExpiresAt as Date,
       });
       if (created.status !== 'PENDING') {

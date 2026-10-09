@@ -128,6 +128,13 @@ export class VnPayPaymentProvider implements PaymentProvider {
     this.validateConfiguration();
     const currentTime = this.now();
     const normalized = validateCreateInput(input, currentTime);
+    const transactionCreatedAt = input.transactionCreatedAt ?? currentTime;
+    if (
+      !Number.isFinite(transactionCreatedAt.getTime()) ||
+      transactionCreatedAt.getTime() > currentTime.getTime()
+    ) {
+      throw new PaymentProviderError('invalid_request', false);
+    }
     const params: Record<string, string> = {
       vnp_Version: this.config.version,
       vnp_Command: 'pay',
@@ -140,7 +147,7 @@ export class VnPayPaymentProvider implements PaymentProvider {
       vnp_Locale: 'vn',
       vnp_ReturnUrl: input.returnUrls.success,
       vnp_IpAddr: input.clientIpAddress as string,
-      vnp_CreateDate: formatVnPayDate(currentTime),
+      vnp_CreateDate: formatVnPayDate(transactionCreatedAt),
       vnp_ExpireDate: formatVnPayDate(normalized.expiresAt),
     };
     const checkoutUrl = buildVnPaySignedUrl(
@@ -280,15 +287,35 @@ export class VnPayPaymentProvider implements PaymentProvider {
 
       let responseBody: string;
       try {
-        responseBody = await response.text();
-      } catch {
+        if (!response.body) {
+          throw new VnPayQueryDrError('malformed_response', false);
+        }
+        const reader = response.body.getReader();
+        const chunks: Buffer[] = [];
+        let bytesRead = 0;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value.byteLength === 0) continue;
+            bytesRead += value.byteLength;
+            if (bytesRead > VNPAY_QUERYDR_RESPONSE_MAX_BYTES) {
+              controller.abort();
+              await reader.cancel().catch(() => undefined);
+              throw new VnPayQueryDrError('malformed_response', false);
+            }
+            chunks.push(Buffer.from(value));
+          }
+          responseBody = new TextDecoder().decode(Buffer.concat(chunks, bytesRead));
+        } finally {
+          reader.releaseLock();
+        }
+      } catch (error) {
+        if (error instanceof VnPayQueryDrError) throw error;
         if (controller.signal.aborted) {
           throw new VnPayQueryDrError('network_timeout', true);
         }
         throw new VnPayQueryDrError('provider_unavailable', true);
-      }
-      if (Buffer.byteLength(responseBody, 'utf8') > VNPAY_QUERYDR_RESPONSE_MAX_BYTES) {
-        throw new VnPayQueryDrError('malformed_response', false);
       }
 
       return parseVnPayQueryDrResponse(responseBody);

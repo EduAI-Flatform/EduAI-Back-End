@@ -181,6 +181,14 @@ function harness(options: {
 }
 
 describe('PaymentRequestService', () => {
+  it('passes the persisted attempt timestamp for matching PAY and QueryDR requests', async () => {
+    const { service, provider, createdAttempt } = harness();
+    await service.create('student-id', orderId, 'payment-timestamp-key');
+    expect(provider.createPaymentRequest).toHaveBeenCalledWith(expect.objectContaining({
+      transactionCreatedAt: createdAttempt.createdAt,
+    }));
+  });
+
   it('commits the local attempt before calling PayOS and returns a short-lived QR response', async () => {
     const { service, provider, tx, events, audit } = harness();
 
