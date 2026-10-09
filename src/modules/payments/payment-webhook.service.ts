@@ -399,6 +399,10 @@ export class PaymentWebhookService {
     attempt: AttemptRecord,
     verified: VerifiedPaymentWebhook,
   ): boolean {
+    // VNPay IPN and QueryDR are independent signed observations. Their event
+    // identities may differ, while the provider settlement reference remains
+    // the single financial identity. PayOS keeps its original strict replay
+    // identity and timestamp checks.
     const event = settlement.paymentEvent;
     if (!event) return false;
     return (
@@ -410,16 +414,19 @@ export class PaymentWebhookService {
       settlement.providerSettlementReference === verified.providerSettlementReference &&
       settlement.amountMinor === verified.amountMinor &&
       settlement.currency === verified.currency &&
-      (verified.occurredAtSource === 'receipt' ||
+      (verified.provider === 'vnpay' ||
+        verified.occurredAtSource === 'receipt' ||
         settlement.settledAt.getTime() === verified.occurredAt.getTime()) &&
       event.paymentAttemptId === attempt.id &&
       event.provider === verified.provider &&
-      event.providerEventIdentity === verified.providerEventIdentity &&
+      (verified.provider === 'vnpay' ||
+        event.providerEventIdentity === verified.providerEventIdentity) &&
       event.providerPaymentIdentity === verified.providerPaymentIdentity &&
       event.providerSettlementReference === verified.providerSettlementReference &&
       event.amountMinor === verified.amountMinor &&
       event.currency === verified.currency &&
-      (verified.occurredAtSource === 'receipt' ||
+      (verified.provider === 'vnpay' ||
+        verified.occurredAtSource === 'receipt' ||
         event.providerOccurredAt?.getTime() === verified.occurredAt.getTime()) &&
       (settlement.disposition !== CommerceSettlementDisposition.matched ||
         this.matchedSettlementIsCanonical(attempt, settlement.id))

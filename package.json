@@ -93,5 +93,13 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "overrides": {
+    "multer": "2.4.0",
+    "deepmerge-ts": "7.1.6",
+    "mysql2": "3.24.5",
+    "js-yaml": "4.3.2",
+    "lodash": "4.18.1",
+    "glob": "10.5.0"
   }
 }

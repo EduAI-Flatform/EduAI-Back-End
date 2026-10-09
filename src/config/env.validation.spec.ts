@@ -14,6 +14,7 @@ describe('validateEnv', () => {
       PAYOS_TIMEOUT_MS: 10000,
       PAYMENT_DEFAULT_PROVIDER: 'payos',
       VNPAY_ENVIRONMENT: 'disabled',
+      VNPAY_API_URL: undefined,
       VNPAY_VERSION: '2.1.0',
       VNPAY_TIMEOUT_MS: 10000,
     });
@@ -37,7 +38,7 @@ describe('validateEnv', () => {
   it('requires complete VNPay configuration only when enabled', () => {
     expect(() =>
       validateEnv({ ...paymentBase, VNPAY_ENVIRONMENT: 'sandbox' }),
-    ).toThrow('VNPAY sandbox configuration requires');
+    ).toThrow('VNPAY_API_URL');
 
     expect(
       validateEnv({
@@ -46,6 +47,7 @@ describe('validateEnv', () => {
         VNPAY_TMN_CODE: 'TESTTMNC',
         VNPAY_HASH_SECRET: 'sandbox-secret',
         VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+        VNPAY_API_URL: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
         VNPAY_RETURN_URL: 'https://app.example/payments/return',
         VNPAY_IPN_URL: 'https://api.example/payments/ipn',
       }),
@@ -65,6 +67,7 @@ describe('validateEnv', () => {
       VNPAY_TMN_CODE: 'TESTTMNC',
       VNPAY_HASH_SECRET: 'production-secret',
       VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+      VNPAY_API_URL: 'https://merchant.example/vnpay/transaction',
       VNPAY_RETURN_URL: 'https://app.example/payments/return',
       VNPAY_IPN_URL: 'https://api.example/payments/ipn',
     };
@@ -73,6 +76,12 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...active, VNPAY_RETURN_URL: 'not-a-url' })).toThrow(
       'VNPAY_RETURN_URL must be a valid http or https URL',
     );
+    expect(() =>
+      validateEnv({
+        ...active,
+        VNPAY_API_URL: 'http://merchant.example/vnpay/transaction',
+      }),
+    ).toThrow('VNPAY_API_URL must use https');
     expect(() =>
       validateEnv({ ...active, VNPAY_IPN_URL: 'http://api.example/payments/ipn' }),
     ).toThrow('VNPAY_IPN_URL must use https');
@@ -84,7 +93,33 @@ describe('validateEnv', () => {
     ).toThrow('VNPAY production configuration requires');
   });
 
-  it('preserves PayOS as the only production default during foundation work', () => {
+  it('enforces the official sandbox merchant-code and HTTPS URL contract', () => {
+    const sandbox = {
+      ...paymentBase,
+      VNPAY_ENVIRONMENT: 'sandbox',
+      VNPAY_TMN_CODE: 'TESTTMNC',
+      VNPAY_HASH_SECRET: 'sandbox-secret',
+      VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+      VNPAY_API_URL: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
+      VNPAY_RETURN_URL: 'https://app.example/payments/return',
+      VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+    };
+
+    expect(() => validateEnv({ ...sandbox, VNPAY_TMN_CODE: 'SHORT' })).toThrow(
+      'VNPAY_TMN_CODE must be exactly 8 alphanumeric characters',
+    );
+    expect(() =>
+      validateEnv({ ...sandbox, VNPAY_RETURN_URL: 'http://app.example/payments/return' }),
+    ).toThrow('VNPAY_RETURN_URL must use https in VNPAY sandbox mode');
+    expect(() =>
+      validateEnv({ ...sandbox, VNPAY_IPN_URL: 'http://api.example/payments/ipn' }),
+    ).toThrow('VNPAY_IPN_URL must use https in VNPAY sandbox mode');
+    expect(() =>
+      validateEnv({ ...sandbox, VNPAY_PAYMENT_URL: 'http://sandbox.vnpayment.vn/paymentv2/vpcpay.html' }),
+    ).toThrow('VNPAY_PAYMENT_URL must use https in VNPAY sandbox mode');
+  });
+
+  it('requires production-default VNPay to use the production VNPay environment', () => {
     expect(() =>
       validateEnv({
         ...paymentBase,
@@ -92,7 +127,142 @@ describe('validateEnv', () => {
         COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
         PAYMENT_DEFAULT_PROVIDER: 'vnpay',
       }),
-    ).toThrow('PAYMENT_DEFAULT_PROVIDER=vnpay is not allowed in production');
+    ).toThrow(
+      'PAYMENT_DEFAULT_PROVIDER=vnpay requires VNPAY_ENVIRONMENT=production for DEPLOYMENT_CLASS=production',
+    );
+  });
+
+  it('defaults a production Node runtime to the production deployment class', () => {
+    expect(
+      validateEnv({
+        ...paymentBase,
+        NODE_ENV: 'production',
+        COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+      }).DEPLOYMENT_CLASS,
+    ).toBe('production');
+  });
+
+  it('allows a production Node runtime to host an explicitly classified UAT VNPay sandbox', () => {
+    const sandboxUat = {
+      ...paymentBase,
+      NODE_ENV: 'production',
+      DEPLOYMENT_CLASS: 'uat',
+      COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+      PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+      VNPAY_ENVIRONMENT: 'sandbox',
+      VNPAY_TMN_CODE: 'TESTTMNC',
+      VNPAY_HASH_SECRET: 'sandbox-secret',
+      VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+      VNPAY_API_URL: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
+      VNPAY_RETURN_URL: 'https://app.example/payments/return',
+      VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+    };
+
+    expect(validateEnv(sandboxUat)).toMatchObject({
+      DEPLOYMENT_CLASS: 'uat',
+      PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+      VNPAY_ENVIRONMENT: 'sandbox',
+    });
+  });
+
+  it('rejects VNPay sandbox activation for the production deployment class', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        NODE_ENV: 'production',
+        DEPLOYMENT_CLASS: 'production',
+        COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+        VNPAY_ENVIRONMENT: 'sandbox',
+        VNPAY_TMN_CODE: 'TESTTMNC',
+        VNPAY_HASH_SECRET: 'sandbox-secret',
+        VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+        VNPAY_API_URL: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
+        VNPAY_RETURN_URL: 'https://app.example/payments/return',
+        VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+      }),
+    ).toThrow('VNPAY_ENVIRONMENT=sandbox is not allowed for DEPLOYMENT_CLASS=production');
+  });
+
+  it('supports a future production VNPay environment without enabling sandbox', () => {
+    const productionVnpay = {
+      ...paymentBase,
+      NODE_ENV: 'production',
+      DEPLOYMENT_CLASS: 'production',
+      COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+      PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+      VNPAY_ENVIRONMENT: 'production',
+      VNPAY_TMN_CODE: 'TESTTMNC',
+      VNPAY_HASH_SECRET: 'production-secret',
+      VNPAY_PAYMENT_URL: 'https://merchant.example/vnpay/payment',
+      VNPAY_API_URL: 'https://merchant.example/vnpay/transaction',
+      VNPAY_RETURN_URL: 'https://app.example/payments/return',
+      VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+    };
+
+    expect(validateEnv(productionVnpay)).toMatchObject({
+      DEPLOYMENT_CLASS: 'production',
+      PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+      VNPAY_ENVIRONMENT: 'production',
+    });
+  });
+
+  it('does not allow the production VNPay environment on a UAT deployment class', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        NODE_ENV: 'production',
+        DEPLOYMENT_CLASS: 'uat',
+        COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+        PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+        VNPAY_ENVIRONMENT: 'production',
+        VNPAY_TMN_CODE: 'TESTTMNC',
+        VNPAY_HASH_SECRET: 'production-secret',
+        VNPAY_PAYMENT_URL: 'https://merchant.example/vnpay/payment',
+        VNPAY_API_URL: 'https://merchant.example/vnpay/transaction',
+        VNPAY_RETURN_URL: 'https://app.example/payments/return',
+        VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+      }),
+    ).toThrow('VNPAY_ENVIRONMENT=production requires DEPLOYMENT_CLASS=production');
+  });
+
+  it('rejects an unsupported deployment class', () => {
+    expect(() =>
+      validateEnv({
+        ...paymentBase,
+        DEPLOYMENT_CLASS: 'random',
+      }),
+    ).toThrow('DEPLOYMENT_CLASS must be uat or production');
+  });
+
+  it('preserves production PayOS configuration in an explicitly classified UAT runtime', () => {
+    expect(
+      validateEnv({
+        ...paymentBase,
+        NODE_ENV: 'production',
+        DEPLOYMENT_CLASS: 'uat',
+        COMMERCE_IDEMPOTENCY_SECRET: 's'.repeat(32),
+        PAYOS_ENVIRONMENT: 'production',
+        PAYOS_CLIENT_ID: 'client',
+        PAYOS_API_KEY: 'api-key',
+        PAYOS_CHECKSUM_KEY: 'checksum-key',
+        PAYOS_RETURN_URL: 'https://app.example/payments/return',
+        PAYOS_CANCEL_URL: 'https://app.example/payments/cancel',
+        PAYOS_WEBHOOK_URL: 'https://api.example/api/v1/payments/webhooks/payos',
+        PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+        VNPAY_ENVIRONMENT: 'sandbox',
+        VNPAY_TMN_CODE: 'TESTTMNC',
+        VNPAY_HASH_SECRET: 'sandbox-secret',
+        VNPAY_PAYMENT_URL: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+        VNPAY_API_URL: 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction',
+        VNPAY_RETURN_URL: 'https://app.example/payments/return',
+        VNPAY_IPN_URL: 'https://api.example/payments/ipn',
+      }),
+    ).toMatchObject({
+      DEPLOYMENT_CLASS: 'uat',
+      PAYOS_ENVIRONMENT: 'production',
+      PAYMENT_DEFAULT_PROVIDER: 'vnpay',
+      VNPAY_ENVIRONMENT: 'sandbox',
+    });
   });
 
   it('requires complete production-only PayOS configuration when activated', () => {

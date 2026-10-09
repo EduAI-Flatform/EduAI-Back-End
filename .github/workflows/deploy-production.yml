@@ -259,6 +259,9 @@ jobs:
             }
           '
 
+          deployment_stage="vnpay-sandbox-uat-classification"
+          node scripts/configure-vnpay-sandbox-uat.cjs
+
           echo "Installing dependencies..."
           deployment_stage="dependency-installation"
           npm ci

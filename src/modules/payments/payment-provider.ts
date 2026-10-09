@@ -46,6 +46,8 @@ export interface CreatePaymentRequestInput {
   description: string;
   returnUrls: { success: string; cancel: string };
   clientIpAddress?: string;
+  // Persisted merchant timestamp shared by hosted PAY and later provider queries.
+  transactionCreatedAt?: Date;
   expiresAt?: Date;
 }
 

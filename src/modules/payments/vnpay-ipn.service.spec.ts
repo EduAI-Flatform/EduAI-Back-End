@@ -10,6 +10,7 @@ import {
 } from './vnpay-ipn.service';
 import { PaymentWebhookService } from './payment-webhook.service';
 import { AppConfigService } from '../../config/app-config.service';
+import { AppLoggerService } from '../../common/logging/app-logger.service';
 
 const SECRET = 'test-vnpay-hmac-secret';
 const TMN_CODE = 'TESTTMNC';
@@ -37,6 +38,7 @@ function signedParams(overrides: Record<string, string> = {}) {
 }
 
 function serviceHarness() {
+  const logs: string[] = [];
   const webhook = {
     processVerified: jest.fn().mockResolvedValue({
       accepted: true,
@@ -56,12 +58,35 @@ function serviceHarness() {
     service: new VnPayIpnService(
       config as unknown as AppConfigService,
       webhook as unknown as PaymentWebhookService,
+      new AppLoggerService((entry) => logs.push(entry)),
     ),
     webhook,
+    logs,
   };
 }
 
 describe('VnPayIpnService', () => {
+  it('records only allowlisted verified IPN facts and acknowledgment', async () => {
+    const { service, logs } = serviceHarness();
+    await service.handle(signedParams());
+    expect(logs).toHaveLength(1);
+    expect(JSON.parse(logs[0])).toMatchObject({
+      message: 'vnpay_ipn_verified', signatureValid: true, merchantVerified: true,
+      txnRef: '1001', transactionNo: '12996460', amountMinor: '100000',
+      currency: 'VND', responseCode: '00', transactionStatus: '00', acknowledgmentCode: '00',
+    });
+    expect(logs[0]).not.toContain(SECRET);
+    expect(logs[0]).not.toContain(TMN_CODE);
+    expect(logs[0]).not.toContain(signedParams().vnp_SecureHash);
+    expect(logs[0]).not.toContain(BASE_PARAMS.vnp_OrderInfo);
+  });
+
+  it('never records a verified IPN for tampered or wrong merchant input', async () => {
+    const { service, logs } = serviceHarness();
+    await service.handle({ ...signedParams(), vnp_Amount: '20000000' });
+    await service.handle(signedParams({ vnp_TmnCode: 'OTHER123' }));
+    expect(logs).toHaveLength(0);
+  });
   it('normalizes a valid signed VND payment and settles through the canonical service', async () => {
     const { service, webhook } = serviceHarness();
     const query = signedParams();

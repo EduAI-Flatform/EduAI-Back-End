@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import {
   AuditActorKind,
   CommerceActorKind, CommerceIdempotencyStatus, CommerceLifecycleEntityType,
@@ -12,8 +12,19 @@ import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentLifecycleResponseDto } from './dto/payment-lifecycle.dto';
 import { RunPaymentExpiryDto } from './dto/payment-lifecycle.dto';
-import { PAYMENT_PROVIDER, PaymentProvider, PaymentProviderError, PaymentRequestStatus } from './payment-provider';
-import { PaymentReconciliationService } from './payment-reconciliation.service';
+import {
+  PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
+  PaymentProvider,
+  PaymentProviderError,
+  PaymentRequestStatus,
+  isPaymentProviderName,
+} from './payment-provider';
+import {
+  PaymentReconciliationService,
+  VnPayLifecycleAttempt,
+} from './payment-reconciliation.service';
+import { PaymentProviderRegistry } from './payment-provider.registry';
 import { PaymentWebhookService } from './payment-webhook.service';
 import { toVerifiedPaymentWebhook } from './payment-verified-webhook';
 
@@ -40,6 +51,9 @@ export class PaymentLifecycleService {
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     private readonly reconciliation: PaymentReconciliationService,
     private readonly webhook: PaymentWebhookService,
+    @Optional()
+    @Inject(PAYMENT_PROVIDER_REGISTRY)
+    private readonly providerRegistry?: PaymentProviderRegistry,
   ) {}
 
   async cancel(learnerId: string, orderId: string, key: string | undefined): Promise<PaymentLifecycleResponseDto> {
@@ -50,9 +64,50 @@ export class PaymentLifecycleService {
     if (!prepared.attempt) return this.project(prepared.order);
     if (!prepared.shouldCallProvider) return this.project(prepared.order);
 
+    if (prepared.attempt.provider === 'vnpay') {
+      const recovery = await this.reconciliation.recoverVnPayAttemptForLifecycle(
+        this.lifecycleAttempt(prepared.attempt),
+      );
+      if (recovery.outcome === 'paid') {
+        const settled = await this.prisma.commerceOrder.findFirst({
+          where: { id: orderId, buyerId: learnerId },
+          include,
+        });
+        if (!settled) throw new NotFoundException('Payment request was not found.');
+        return this.project(settled);
+      }
+      if (!['pending', 'not_found', 'failed', 'expired'].includes(recovery.outcome)) {
+        throw recovery.outcome === 'provider_error'
+          ? new ServiceUnavailableException({
+              error: 'PAYMENT_PROVIDER_UNAVAILABLE',
+              message: 'Payment cancellation could not be verified.',
+            })
+          : new ConflictException({
+              error: 'PAYMENT_RECONCILIATION_REQUIRED',
+              message: 'Payment cancellation requires administrator review.',
+            });
+      }
+      const localStatus = recovery.outcome === 'failed'
+        ? 'FAILED'
+        : recovery.outcome === 'expired'
+          ? 'EXPIRED'
+          : 'CANCELLED';
+      return this.project(await this.serializable((tx) => this.finish(
+        tx,
+        learnerId,
+        prepared.attempt.id,
+        { status: localStatus },
+        false,
+      )));
+    }
+
     let status: PaymentRequestStatus;
     try {
-      status = await this.provider.cancelPaymentRequest(prepared.attempt.providerPaymentIdentity as string, 'cancelled by learner');
+      const provider = this.resolveProvider(prepared.attempt.provider);
+      status = await provider.cancelPaymentRequest(
+        prepared.attempt.providerPaymentIdentity as string,
+        'cancelled by learner',
+      );
     } catch (error) {
       const code = error instanceof PaymentProviderError && error.code === 'disabled'
         ? 'PAYMENT_PROVIDER_DISABLED' : 'PAYMENT_PROVIDER_UNAVAILABLE';
@@ -102,7 +157,7 @@ export class PaymentLifecycleService {
         message: 'Payment cancellation requires administrator review.',
       });
     }
-    return this.project(await this.serializable((tx) => this.finish(tx, learnerId, prepared.attempt.id, status)));
+    return this.project(await this.serializable((tx) => this.finish(tx, learnerId, prepared.attempt.id, status, true)));
   }
 
   async runExpiry(actorId: string | null, input: RunPaymentExpiryDto) {
@@ -112,13 +167,16 @@ export class PaymentLifecycleService {
         id: input.cursor ? { gt: input.cursor } : undefined,
         status: CommercePaymentStatus.pending,
         providerExpiresAt: { lte: new Date() },
-        providerPaymentIdentity: { not: null },
+        OR: [
+          { provider: 'vnpay', providerOrderCode: { not: null } },
+          { provider: { not: 'vnpay' }, providerPaymentIdentity: { not: null } },
+        ],
         order: { status: CommerceOrderStatus.pending_payment },
       },
       select: {
-        id: true, orderId: true, providerPaymentIdentity: true,
+        id: true, orderId: true, provider: true, providerPaymentIdentity: true,
         providerReceivingAccountHash: true, providerOrderCode: true,
-        amountMinor: true, currency: true, status: true,
+        providerExpiresAt: true, createdAt: true, amountMinor: true, currency: true, status: true,
       },
       orderBy: { id: 'asc' },
       take: input.limit + 1,
@@ -129,7 +187,41 @@ export class PaymentLifecycleService {
     let reviewRequiredCount = 0;
     for (const attempt of page) {
       try {
-        const status = await this.provider.cancelPaymentRequest(
+        if (!isPaymentProviderName(attempt.provider)) {
+          await this.reconciliation.flagAttempt(
+            attempt,
+            CommerceReconciliationKind.unknown_provider_status,
+            'PROVIDER_UNSUPPORTED',
+          );
+          reviewRequiredCount += 1;
+          continue;
+        }
+
+        if (attempt.provider === 'vnpay') {
+          const recovery = await this.reconciliation.recoverVnPayAttemptForLifecycle(
+            this.lifecycleAttempt(attempt),
+          );
+          if (recovery.outcome === 'paid') {
+            settledCount += 1;
+            continue;
+          }
+          if (!['pending', 'not_found', 'failed', 'expired'].includes(recovery.outcome)) {
+            reviewRequiredCount += 1;
+            continue;
+          }
+          await this.serializable((tx) => this.finishExpiry(
+            tx,
+            actor,
+            attempt.id,
+            { status: recovery.outcome === 'failed' ? 'FAILED' : 'EXPIRED' },
+            false,
+          ));
+          expiredCount += 1;
+          continue;
+        }
+
+        const provider = this.resolveProvider(attempt.provider);
+        const status = await provider.cancelPaymentRequest(
           attempt.providerPaymentIdentity as string,
           'payment window expired',
         );
@@ -159,7 +251,7 @@ export class PaymentLifecycleService {
           reviewRequiredCount += 1;
           continue;
         }
-        await this.serializable((tx) => this.finishExpiry(tx, actor, attempt.id, status));
+        await this.serializable((tx) => this.finishExpiry(tx, actor, attempt.id, status, true));
         expiredCount += 1;
       } catch (error) {
         await this.reconciliation.flagAttempt(
@@ -230,7 +322,13 @@ export class PaymentLifecycleService {
     return { order, attempt, shouldCallProvider: Boolean(attempt) };
   }
 
-  private async finish(tx: Prisma.TransactionClient, learnerId: string, attemptId: string, status: PaymentRequestStatus): Promise<Order> {
+  private async finish(
+    tx: Prisma.TransactionClient,
+    learnerId: string,
+    attemptId: string,
+    status: Pick<PaymentRequestStatus, 'status'>,
+    providerCancellationRequested: boolean,
+  ): Promise<Order> {
     await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${attemptId}::uuid FOR UPDATE`);
     const attempt = await tx.commercePaymentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     const order = await tx.commerceOrder.findFirst({ where: { id: attempt.orderId, buyerId: learnerId }, include });
@@ -245,13 +343,16 @@ export class PaymentLifecycleService {
       : status.status === 'EXPIRED' ? CommercePaymentStatus.expired : CommercePaymentStatus.cancelled;
     await tx.commercePaymentAttempt.update({ where: { id: attempt.id }, data: {
       status: nextPayment, statusOperationId: operationId, providerStatusCheckedAt: now,
-      providerCancellationRequestedAt: now, closedAt: now,
+      ...(providerCancellationRequested ? { providerCancellationRequestedAt: now } : {}),
+      closedAt: now,
     } });
     await tx.commerceLifecycleEvent.create({ data: {
       entityType: CommerceLifecycleEntityType.payment, entityId: attempt.id,
       previousStatus: CommercePaymentStatus.pending, nextStatus: nextPayment,
       actorKind: CommerceActorKind.user, actorId: learnerId, operationId,
-      reasonCode: 'LEARNER_CANCELLATION_PROVIDER_CONFIRMED',
+      reasonCode: providerCancellationRequested
+        ? 'LEARNER_CANCELLATION_PROVIDER_CONFIRMED'
+        : 'LEARNER_CANCELLATION_PROVIDER_CHECKED',
     } });
     return this.closeOrder(tx, order, this.userActor(learnerId),
       status.status === 'EXPIRED' ? CommerceOrderStatus.expired : CommerceOrderStatus.cancelled,
@@ -262,12 +363,16 @@ export class PaymentLifecycleService {
     tx: Prisma.TransactionClient,
     actor: LifecycleActor,
     attemptId: string,
-    status: PaymentRequestStatus,
+    status: Pick<PaymentRequestStatus, 'status'>,
+    providerCancellationRequested: boolean,
   ): Promise<Order> {
     await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_payment_attempts WHERE id = ${attemptId}::uuid FOR UPDATE`);
     const attempt = await tx.commercePaymentAttempt.findUniqueOrThrow({ where: { id: attemptId } });
     const order = await tx.commerceOrder.findUniqueOrThrow({ where: { id: attempt.orderId }, include });
     if (order.status === CommerceOrderStatus.expired) return order;
+    if (attempt.providerExpiresAt && attempt.providerExpiresAt > new Date()) {
+      throw new ConflictException({ error: 'PAYMENT_STATE_CHANGED_DURING_EXPIRY' });
+    }
     if (attempt.status !== CommercePaymentStatus.pending || order.status !== CommerceOrderStatus.pending_payment) {
       throw new ConflictException({ error: 'PAYMENT_RECONCILIATION_REQUIRED', message: 'Payment state changed during expiry.' });
     }
@@ -277,13 +382,16 @@ export class PaymentLifecycleService {
       : status.status === 'EXPIRED' ? CommercePaymentStatus.expired : CommercePaymentStatus.cancelled;
     await tx.commercePaymentAttempt.update({ where: { id: attempt.id }, data: {
       status: nextPayment, statusOperationId: operationId, providerStatusCheckedAt: now,
-      providerCancellationRequestedAt: now, closedAt: now,
+      ...(providerCancellationRequested ? { providerCancellationRequestedAt: now } : {}),
+      closedAt: now,
     } });
     await tx.commerceLifecycleEvent.create({ data: {
       entityType: CommerceLifecycleEntityType.payment, entityId: attempt.id,
       previousStatus: CommercePaymentStatus.pending, nextStatus: nextPayment,
       actorKind: actor.kind, actorId: actor.id, operationId,
-      reasonCode: 'PAYMENT_WINDOW_EXPIRED_PROVIDER_CONFIRMED',
+      reasonCode: providerCancellationRequested
+        ? 'PAYMENT_WINDOW_EXPIRED_PROVIDER_CONFIRMED'
+        : 'PAYMENT_WINDOW_EXPIRED_AFTER_PROVIDER_CHECK',
     } });
     return this.closeOrder(tx, order, actor, CommerceOrderStatus.expired, attempt.id);
   }
@@ -329,6 +437,41 @@ export class PaymentLifecycleService {
       metadata: { operationId, previousStatus: 'PENDING_PAYMENT', nextStatus: nextStatus.toUpperCase(), paymentAttemptId: attemptId },
     }, tx);
     return tx.commerceOrder.findUniqueOrThrow({ where: { id: order.id }, include });
+  }
+
+  private lifecycleAttempt(attempt: {
+    id: string;
+    orderId: string;
+    provider: string;
+    providerPaymentIdentity: string | null;
+    providerOrderCode: bigint | null;
+    amountMinor: bigint;
+    currency: string;
+    status: CommercePaymentStatus;
+    createdAt: Date;
+  }): VnPayLifecycleAttempt {
+    return {
+      id: attempt.id,
+      orderId: attempt.orderId,
+      provider: attempt.provider,
+      providerPaymentIdentity: attempt.providerPaymentIdentity,
+      providerOrderCode: attempt.providerOrderCode,
+      amountMinor: attempt.amountMinor,
+      currency: attempt.currency,
+      status: attempt.status,
+      createdAt: attempt.createdAt,
+    };
+  }
+
+  private resolveProvider(providerName: string): PaymentProvider {
+    if (!isPaymentProviderName(providerName)) {
+      throw new PaymentProviderError('unsupported', false);
+    }
+    if (this.providerRegistry) {
+      return this.providerRegistry.requireEnabled(providerName);
+    }
+    if (providerName === 'payos') return this.provider;
+    throw new PaymentProviderError('disabled', false);
   }
 
   private userActor(actorId: string): LifecycleActor {
