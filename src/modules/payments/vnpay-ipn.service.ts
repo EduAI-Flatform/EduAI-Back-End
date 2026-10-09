@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
+import { AppLoggerService } from '../../common/logging/app-logger.service';
 import {
   PaymentWebhookProcessingResult,
   PaymentWebhookService,
@@ -70,6 +71,7 @@ export class VnPayIpnService {
   constructor(
     private readonly config: AppConfigService,
     private readonly webhook: PaymentWebhookService,
+    @Optional() private readonly logger?: AppLoggerService,
   ) {}
 
   async handle(query: unknown): Promise<VnPayIpnResponse> {
@@ -115,7 +117,20 @@ export class VnPayIpnService {
         return response('00');
       }
 
-      return this.mapProcessingResult(await this.webhook.processVerified(verified));
+      const acknowledgment = this.mapProcessingResult(await this.webhook.processVerified(verified));
+      // Only authenticated, normalized facts; never the merchant code or signed query.
+      this.logger?.log('vnpay_ipn_verified', 'VnPayIpnService', {
+        signatureValid: true,
+        merchantVerified: true,
+        txnRef: verified.providerOrderReference,
+        transactionNo: verified.providerSettlementReference,
+        amountMinor: verified.amountMinor.toString(),
+        currency: verified.currency,
+        responseCode: verified.responseCode,
+        transactionStatus: verified.transactionStatus,
+        acknowledgmentCode: acknowledgment.RspCode,
+      });
+      return acknowledgment;
     } catch (error) {
       if (error instanceof VnPayIpnValidationError) {
         if (error.code === 'amount' || error.code === 'currency') {
