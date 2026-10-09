@@ -1,0 +1,72 @@
+name: Bounded VNPay Sandbox Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      order_id:
+        description: Exact sandbox UAT order UUID
+        required: true
+        type: string
+      mode:
+        description: Inspect or reconcile one already paid and fulfilled order
+        required: true
+        type: choice
+        options: [inspect, reconcile]
+        default: inspect
+      expected_sha:
+        description: Exact deployed backend commit (40 lowercase hex characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eduai-backend-production
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Inspect bounded sandbox evidence over established SSH
+        env:
+          ORDER_ID: ${{ inputs.order_id }}
+          MODE: ${{ inputs.mode }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$ORDER_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
+          [[ "$MODE" == inspect || "$MODE" == reconcile ]]
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_SHA" == "$WORKFLOW_SHA" ]]
+          test -n "$VPS_SSH_KEY"
+          test -n "$VPS_KNOWN_HOSTS"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/eduai_deploy
+          chmod 600 ~/.ssh/eduai_deploy
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          trap 'rm -f ~/.ssh/eduai_deploy ~/.ssh/known_hosts' EXIT
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -i ~/.ssh/eduai_deploy -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "ORDER_ID='$ORDER_ID' MODE='$MODE' EXPECTED_SHA='$EXPECTED_SHA' bash -s" << 'EOF'
+          set -Eeuo pipefail
+          exec 9>/tmp/eduai-backend-deploy.lock
+          flock -w 30 9
+          cd /var/www/eduai/backend
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --quiet -- scripts/vnpay-sandbox-evidence.cjs
+          test -f dist/src/modules/payments/payment-reconciliation.service.js
+          timeout --signal=TERM --kill-after=10s 90s \
+            node scripts/vnpay-sandbox-evidence.cjs "$ORDER_ID" "$MODE" "$EXPECTED_SHA"
+          EOF
