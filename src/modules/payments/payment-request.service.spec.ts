@@ -475,6 +475,18 @@ describe('PaymentRequestService', () => {
     });
   });
 
+  it.each(['payos', 'vnpay'])('uses the canonical %s provider in the pending page', async (provider) => {
+    const { service, prisma } = harness();
+    prisma.commerceOrder.count.mockResolvedValueOnce(1);
+    prisma.commerceOrder.findMany.mockResolvedValueOnce([
+      order({ paymentAttempts: [attempt({ provider, status: 'pending' })] }),
+    ] as never);
+    await expect(service.pending('student-id')).resolves.toMatchObject({
+      items: [{ payment: { id: attemptId, provider, status: 'PENDING' } }],
+      total: 1,
+    });
+  });
+
   it('fails closed instead of returning an unsupported stored provider', async () => {
     const unsupportedAttempt = attempt({
       provider: 'stripe',
