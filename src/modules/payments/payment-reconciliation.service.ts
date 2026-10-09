@@ -594,6 +594,25 @@ export class PaymentReconciliationService {
       throw new PaymentProviderError('invalid_request', false);
     }
 
+    const knownSettlements = await this.prisma.commerceSettlement.findMany({
+      where: {
+        orderId: attempt.orderId,
+        paymentAttemptId: attempt.id,
+        provider: 'vnpay',
+        kind: CommerceSettlementKind.provider_collection,
+      },
+      select: { providerSettlementReference: true },
+      take: 2,
+    });
+    const knownTransactionNo = knownSettlements[0]?.providerSettlementReference;
+    if (
+      knownSettlements.length > 1 ||
+      (knownSettlements.length === 1 &&
+        (typeof knownTransactionNo !== 'string' || !/^[1-9]\d{0,14}$/.test(knownTransactionNo)))
+    ) {
+      throw new VnPayQueryDrError('provider_fact_mismatch', false);
+    }
+
     const queryAttempt: VnPayQueryDrAttempt = {
       provider: 'vnpay',
       providerOrderCode: attempt.providerOrderCode,
@@ -601,13 +620,22 @@ export class PaymentReconciliationService {
       currency: 'VND',
       transactionCreatedAt: attempt.createdAt,
       requestIpAddress: VNPAY_QUERYDR_REQUEST_IP,
+      ...(knownTransactionNo ? { knownTransactionNo } : {}),
     };
-    return this.withReconciliationDeadline(
+    const observation = await this.withReconciliationDeadline(
       (signal, timeoutMs) =>
         provider.queryTransaction(queryAttempt, { signal, timeoutMs }),
       deadline,
       this.providerTimeoutMs('vnpay'),
     );
+    if (
+      knownTransactionNo &&
+      observation.queryRequestStatus === 'success' &&
+      observation.providerTransactionIdentity !== knownTransactionNo
+    ) {
+      throw new VnPayQueryDrError('provider_fact_mismatch', false);
+    }
+    return observation;
   }
 
   private async processVnPayObservation(

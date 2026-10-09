@@ -74,6 +74,7 @@ function harness(options: {
     commerceLifecycleEvent: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
+    commerceSettlement: { findMany: jest.fn().mockResolvedValue([]) },
     commercePaymentAttempt: {
       findMany: jest.fn().mockResolvedValue([attempt]),
       update: jest.fn().mockResolvedValue({}),
@@ -137,6 +138,78 @@ function harness(options: {
 }
 
 describe('PaymentReconciliationService', () => {
+  it.each(['777001', '777002'])(
+    'binds QueryDR to the recorded VNPay transaction when provider returns %s',
+    async (transactionNo) => {
+      const vnpayProvider = {
+        queryTransaction: jest.fn().mockResolvedValue({
+          provider: 'vnpay', queryRequestStatus: 'success', transactionStatus: 'paid',
+          providerOrderReference: '9001', providerTransactionIdentity: transactionNo,
+          amountMinor: 125000n, currency: 'VND', paidAt: now,
+          responseCode: '00', transactionStatusCode: '00', trusted: true,
+        }),
+      };
+      const registry = { requireEnabled: jest.fn().mockReturnValue(vnpayProvider) };
+      const { service, prisma, tx, webhook } = harness({ registry });
+      const vnpayAttempt = { ...attempt, provider: 'vnpay', providerPaymentIdentity: '9001' };
+      prisma.commercePaymentAttempt.findMany.mockResolvedValue([vnpayAttempt]);
+      tx.commercePaymentAttempt.findUniqueOrThrow.mockResolvedValue(vnpayAttempt);
+      prisma.commerceSettlement.findMany.mockResolvedValue([
+        { providerSettlementReference: '777001' },
+      ]);
+
+      const result = await service.run('admin-id', { limit: 20 });
+
+      expect(vnpayProvider.queryTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ knownTransactionNo: '777001' }), expect.anything(),
+      );
+      expect(prisma.commerceSettlement.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          orderId: attempt.orderId, paymentAttemptId: attempt.id,
+          provider: 'vnpay', kind: 'provider_collection',
+        }),
+        take: 2,
+      }));
+      if (transactionNo === '777001') {
+        expect(result.recoveredCount).toBe(1);
+        expect(webhook.ingestVerified).toHaveBeenCalledTimes(1);
+      } else {
+        expect(result.reviewRequiredCount).toBe(1);
+        expect(result.recoveredCount).toBe(0);
+        expect(webhook.ingestVerified).not.toHaveBeenCalled();
+        expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
+        expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(expect.objectContaining({
+          create: expect.objectContaining({
+            kind: 'provider_fact_mismatch', reasonCode: 'PROVIDER_FACT_MISMATCH',
+          }),
+        }));
+      }
+    },
+  );
+
+  it.each([
+    { settlements: [{ providerSettlementReference: null }] },
+    { settlements: [{ providerSettlementReference: 'invalid' }] },
+    { settlements: [{ providerSettlementReference: '777001' }, { providerSettlementReference: '777002' }] },
+  ])('fails closed before QueryDR for ambiguous or invalid recorded transactions $settlements', async ({ settlements }) => {
+    const vnpayProvider = { queryTransaction: jest.fn() };
+    const registry = { requireEnabled: jest.fn().mockReturnValue(vnpayProvider) };
+    const { service, prisma, webhook, tx } = harness({ registry });
+    prisma.commerceSettlement.findMany.mockResolvedValue(settlements);
+
+    await expect(service.recoverVnPayAttemptForLifecycle({
+      ...attempt, provider: 'vnpay', providerPaymentIdentity: '9001',
+    } as never)).resolves.toEqual({ outcome: 'invalid_provider_response' });
+    expect(vnpayProvider.queryTransaction).not.toHaveBeenCalled();
+    expect(webhook.ingestVerified).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.update).not.toHaveBeenCalled();
+    expect(prisma.commerceReconciliationCase.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        kind: 'provider_fact_mismatch', reasonCode: 'PROVIDER_FACT_MISMATCH',
+      }),
+    }));
+  });
+
   it('exposes one provider-aware VNPay lifecycle check without settling pending state', async () => {
     const vnpayProvider = {
       queryTransaction: jest.fn().mockResolvedValue({
@@ -162,6 +235,7 @@ describe('PaymentReconciliationService', () => {
       observation: expect.objectContaining({ transactionStatus: 'pending' }),
     });
     expect(registry.requireEnabled).toHaveBeenCalledWith('vnpay');
+    expect(vnpayProvider.queryTransaction.mock.calls[0][0]).not.toHaveProperty('knownTransactionNo');
     expect(webhook.ingestVerified).not.toHaveBeenCalled();
     expect(tx.commercePaymentAttempt.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ providerPaymentIdentity: '9001' }),
