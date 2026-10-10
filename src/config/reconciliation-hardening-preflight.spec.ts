@@ -7,6 +7,7 @@ const {
   assertReconciliationAppliedState,
   assertReconciliationFinancialBaseline,
   RECONCILIATION_FINANCIAL_ROW_COUNTS,
+  FINANCIAL_DIGEST_KEYS,
   createSafeMigrationPreflightDiagnostic,
   extractSafeMigrationErrorCodes,
   runSafePreflightStage,
@@ -50,6 +51,7 @@ const {
     digests: Record<string, { rowCount: string | number; digest: string }>,
   ) => Record<string, { rowCount: string | number; digest: string }>;
   RECONCILIATION_FINANCIAL_ROW_COUNTS: Record<string, number>;
+  FINANCIAL_DIGEST_KEYS: string[];
   createSafeMigrationPreflightDiagnostic: (error: unknown) => {
     failureClass: string;
     preflightStage?: string;
@@ -312,11 +314,9 @@ describe('SPR25-007 production migration preflight', () => {
       orphanMarkerCount: 0,
       unexpectedMarkerCount: 0,
     };
-    const financialDigest = Object.fromEntries(
-      Object.entries(RECONCILIATION_FINANCIAL_ROW_COUNTS).map(
-        ([key, rowCount]) => [key, { rowCount, digest: 'a'.repeat(32) }],
-      ),
-    );
+    const financialDigest = Object.fromEntries(FINANCIAL_DIGEST_KEYS.map(
+      (key) => [key, { rowCount: RECONCILIATION_FINANCIAL_ROW_COUNTS[key] ?? 1, digest: 'a'.repeat(32) }],
+    ));
 
     expect(assertReconciliationAppliedState({
       schema,
@@ -324,6 +324,52 @@ describe('SPR25-007 production migration preflight', () => {
       markerSnapshot,
       financialDigest,
     })).toMatchObject({ caseSnapshot, markerSnapshot });
+
+    const grown = {
+      schema,
+      caseSnapshot: {
+        ...caseSnapshot, totalCaseCount: 9, sourceKeyNonNullCount: 9,
+        openCaseCount: 5, openProviderOutageCount: 3, openPaidNotFulfilledCount: 1,
+        nonCanonicalExistingSourceKeyCount: 2, historicalCaseCount: 2,
+        historicalFinancialFactMatchCount: 0,
+      },
+      markerSnapshot,
+      financialDigest: {
+        ...financialDigest,
+        commerce_orders: { rowCount: 8, digest: 'b'.repeat(32) },
+        commerce_payment_attempts: { rowCount: 6, digest: 'c'.repeat(32) },
+      },
+    };
+    expect(assertReconciliationAppliedState(grown)).toMatchObject({ caseSnapshot: grown.caseSnapshot });
+    for (const key of ['nullSourceKeyCount', 'oversizedSourceKeyCount', 'unprovenLegacyCaseCount',
+      'candidateSourceKeyCount', 'missingAttemptCount', 'missingSettlementCount', 'duplicateGroupCount',
+      'duplicateExtraRowCount', 'existingCollisionCount', 'oversizedDerivedKeyCount', 'invalidDerivedKeyCount']) {
+      expect(() => assertReconciliationAppliedState({
+        ...grown, caseSnapshot: { ...grown.caseSnapshot, [key]: 1 },
+      })).toThrow();
+    }
+    expect(() => assertReconciliationAppliedState({
+      ...grown, caseSnapshot: { ...grown.caseSnapshot, sourceKeyNonNullCount: 8 },
+    })).toThrow();
+    expect(() => assertReconciliationAppliedState({
+      ...grown, markerSnapshot: { ...markerSnapshot, mismatchedLegacyMarkerCount: 1 },
+    })).toThrow();
+    expect(() => assertReconciliationAppliedState({
+      ...grown, financialDigest: { ...grown.financialDigest, commerce_orders: { rowCount: 8, digest: 'invalid' } },
+    })).toThrow();
+    expect(() => assertReconciliationAppliedState({
+      ...grown, caseSnapshot: { ...grown.caseSnapshot, openCaseCount: -1 },
+    })).toThrow();
+    const incompleteDigest: Record<string, { rowCount: number; digest: string }> = { ...grown.financialDigest };
+    delete incompleteDigest.audit_logs;
+    expect(() => assertReconciliationAppliedState({
+      ...grown, financialDigest: incompleteDigest,
+    })).toThrow();
+    for (const [key, value] of Object.entries(schema)) {
+      expect(() => assertReconciliationAppliedState({
+        ...grown, schema: { ...schema, [key]: !value },
+      })).toThrow();
+    }
 
     expect(() => assertReconciliationAppliedState({
       schema: { ...schema, hardenedResolutionGuard: false },

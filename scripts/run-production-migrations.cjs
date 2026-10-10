@@ -1563,10 +1563,28 @@ function assertReconciliationAppliedState({
     historicalFulfillmentAbsentMatchCount: 1,
     historicalAuditTransitionMatchCount: 1,
   };
-  for (const [key, expected] of Object.entries(expectedCounts)) {
-    if (numericCount(caseSnapshot?.[key], key) !== expected) {
+  // Applied ledgers have already completed the reviewed one-time backfill.
+  // Runtime orders and reconciliation cases may grow or resolve afterwards.
+  for (const key of Object.keys(expectedCounts)) {
+    numericCount(caseSnapshot?.[key], key);
+  }
+  for (const key of [
+    'nullSourceKeyCount', 'oversizedSourceKeyCount', 'unprovenLegacyCaseCount',
+    'candidateSourceKeyCount', 'missingAttemptCount', 'missingSettlementCount',
+    'duplicateGroupCount', 'duplicateExtraRowCount', 'existingCollisionCount',
+    'oversizedDerivedKeyCount', 'invalidDerivedKeyCount',
+  ]) {
+    if (numericCount(caseSnapshot?.[key], key) !== 0) {
       throw safeDatabaseFailure('MIGRATION_PREFLIGHT_STATE_DRIFT');
     }
+  }
+  if (
+    numericCount(caseSnapshot.sourceKeyNonNullCount, 'sourceKeyNonNullCount') !==
+      numericCount(caseSnapshot.totalCaseCount, 'totalCaseCount') ||
+    numericCount(caseSnapshot.acknowledgedFinancialCaseCount, 'acknowledgedFinancialCaseCount') !==
+      numericCount(markerSnapshot?.acknowledgedFinancialCaseCount, 'acknowledgedFinancialCaseCount')
+  ) {
+    throw safeDatabaseFailure('MIGRATION_PREFLIGHT_STATE_DRIFT');
   }
 
   const expectedMarkerCounts = {
@@ -1584,7 +1602,7 @@ function assertReconciliationAppliedState({
     }
   }
 
-  assertReconciliationFinancialBaseline(financialDigest);
+  parseDigestSnapshot({ rowCount: 1, rows: [{ digests: financialDigest }] });
   return { schema, caseSnapshot, markerSnapshot, financialDigest };
 }
 

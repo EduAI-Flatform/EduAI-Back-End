@@ -8,10 +8,10 @@ on:
         required: true
         type: string
       mode:
-        description: Inspect or reconcile one already paid and fulfilled order
+        description: Inspect/reconcile one order or read migration guard metadata
         required: true
         type: choice
-        options: [inspect, reconcile]
+        options: [inspect, reconcile, migration]
         default: inspect
       expected_sha:
         description: Exact deployed backend commit (40 lowercase hex characters)
@@ -45,9 +45,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           [[ "$ORDER_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
-          [[ "$MODE" == inspect || "$MODE" == reconcile ]]
+          [[ "$MODE" == inspect || "$MODE" == reconcile || "$MODE" == migration ]]
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$EXPECTED_SHA" == "$WORKFLOW_SHA" ]]
+          if [[ "$MODE" != migration ]]; then
+            [[ "$EXPECTED_SHA" == "$WORKFLOW_SHA" ]]
+          fi
           test -n "$VPS_SSH_KEY"
           test -n "$VPS_KNOWN_HOSTS"
           mkdir -p ~/.ssh
@@ -65,6 +67,39 @@ jobs:
           flock -w 30 9
           cd /var/www/eduai/backend
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          if [ "$MODE" = migration ]; then
+            git diff --quiet -- scripts/run-production-migrations.cjs
+            timeout --signal=TERM --kill-after=10s 90s node <<'NODE'
+          const { Client } = require('pg');
+          const guards = require('./scripts/run-production-migrations.cjs');
+          const connectionString = guards.loadMigrationDatabaseUrl(process.cwd());
+          const client = new Client(guards.buildDatabaseClientConfig(connectionString, 'eduai-readonly-migration-diagnostic'));
+          (async () => {
+            try {
+              await client.connect();
+              await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+              await client.query('SET LOCAL search_path = public, pg_catalog');
+              for (const [name, query] of [
+                ['schema', guards.RECONCILIATION_SCHEMA_QUERY],
+                ['cases', guards.RECONCILIATION_CASE_STATE_QUERY],
+                ['markers', guards.RECONCILIATION_MARKER_QUERY],
+                ['financialCounts', guards.RECONCILIATION_FINANCIAL_DIGEST_QUERY],
+              ]) {
+                const result = await client.query(query);
+                if (result.rowCount !== 1) throw new Error('Incomplete diagnostic');
+                const row = result.rows[0];
+                const metadata = name === 'financialCounts'
+                  ? Object.fromEntries(Object.entries(row.digests).map(([key, value]) => [key, value.rowCount]))
+                  : row;
+                if (Object.values(metadata).some((value) => typeof value !== 'boolean' && !/^\d+$/.test(String(value)))) throw new Error('Non-metadata diagnostic');
+                console.log(JSON.stringify({ migrationDiagnostic: name, metadata }));
+              }
+              await client.query('ROLLBACK');
+            } finally { await client.end(); }
+          })().catch(() => { console.error('Read-only migration diagnostic failed'); process.exitCode = 1; });
+          NODE
+            exit
+          fi
           git diff --quiet -- scripts/vnpay-sandbox-evidence.cjs
           test -f dist/src/modules/payments/payment-reconciliation.service.js
           timeout --signal=TERM --kill-after=10s 90s \
