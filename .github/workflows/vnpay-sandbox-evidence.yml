@@ -71,6 +71,12 @@ jobs:
             git diff --quiet -- scripts/run-production-migrations.cjs
             timeout --signal=TERM --kill-after=10s 90s node <<'NODE'
           const { Client } = require('pg');
+          const runtimeEnv = require('dotenv').parse(require('node:fs').readFileSync('.env'));
+          console.log(JSON.stringify({ runtimePaymentConfiguration: {
+            defaultProvider: ['payos', 'vnpay', 'disabled'].includes(runtimeEnv.PAYMENT_DEFAULT_PROVIDER) ? runtimeEnv.PAYMENT_DEFAULT_PROVIDER : 'unknown',
+            vnpayEnvironment: ['disabled', 'sandbox', 'production'].includes(runtimeEnv.VNPAY_ENVIRONMENT) ? runtimeEnv.VNPAY_ENVIRONMENT : 'unknown',
+            payosEnvironment: ['disabled', 'production'].includes(runtimeEnv.PAYOS_ENVIRONMENT) ? runtimeEnv.PAYOS_ENVIRONMENT : 'unknown',
+          } }));
           const guards = require('./scripts/run-production-migrations.cjs');
           const connectionString = guards.loadMigrationDatabaseUrl(process.cwd());
           const client = new Client(guards.buildDatabaseClientConfig(connectionString, 'eduai-readonly-migration-diagnostic'));
