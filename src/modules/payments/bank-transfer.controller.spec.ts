@@ -4,6 +4,7 @@ import { validate } from 'class-validator';
 import { BankTransferAdminController, BankTransferController } from './bank-transfer.controller';
 import { BankApprovalDto, BankStatementDto, BankSupportDto, CreatePaymentMethodDto } from './dto/bank-transfer.dto';
 import { PaymentWebhookService } from './payment-webhook.service';
+import { ListPendingPaymentQueryDto } from './dto/payment-request-response.dto';
 
 describe('bank payment boundary contracts', () => {
   it('admin and learner surfaces retain explicit role boundaries', () => {
@@ -16,6 +17,15 @@ describe('bank payment boundary contracts', () => {
     expect(new BankTransferController(bank, registry).methods().methods).toEqual(['vnpay']);
     bank.enabled = () => true;
     expect(new BankTransferController(bank, registry).methods().methods).toEqual(['vnpay', 'bank_transfer']);
+  });
+  it('forwards validated review queue pagination and rejects out-of-bound sizes', async () => {
+    const bank: any = { list: jest.fn().mockResolvedValue({ items: [], total: 0 }) };
+    const query = plainToInstance(ListPendingPaymentQueryDto, { page: '2', pageSize: '50' });
+    expect(await validate(query)).toEqual([]);
+    await new BankTransferAdminController(bank).list('reviewer', query);
+    expect(bank.list).toHaveBeenCalledWith('reviewer', { page: 2, pageSize: 50 });
+    expect((await validate(plainToInstance(ListPendingPaymentQueryDto, { page: 0, pageSize: 101 }))).length).toBeGreaterThan(0);
+    expect((await validate(plainToInstance(ListPendingPaymentQueryDto, { page: 1.5, pageSize: 'invalid' }))).length).toBeGreaterThan(0);
   });
   it('rejects screenshot-style evidence and generic empty approval', async () => {
     expect((await validate(plainToInstance(BankStatementDto, { screenshot: 'proof.png' }))).length).toBeGreaterThan(0);
