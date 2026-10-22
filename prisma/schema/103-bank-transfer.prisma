@@ -1,0 +1,65 @@
+model CommerceBankTransferRequest {
+  id String @id @db.Uuid
+  orderId String @unique @map("order_id") @db.Uuid
+  paymentAttemptId String @unique @map("payment_attempt_id") @db.Uuid
+  bankName String @map("bank_name") @db.VarChar(80)
+  bankBin String @map("bank_bin") @db.VarChar(6)
+  accountNumber String @map("account_number") @db.VarChar(19)
+  beneficiaryName String @map("beneficiary_name") @db.VarChar(160)
+  transferContent String @unique @map("transfer_content") @db.VarChar(25)
+  amountMinor BigInt @map("amount_minor")
+  status String @default("PENDING") @db.VarChar(24)
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  order CommerceOrder @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  paymentAttempt CommercePaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  statements CommerceBankStatementEvidence[]
+  supportRequests CommerceBankSupportRequest[]
+  @@map("commerce_bank_transfer_requests")
+}
+
+model CommerceBankStatementEvidence {
+  id String @id @db.Uuid
+  requestId String @map("request_id") @db.Uuid
+  bankBin String @map("bank_bin") @db.VarChar(6)
+  accountNumber String @map("account_number") @db.VarChar(19)
+  transactionId String @map("transaction_id") @db.VarChar(100)
+  amountMinor BigInt @map("amount_minor")
+  transferContent String @map("transfer_content") @db.VarChar(160)
+  occurredAt DateTime @map("occurred_at")
+  statementReference String @map("statement_reference") @db.VarChar(160)
+  statementSha256 String @map("statement_sha256") @db.VarChar(64)
+  recordedById String @map("recorded_by_id") @db.Uuid
+  recordedAt DateTime @default(now()) @map("recorded_at")
+  exceptionReason String? @map("exception_reason") @db.VarChar(40)
+  request CommerceBankTransferRequest @relation(fields: [requestId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recordedBy User @relation("BankStatementRecorder", fields: [recordedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  approvals CommerceBankApproval[]
+  @@unique([bankBin, accountNumber, transactionId])
+  @@index([requestId])
+  @@map("commerce_bank_statement_evidence")
+}
+
+model CommerceBankApproval {
+  evidenceId String @map("evidence_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  approvedAt DateTime @default(now()) @map("approved_at")
+  evidence CommerceBankStatementEvidence @relation(fields: [evidenceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  actor User @relation("BankStatementApprover", fields: [actorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@id([evidenceId, actorId])
+  @@map("commerce_bank_approvals")
+}
+
+model CommerceBankSupportRequest {
+  id String @id @db.Uuid
+  requestId String @map("request_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  reason String @db.VarChar(300)
+  createdAt DateTime @default(now()) @map("created_at")
+  operationKeyHash String @map("operation_key_hash") @db.VarChar(64)
+  request CommerceBankTransferRequest @relation(fields: [requestId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  actor User @relation("BankSupportRequester", fields: [actorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@unique([actorId, operationKeyHash])
+  @@index([requestId])
+  @@map("commerce_bank_support_requests")
+}

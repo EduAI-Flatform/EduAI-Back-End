@@ -1,5 +1,6 @@
 import {
   Controller,
+  Body,
   Get,
   Headers,
   Param,
@@ -25,6 +26,8 @@ import {
 import { PaymentLifecycleResponseDto } from './dto/payment-lifecycle.dto';
 import { PaymentLifecycleService } from './payment-lifecycle.service';
 import { PaymentRequestService } from './payment-request.service';
+import { BankTransferService } from './bank-transfer.service';
+import { CreatePaymentMethodDto } from './dto/bank-transfer.dto';
 
 @ApiTags('Payments')
 @ApiBearerAuth()
@@ -35,15 +38,18 @@ export class PaymentRequestController {
   constructor(
     private readonly payments: PaymentRequestService,
     private readonly lifecycle: PaymentLifecycleService,
+    private readonly bank: BankTransferService,
   ) {}
 
   @Get('pending')
   @ApiOkResponse({ type: PaymentRequestPageResponseDto })
-  pending(
+  async pending(
     @CurrentUser('id') learnerId: string,
     @Query() query: ListPendingPaymentQueryDto,
   ): Promise<PaymentRequestPageResponseDto> {
-    return this.payments.pending(learnerId, query);
+    const page = await this.payments.pending(learnerId, query);
+    return { ...page, items: await Promise.all(page.items.map((item) => item.payment?.provider === 'bank_transfer'
+      ? this.bank.status(learnerId, item.orderId) : item)) };
   }
 
   @Post(':orderId/request')
@@ -53,27 +59,30 @@ export class PaymentRequestController {
     @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Req() request: Request,
+    @Body() input: CreatePaymentMethodDto = {},
   ): Promise<PaymentRequestResponseDto> {
-    return this.payments.create(learnerId, orderId, idempotencyKey, request.ip);
+    return this.payments.create(learnerId, orderId, idempotencyKey, request.ip, input.provider);
   }
 
   @Get(':orderId/request')
   @ApiOkResponse({ type: PaymentRequestResponseDto })
-  status(
+  async status(
     @CurrentUser('id') learnerId: string,
     @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
   ): Promise<PaymentRequestResponseDto> {
+    if (await this.bank.ownsBankOrder(learnerId, orderId)) return this.bank.status(learnerId, orderId);
     return this.payments.status(learnerId, orderId);
   }
 
   @Post(':orderId/cancel')
   @RateLimit({ identity: 'user', limit: 6, name: 'payment-cancel', windowSeconds: 60 })
   @ApiOkResponse({ type: PaymentLifecycleResponseDto })
-  cancel(
+  async cancel(
     @CurrentUser('id') learnerId: string,
     @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
   ): Promise<PaymentLifecycleResponseDto> {
+    if (await this.bank.ownsBankOrder(learnerId, orderId)) return this.bank.cancel(learnerId, orderId, idempotencyKey);
     return this.lifecycle.cancel(learnerId, orderId, idempotencyKey);
   }
 }

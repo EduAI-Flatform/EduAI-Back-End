@@ -435,6 +435,16 @@ describe('PaymentRequestService', () => {
     );
   });
 
+  it('preserves the zero-payable settlement even when bank transfer was explicitly selected and disabled', async () => {
+    const { fulfillment, service, provider, tx } = harness({ environment: 'disabled', payableAmountMinor: 0n });
+    await expect(service.create('student-id', orderId, 'free-bank-key-1', undefined, 'bank_transfer')).resolves.toMatchObject({
+      orderStatus: 'CONFIRMED', paymentRequired: false, payment: null,
+    });
+    expect(provider.createPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
+    expect(fulfillment.fulfillConfirmedOrder).toHaveBeenCalled();
+  });
+
   it('fails closed before mutation when a positive order has no active provider', async () => {
     const { service, prisma, provider, tx } = harness({ environment: 'disabled' });
 

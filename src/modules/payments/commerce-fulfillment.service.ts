@@ -25,8 +25,10 @@ import { CourseAccessService } from '../access/course-access.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentRecoveryError, PaymentRecoveryReasonCode } from './payment-recovery-error';
 import { isPaymentProviderName } from './payment-provider';
+import { requireBankTransferProof } from './bank-transfer-proof';
 
 const orderInclude = {
+  confirmedSettlement: { select: { id: true, provider: true } },
   lines: { orderBy: { id: 'asc' } },
   membershipCheckoutIntent: {
     include: {
@@ -178,6 +180,7 @@ export class CommerceFulfillmentService {
     if (order.status !== CommerceOrderStatus.confirmed) {
       throw new ConflictException('Only a confirmed Commerce order can be fulfilled.');
     }
+    if (order.confirmedSettlement?.provider === 'bank_transfer') await requireBankTransferProof(tx, orderId, order.confirmedSettlement.id);
 
     if (
       order.fulfillmentStatus === CommerceFulfillmentStatus.not_started ||
@@ -341,6 +344,11 @@ export class CommerceFulfillmentService {
     const paymentAttempt = settlement?.paymentAttempt;
     const paymentEvent = settlement?.paymentEvent;
     const provider = settlement?.provider;
+    if (provider === 'bank_transfer') {
+      await requireBankTransferProof(tx, orderId, settlementId);
+      if (!order || !settlement || !paymentAttempt) throw new ConflictException('BANK_STATEMENT_PROOF_REQUIRED');
+      return { order, settlement, paymentAttempt };
+    }
     if (
       !order ||
       order.status !== CommerceOrderStatus.confirmed ||

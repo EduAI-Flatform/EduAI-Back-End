@@ -210,6 +210,7 @@ model CommerceCartLine {
 }
 
 model CommerceOrder {
+  bankTransferRequest CommerceBankTransferRequest?
   id                    String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderNumber           String                    @unique @map("order_number") @db.VarChar(40)
   cartId                String?                   @unique @map("cart_id") @db.Uuid
@@ -366,6 +367,7 @@ model CommercePromotionReservation {
 }
 
 model CommercePaymentAttempt {
+  bankTransferRequest CommerceBankTransferRequest?
   id                              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderId                         String                @map("order_id") @db.Uuid
   provider                        String                @db.VarChar(32)

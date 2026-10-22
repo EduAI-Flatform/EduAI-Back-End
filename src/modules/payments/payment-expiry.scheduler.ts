@@ -10,6 +10,7 @@ import { AppConfigService } from '../../config/app-config.service';
 import { PaymentLifecycleService } from './payment-lifecycle.service';
 import { PAYMENT_PROVIDER_REGISTRY } from './payment-provider';
 import { PaymentProviderRegistry } from './payment-provider.registry';
+import { BankTransferService } from './bank-transfer.service';
 
 const EXPIRY_INTERVAL_MS = 60_000;
 const EXPIRY_BATCH_LIMIT = 20;
@@ -26,6 +27,7 @@ export class PaymentExpiryScheduler implements OnApplicationBootstrap, OnApplica
     @Optional()
     @Inject(PAYMENT_PROVIDER_REGISTRY)
     private readonly providerRegistry?: PaymentProviderRegistry,
+    @Optional() private readonly bank?: BankTransferService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -39,6 +41,7 @@ export class PaymentExpiryScheduler implements OnApplicationBootstrap, OnApplica
   }
 
   private hasActiveProvider(): boolean {
+    if (this.bank?.enabled()) return true;
     if (this.providerRegistry) {
       return this.providerRegistry.isEnabled('payos') || this.providerRegistry.isEnabled('vnpay');
     }
@@ -54,6 +57,8 @@ export class PaymentExpiryScheduler implements OnApplicationBootstrap, OnApplica
     if (this.inFlight) return;
     this.inFlight = true;
     try {
+      const bankResult = await this.bank?.expireDue();
+      if (bankResult?.failed) this.logger.warn(`Sandbox bank checkpoint: expired=${bankResult.expired} fulfilled=${bankResult.fulfilled} failed=${bankResult.failed}`);
       const result = await this.lifecycle.runExpiry(null, { limit: EXPIRY_BATCH_LIMIT });
       if (result.checkedCount > 0 || result.reviewRequiredCount > 0) {
         this.logger.log(
