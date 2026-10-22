@@ -8,7 +8,7 @@ import { AuditService, AuditAction } from '../../common/audit/audit.service';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { BANK_SANDBOX_RECEIVER, bankTransferEnabled, classifyBankEvidence, createVietQrPayload } from './bank-transfer-policy';
 import { BankApprovalDto, BankStatementDto } from './dto/bank-transfer.dto';
-import { PaymentRequestResponseDto } from './dto/payment-request-response.dto';
+import { ListPendingPaymentQueryDto, PaymentRequestResponseDto } from './dto/payment-request-response.dto';
 
 @Injectable()
 export class BankTransferService {
@@ -223,10 +223,16 @@ export class BankTransferService {
     if (result.settlementId) await this.fulfillment.fulfillConfirmedPayment(result.orderId, result.settlementId, CommerceActorKind.user, actorId);
     return result;
   }
-  async list(actorId: string) {
+  async list(actorId: string, query: ListPendingPaymentQueryDto = { page: 1, pageSize: 20 }) {
     await this.serializable((tx) => this.operator(tx, actorId));
-    return this.prisma.commerceBankTransferRequest.findMany({ orderBy: { createdAt: 'desc' }, take: 100,
-      select: { id: true, orderId: true, status: true, transferContent: true, createdAt: true, expiresAt: true } });
+    const [total, items] = await Promise.all([
+      this.prisma.commerceBankTransferRequest.count(),
+      this.prisma.commerceBankTransferRequest.findMany({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize,
+        select: { id: true, orderId: true, status: true, transferContent: true, createdAt: true, expiresAt: true },
+      }),
+    ]);
+    return { items, page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) };
   }
   async expireDue() {
     if (!this.enabled()) return { expired: 0, fulfilled: 0, failed: 0 };

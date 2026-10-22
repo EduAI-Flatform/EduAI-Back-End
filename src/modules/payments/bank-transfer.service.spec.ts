@@ -53,6 +53,24 @@ describe('manual bank statement authorization and settlement', () => {
     await expect(service.approve(reviewer, 'evidence', 'unique-key-1', h.input)).rejects.toThrow('Bank transfer is unavailable');
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
+  it('pages older review requests with deterministic ordering after operator authorization', async () => {
+    const h = harness();
+    h.prisma.commerceBankTransferRequest = { count: jest.fn().mockResolvedValue(41),
+      findMany: jest.fn().mockResolvedValue([{ id: 'older-request', orderId: 'older-order' }]) };
+    await expect(h.service.list(reviewer, { page: 2, pageSize: 20 })).resolves.toEqual({
+      items: [{ id: 'older-request', orderId: 'older-order' }], page: 2, pageSize: 20, total: 41, totalPages: 3,
+    });
+    expect(h.prisma.commerceBankTransferRequest.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: 20, take: 20,
+    }));
+  });
+  it('cannot inspect the queue without current operator authority', async () => {
+    const h = harness(); h.tx.user.findFirst.mockResolvedValue(null);
+    h.prisma.commerceBankTransferRequest = { count: jest.fn(), findMany: jest.fn() };
+    await expect(h.service.list(reviewer, { page: 2, pageSize: 20 })).rejects.toThrow('operator authorization');
+    expect(h.prisma.commerceBankTransferRequest.count).not.toHaveBeenCalled();
+    expect(h.prisma.commerceBankTransferRequest.findMany).not.toHaveBeenCalled();
+  });
   it('disabled deployment reads no additive bank tables before migration', async () => {
     const h = harness(); delete process.env.BANK_TRANSFER_SANDBOX_ENABLED;
     expect(await h.service.ownsBankOrder('learner', 'order')).toBe(false);

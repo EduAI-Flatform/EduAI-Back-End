@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Inject, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -8,6 +8,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { RateLimit } from '../../common/security/rate-limit.decorator';
 import { BankTransferService } from './bank-transfer.service';
 import { BankApprovalDto, BankStatementDto, BankSupportDto } from './dto/bank-transfer.dto';
+import { ListPendingPaymentQueryDto } from './dto/payment-request-response.dto';
 import { PAYMENT_PROVIDER_REGISTRY, PaymentProviderRegistry } from './payment-provider.registry';
 
 @ApiTags('Payments') @ApiBearerAuth()
@@ -33,7 +34,9 @@ export class BankTransferController {
 @Controller('admin/commerce/bank-transfers') @UseGuards(JwtAuthGuard, RolesGuard) @Roles(RoleName.platform_admin)
 export class BankTransferAdminController {
   constructor(private readonly bank: BankTransferService) {}
-  @Get() list(@CurrentUser('id') actorId: string) { return this.bank.list(actorId); }
+  @Get() list(@CurrentUser('id') actorId: string, @Query() query: ListPendingPaymentQueryDto) {
+    return this.bank.list(actorId, query);
+  }
   @Get(':requestId') detail(@CurrentUser('id') actorId: string,
     @Param('requestId', new ParseUUIDPipe({ version: '4' })) requestId: string) { return this.bank.detail(actorId, requestId); }
   @Post(':requestId/statements')
