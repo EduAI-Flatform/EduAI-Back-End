@@ -160,5 +160,3 @@ describe('Manual bank settlement provenance on PostgreSQL', () => {
     await expect(settlement('CURRENT_TIMESTAMP')).rejects.toThrow(/bank settlement requires/);
   });
 });
-
-
