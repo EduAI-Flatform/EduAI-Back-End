@@ -65,7 +65,7 @@ async function main() {
       try {
         await connection.query('BEGIN');
         await connection.query(`INSERT INTO commerce_orders(id,order_number,buyer_id,status,fulfillment_status,subtotal_amount_minor,discount_amount_minor,payable_amount_minor,currency,pricing_policy_version,updated_at)
-          VALUES($1,$2,$3,'pending_payment','not_started',1000,0,1000,'VND','v1',NOW())`,[oid,'RACE-'+oid,ids.buyer]);
+          VALUES($1,$2,$3,'pending_payment','not_started',1000,0,1000,'VND','v1',NOW())`,[oid,'RACE'+oid.replace(/-/g,''),ids.buyer]);
         await connection.query(`INSERT INTO commerce_order_lines(id,order_id,product_id,product_type,product_reference_id,seller_id,display_title,quantity,unit_list_price_amount_minor,subtotal_amount_minor,discount_amount_minor,final_amount_minor,currency)
           VALUES($1,$2,$3,'course',$4,$5,'Bank concurrency',1,1000,1000,0,1000,'VND')`,[randomUUID(),oid,ids.product,ids.course,ids.seller]);
         await connection.query('COMMIT');
