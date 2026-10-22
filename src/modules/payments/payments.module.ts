@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { BankTransferService } from './bank-transfer.service';
+import { BankTransferController, BankTransferAdminController } from './bank-transfer.controller';
 import { PayOS } from '@payos/node';
 import { AppConfigModule } from '../../config/app-config.module';
 import { AppConfigService } from '../../config/app-config.service';
@@ -36,8 +38,9 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
 
 @Module({
   imports: [AppConfigModule, AuditModule, AuthModule, PrismaModule, NotificationsModule],
-  controllers: [PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController, PaymentRefundController],
+  controllers: [BankTransferController, BankTransferAdminController, PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController, PaymentRefundController],
   providers: [
+    BankTransferService,
     PaymentRequestService,
     PaymentWebhookService,
     VnPayIpnService,

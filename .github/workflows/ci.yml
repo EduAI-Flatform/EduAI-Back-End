@@ -32,6 +32,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Production deployment authorization gate
+        run: node --test scripts/production-deployment-gate.test.cjs
+
+      - name: Manual bank transfer security tests
+        run: npm test -- --runInBand modules/payments/bank-transfer
+
+      - name: Manual bank transfer PostgreSQL invariants
+        run: npm run test:demo-data -- --runInBand bank-transfer-migration.spec.ts
+
       - name: Payment security tests
         run: >-
           npm test -- --runInBand
@@ -64,3 +73,38 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  bank-transfer-postgres:
+    name: Bank transfer concurrent PostgreSQL transactions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: eduai_payw_ci
+          POSTGRES_USER: eduai_payw_ci
+          POSTGRES_PASSWORD: ci-payw-disposable-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eduai_payw_ci -d eduai_payw_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      JWT_ACCESS_SECRET: ci-payw-access-only
+      JWT_REFRESH_SECRET: ci-payw-refresh-only
+      DATABASE_URL: postgresql://eduai_payw_ci:ci-payw-disposable-only@127.0.0.1:5432/eduai_payw_ci
+      PAYW_TEST_DATABASE_URL: postgresql://eduai_payw_ci:ci-payw-disposable-only@127.0.0.1:5432/eduai_payw_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Exercise real concurrent payment transactions
+        run: node --test scripts/test-bank-transfer-concurrency.cjs

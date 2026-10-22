@@ -1,10 +1,14 @@
 name: Deploy Backend Production
 
+# Production deployment is a separate owner-authorized operation.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      authorize_production:
+        description: 'Owner approval for production deployment (does not authorize payment activation)'
+        type: boolean
+        default: false
+        required: true
 
 concurrency:
   group: eduai-backend-production
@@ -69,6 +73,7 @@ jobs:
         run: npm test -- --runInBand
 
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.authorize_production == true }}
     name: Deploy to VPS
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -437,7 +442,7 @@ jobs:
       - ci
       - deploy
 
-    if: ${{ always() }}
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
 
     steps:
       - name: Telegram - backend deployment notification

@@ -6,6 +6,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import * as QRCode from 'qrcode';
@@ -39,6 +40,8 @@ import {
 } from './payment-provider';
 import { PaymentProviderRegistry } from './payment-provider.registry';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
+import { bankTransferEnabled } from './bank-transfer-policy';
+import { BankTransferService } from './bank-transfer.service';
 
 const CURRENCY = 'VND';
 const IDEMPOTENCY_OPERATION = 'payment.create-request';
@@ -93,6 +96,7 @@ export class PaymentRequestService {
     @Inject(PAYMENT_PROVIDER_REGISTRY)
     private readonly providerRegistry: PaymentProviderRegistry,
     private readonly fulfillment: CommerceFulfillmentService,
+    @Optional() private readonly bank?: BankTransferService,
   ) {}
 
   async create(
@@ -100,6 +104,7 @@ export class PaymentRequestService {
     orderId: string,
     idempotencyKey: string | undefined,
     clientIpAddress?: string,
+    requestedProvider?: PaymentProviderName | 'bank_transfer',
   ): Promise<PaymentRequestResponseDto> {
     this.assertIdempotencyKey(idempotencyKey);
     const paymentRequirement = await this.prisma.commerceOrder.findFirst({
@@ -109,16 +114,22 @@ export class PaymentRequestService {
     if (!paymentRequirement) {
       throw new NotFoundException('Payment request was not found.');
     }
+    if (requestedProvider === 'bank_transfer' && paymentRequirement.payableAmountMinor > 0n) {
+      if (!this.bank) throw new ServiceUnavailableException('BANK_TRANSFER_DISABLED');
+      return this.bank.create(learnerId, orderId, idempotencyKey);
+    }
+    // A zero-payable order always uses the existing internal settlement path.
+    const gatewayProvider = requestedProvider === 'bank_transfer' ? undefined : requestedProvider;
     const keyHash = createHmac(
       'sha256',
       this.config.commerce.idempotencySecret as string,
     )
       .update(idempotencyKey)
       .digest('hex');
-    const requestHash = createHash('sha256').update(orderId).digest('hex');
-    const defaultProvider = this.providerRegistry.getDefaultProvider();
+    const requestHash = createHash('sha256').update(gatewayProvider ? `${orderId}:${gatewayProvider}` : orderId).digest('hex');
+    const defaultProvider = gatewayProvider ?? this.providerRegistry.getDefaultProvider();
     const prepared = await this.runSerializable((tx) =>
-      this.prepare(tx, learnerId, orderId, keyHash, requestHash, defaultProvider),
+      this.prepare(tx, learnerId, orderId, keyHash, requestHash, defaultProvider, gatewayProvider),
     );
     await this.fulfillment.dispatchPending();
 
@@ -252,6 +263,7 @@ export class PaymentRequestService {
     keyHash: string,
     requestHash: string,
     defaultProvider: PaymentProviderName,
+    requestedProvider?: PaymentProviderName,
   ): Promise<PreparedRequest> {
     const existing = await tx.commerceIdempotencyRecord.findUnique({
       where: {
@@ -313,6 +325,8 @@ export class PaymentRequestService {
       orderBy: { createdAt: 'desc' },
     });
     if (openAttempt) {
+      if (openAttempt.provider === 'bank_transfer') throw new ConflictException('PAYMENT_METHOD_ALREADY_SELECTED');
+      if (requestedProvider && requestedProvider !== openAttempt.provider) throw new ConflictException('PAYMENT_METHOD_ALREADY_SELECTED');
       await this.completeIdempotency(tx, learnerId, keyHash, requestHash, 'payment_attempt', openAttempt.id, now);
       return { order, attempt: openAttempt, shouldCallProvider: false };
     }
@@ -640,7 +654,8 @@ export class PaymentRequestService {
     throw new PaymentProviderError('disabled', false);
   }
 
-  private requireResponseProvider(value: string): PaymentProviderName {
+  private requireResponseProvider(value: string): PaymentProviderName | 'bank_transfer' {
+    if (value === 'bank_transfer' && bankTransferEnabled(this.config.app.nodeEnv, process.env.BANK_TRANSFER_SANDBOX_ENABLED)) return value;
     if (isPaymentProviderName(value)) return value;
     throw new ServiceUnavailableException({
       error: 'PAYMENT_PROVIDER_UNAVAILABLE',

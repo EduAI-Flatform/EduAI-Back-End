@@ -167,6 +167,7 @@ export class PaymentLifecycleService {
         id: input.cursor ? { gt: input.cursor } : undefined,
         status: CommercePaymentStatus.pending,
         providerExpiresAt: { lte: new Date() },
+        provider: { not: 'bank_transfer' },
         OR: [
           { provider: 'vnpay', providerOrderCode: { not: null } },
           { provider: { not: 'vnpay' }, providerPaymentIdentity: { not: null } },

@@ -16,7 +16,10 @@ export class PaymentAttemptResponseDto {
   id!: string;
 
   @ApiProperty({ enum: ['payos', 'vnpay'], example: 'payos' })
-  provider!: PaymentProviderName;
+  provider!: PaymentProviderName | 'bank_transfer';
+
+  @ApiPropertyOptional()
+  bankTransfer?: { bankName: string; bankBin: string; accountNumber: string; beneficiaryName: string; transferContent: string };
 
   @ApiProperty({ example: 'PENDING' })
   status!: string;

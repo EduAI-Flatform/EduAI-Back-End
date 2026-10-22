@@ -75,6 +75,7 @@ export class PaymentRefundService {
         include: { order: { include: { lines: true } }, reconciliationCase: true },
       });
       if (!settlement || !settlement.provider || settlement.kind !== 'provider_collection') throw new NotFoundException('Refundable settlement was not found.');
+      if (settlement.provider === 'bank_transfer') throw new ConflictException('BANK_REFUND_REQUIRES_SEPARATE_AUTHORIZED_WORKFLOW');
       if (input.reconciliationCaseId && (
         settlement.reconciliationCase?.id !== input.reconciliationCaseId ||
         settlement.reconciliationCase.status !== CommerceReconciliationStatus.open
@@ -128,6 +129,7 @@ export class PaymentRefundService {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_refunds WHERE id = ${refundId}::uuid FOR UPDATE`);
       let refund = await tx.commerceRefund.findUnique({ where: { id: refundId }, include: refundInclude });
       if (!refund) throw new NotFoundException('Refund request was not found.');
+      if (refund.settlement.provider === 'bank_transfer') throw new ConflictException('BANK_REFUND_REQUIRES_SEPARATE_AUTHORIZED_WORKFLOW');
       if (refund.status === CommerceRefundStatus.recorded) {
         if (refund.externalReference !== input.externalReference) {
           throw new ConflictException({ error: 'REFUND_ALREADY_RECORDED', message: 'Refund already has another external reference.' });
