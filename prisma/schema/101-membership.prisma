@@ -165,6 +165,8 @@ model ServiceEntitlementGrant {
   resetPeriod   ServiceEntitlementResetPeriod  @map("reset_period")
   booleanValue  Boolean?                       @map("boolean_value")
   quota         BigInt?
+  quotaPoolId   String?                       @map("quota_pool_id") @db.Uuid
+  quotaPool     ServiceEntitlementQuotaPool?   @relation(fields: [quotaPoolId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   status        ServiceEntitlementGrantStatus  @default(active)
   startsAt      DateTime                       @map("starts_at")
   endsAt        DateTime?                      @map("ends_at")
@@ -177,6 +179,7 @@ model ServiceEntitlementGrant {
   @@unique([userId, definitionId, sourceType, sourceId], map: "service_entitlement_grants_source_key")
   @@index([userId, status, startsAt, endsAt])
   @@index([definitionId, status])
+  @@index([quotaPoolId])
   @@map("service_entitlement_grants")
 }
 

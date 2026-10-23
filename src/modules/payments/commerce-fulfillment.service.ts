@@ -1,5 +1,6 @@
+import { BankReceiptAccessService } from './bank-receipt-access.service';
 import { randomUUID } from 'node:crypto';
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, Optional } from '@nestjs/common';
 import {
   AuditActorKind,
   CommerceActorKind,
@@ -98,6 +99,7 @@ export class CommerceFulfillmentService {
     private readonly courseAccess: CourseAccessService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly receiptAccess?: BankReceiptAccessService,
   ) {}
 
   async fulfillConfirmedPayment(
@@ -181,6 +183,7 @@ export class CommerceFulfillmentService {
       throw new ConflictException('Only a confirmed Commerce order can be fulfilled.');
     }
     if (order.confirmedSettlement?.provider === 'bank_transfer') await requireBankTransferProof(tx, orderId, order.confirmedSettlement.id);
+    if (this.receiptAccess && order.confirmedSettlementId) await this.receiptAccess.convertForPaidOrder(tx, orderId, order.confirmedSettlementId);
 
     if (
       order.fulfillmentStatus === CommerceFulfillmentStatus.not_started ||
@@ -575,6 +578,9 @@ export class CommerceFulfillmentService {
       await this.effect(tx, order.id, line.id, 'MEMBERSHIP_GRACE_ACCESS', removed.courseId, 'course_access_grant', grant.id);
     }
     for (const entitlement of intent.version.serviceEntitlements) {
+      const quotaPool = await tx.serviceEntitlementQuotaPool.findUnique({
+        where: { orderLineId_definitionId: { orderLineId: line.id, definitionId: entitlement.definitionId } }, select: { id: true },
+      });
       await tx.serviceEntitlementGrant.createMany({
         data: [{
           userId: order.buyerId,
@@ -585,6 +591,7 @@ export class CommerceFulfillmentService {
           resetPeriod: entitlement.resetPeriod,
           booleanValue: entitlement.booleanValue,
           quota: entitlement.quota,
+          quotaPoolId: quotaPool?.id ?? null,
           startsAt: intent.startsAt,
           endsAt: intent.endsAt,
         }],

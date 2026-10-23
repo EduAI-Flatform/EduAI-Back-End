@@ -143,3 +143,60 @@ describe('CourseAccessService', () => {
     }, ' ')).rejects.toThrow('Invalid course access revocation reason');
   });
 });
+
+describe('receipt course access isolation', () => {
+  const env = { BANK_TRANSFER_SANDBOX_ENABLED: 'true', BANK_RECEIPT_SANDBOX_ENABLED: 'true',
+    BANK_RECEIPT_EARLY_ACCESS_ENABLED: 'true', BANK_RECEIPT_SYNTHETIC_BUYER_IDS: 'student-id' };
+  function receiptHarness(nodeEnv = 'test', settings = env) {
+    const effect = { findMany: jest.fn().mockResolvedValue([{ resourceId: 'receipt-grant', generationId: 'generation-id',
+      orderLineId: 'line-id', effectKind: 'COURSE_ACCESS' }]) };
+    const { prisma } = harness({ commerceReceiptAccessEffect: effect });
+    const service = new CourseAccessService(prisma as never, { app: { nodeEnv } } as never);
+    return { service, prisma, effect, settings };
+  }
+  let previous: NodeJS.ProcessEnv;
+  beforeEach(() => { previous = process.env; process.env = { ...previous, ...env }; });
+  afterEach(() => { process.env = previous; });
+  it.each(['production', 'staging'])('excludes receipt sources in %s without reading receipt tables', async (nodeEnv) => {
+    const { service, prisma, effect } = receiptHarness(nodeEnv);
+    await expect(service.decide({ user: student, courseId: 'course-id', operation: 'FULL_LEARNING' }))
+      .resolves.toMatchObject({ allowed: false });
+    expect(prisma.courseAccessGrant.findFirst.mock.calls[0][0].where.sourceType.in).not.toContain('unverified_receipt_access');
+    expect(effect.findMany).not.toHaveBeenCalled();
+  });
+  it('grants full learning only for exact active ledger effects and source identities', async () => {
+    const { service, prisma, effect } = receiptHarness();
+    prisma.courseAccessGrant.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'receipt-grant',
+      sourceType: 'unverified_receipt_access', endsAt: null, graceEndsAt: null });
+    await expect(service.decide({ user: student, courseId: 'course-id', operation: 'FULL_LEARNING' }))
+      .resolves.toMatchObject({ allowed: true, mode: 'LEARNER' });
+    expect(effect.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      resourceType: 'course_access_grant', generation: { status: 'ACCESS_UNVERIFIED', buyerId: 'student-id' },
+    }) }));
+    expect(prisma.courseAccessGrant.findFirst.mock.calls[1][0].where.AND).toEqual([{ OR: [
+      { id: 'receipt-grant', sourceId: 'generation-id:line-id' },
+    ] }]);
+  });
+  it('keeps paid access when the receipt kill switch is off', async () => {
+    process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED = 'false';
+    const { service, prisma, effect } = receiptHarness();
+    prisma.courseAccessGrant.findFirst.mockResolvedValueOnce({ id: 'paid', sourceType: 'order_line', endsAt: null });
+    await expect(service.decide({ user: student, courseId: 'course-id', operation: 'FULL_LEARNING' }))
+      .resolves.toMatchObject({ allowed: true, mode: 'LEARNER' });
+    expect(effect.findMany).not.toHaveBeenCalled();
+  });
+  it('denies orphan or revoked receipt effects', async () => {
+    const { service, prisma, effect } = receiptHarness();
+    effect.findMany.mockResolvedValueOnce([]);
+    await expect(service.decide({ user: student, courseId: 'course-id', operation: 'FULL_LEARNING' }))
+      .resolves.toMatchObject({ allowed: false });
+    expect(prisma.courseAccessGrant.findFirst).toHaveBeenCalledTimes(1);
+  });
+  it('denies receipt access outside the buyer allowlist', async () => {
+    process.env.BANK_RECEIPT_SYNTHETIC_BUYER_IDS = 'another-buyer';
+    const { service, effect } = receiptHarness();
+    await expect(service.decide({ user: student, courseId: 'course-id', operation: 'FULL_LEARNING' }))
+      .resolves.toMatchObject({ allowed: false });
+    expect(effect.findMany).not.toHaveBeenCalled();
+  });
+});

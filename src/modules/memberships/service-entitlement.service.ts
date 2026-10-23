@@ -14,6 +14,7 @@ import {
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { entitlementUsageWindow } from './service-entitlement.rules';
+import { receiptEarlyAccessEnabled } from '../../common/security/receipt-sandbox-policy';
 
 const KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const grantInclude = { definition: true } satisfies Prisma.ServiceEntitlementGrantInclude;
@@ -152,12 +153,12 @@ export class ServiceEntitlementService {
   }
 
   private async activeGrants(
-    client: Pick<PrismaService, 'serviceEntitlementGrant'> | Prisma.TransactionClient,
+    client: Pick<PrismaService, 'serviceEntitlementGrant' | 'commerceReceiptAccessEffect'> | Prisma.TransactionClient,
     userId: string,
     code: string | undefined,
     at: Date,
   ): Promise<Grant[]> {
-    return client.serviceEntitlementGrant.findMany({
+    const grants = await client.serviceEntitlementGrant.findMany({
       where: {
         userId,
         status: ServiceEntitlementGrantStatus.active,
@@ -168,6 +169,18 @@ export class ServiceEntitlementService {
       include: grantInclude,
       orderBy: [{ endsAt: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }, { id: 'asc' }],
     });
+    const early = grants.filter((grant) => grant.sourceType === 'UNVERIFIED_RECEIPT_ACCESS');
+    if (early.length === 0) return grants;
+    if (!receiptEarlyAccessEnabled(this.config.app.nodeEnv, process.env, userId)) {
+      return grants.filter((grant) => grant.sourceType !== 'UNVERIFIED_RECEIPT_ACCESS');
+    }
+    const effects = await client.commerceReceiptAccessEffect.findMany({ where: {
+      resourceType: 'service_entitlement_grant', resourceId: { in: early.map((grant) => grant.id) },
+      generation: { buyerId: userId, status: 'ACCESS_UNVERIFIED' },
+    }, select: { resourceId: true, generationId: true, orderLineId: true } });
+    const allowed = new Map(effects.map((effect) => [effect.resourceId, `${effect.generationId}:${effect.orderLineId}`]));
+    return grants.filter((grant) => grant.sourceType !== 'UNVERIFIED_RECEIPT_ACCESS'
+      || (Boolean(grant.quotaPoolId) && allowed.get(grant.id) === grant.sourceId));
   }
 
   private async grantDecision(
@@ -180,7 +193,10 @@ export class ServiceEntitlementService {
     let allowed = grant.valueType !== ServiceEntitlementValueType.boolean || grant.booleanValue === true;
     if (grant.valueType === ServiceEntitlementValueType.metered) {
       const usage = await client.serviceEntitlementUsage.aggregate({
-        where: { grantId: grant.id, periodStartsAt: window.startsAt, periodEndsAt: window.endsAt },
+        // Revoked generations still count. Never gate pooling on the early-access feature flag:
+        // canonical paid grants must retain spent quota after the experiment is switched off.
+        where: { ...(grant.quotaPoolId ? { grant: { quotaPoolId: grant.quotaPoolId } } : { grantId: grant.id }),
+          periodStartsAt: window.startsAt, periodEndsAt: window.endsAt },
         _sum: { quantity: true },
       });
       const amount = usage._sum.quantity ?? 0n;

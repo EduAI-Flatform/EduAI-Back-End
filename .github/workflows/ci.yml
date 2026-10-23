@@ -36,10 +36,10 @@ jobs:
         run: node --test scripts/production-deployment-gate.test.cjs
 
       - name: Manual bank transfer security tests
-        run: npm test -- --runInBand modules/payments/bank-transfer
+        run: npm test -- --runInBand modules/payments/bank-transfer modules/payments/bank-receipt-access modules/access/course-access.service modules/memberships/service-entitlement modules/memberships/membership-continuity
 
       - name: Manual bank transfer PostgreSQL invariants
-        run: npm run test:demo-data -- --runInBand bank-transfer-migration.spec.ts
+        run: npm run test:demo-data -- --runInBand bank-transfer-migration.spec.ts bank-receipt-migration.spec.ts bank-receipt-access.spec.ts receipt-quota-pool.spec.ts
 
       - name: Payment security tests
         run: >-
