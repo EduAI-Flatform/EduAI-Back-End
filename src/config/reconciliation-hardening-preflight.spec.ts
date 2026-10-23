@@ -1,8 +1,10 @@
 const {
   EXPECTED_RECONCILIATION_MIGRATION,
+  EXPECTED_BANK_TRANSFER_MIGRATION,
   assertMigrationLedgerState,
   assertMigrationAppliedExactlyOnce,
   assertReviewedMigrationFingerprint,
+  assertReviewedBankTransferMigrationFingerprint,
   assertReconciliationPreflight,
   assertReconciliationAppliedState,
   assertReconciliationFinancialBaseline,
@@ -13,10 +15,12 @@ const {
   runSafePreflightStage,
 }: {
   EXPECTED_RECONCILIATION_MIGRATION: string;
+  EXPECTED_BANK_TRANSFER_MIGRATION: string;
   assertMigrationLedgerState: (input: {
     expectedMigrationName?: string;
     expectedMigrationSha256?: string;
     allowAlreadyApplied?: boolean;
+    allowReviewedBankTransferMigration?: boolean;
     localMigrationNames: string[];
     migrationRows: Array<{
       migration_name: string;
@@ -30,9 +34,11 @@ const {
     targetApplied: boolean;
   };
   assertReviewedMigrationFingerprint: (rootDirectory: string) => string;
+  assertReviewedBankTransferMigrationFingerprint: (rootDirectory: string) => string;
   assertMigrationAppliedExactlyOnce: (input: {
     expectedMigrationSha256?: string;
     localMigrationNames: string[];
+    localMigrationChecksums?: Record<string, string>;
     migrationRows: Array<{
       migration_name: string;
       checksum: string;
@@ -73,6 +79,101 @@ describe('SPR25-007 production migration preflight', () => {
     expect(assertReviewedMigrationFingerprint(repositoryRoot)).toBe(
       '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F',
     );
+    expect(assertReviewedBankTransferMigrationFingerprint(repositoryRoot)).toBe(
+      'C26538AF0A17D8F1CEE9CE78FC974141ADF50C13E55E79356D8372D661A80244',
+    );
+  });
+
+  it('accepts exactly the reviewed bank migration after the reconciliation migration has been applied', () => {
+    const previousMigration = '20260824160000_add_membership_product_type';
+    const reviewedChecksum =
+      '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F';
+    const localMigrationNames = [
+      previousMigration,
+      EXPECTED_RECONCILIATION_MIGRATION,
+      EXPECTED_BANK_TRANSFER_MIGRATION,
+    ];
+    const migrationRows = [
+      {
+        migration_name: previousMigration,
+        checksum: appliedMigrationChecksum,
+        finished_at: new Date(),
+        rolled_back_at: null,
+      },
+      {
+        migration_name: EXPECTED_RECONCILIATION_MIGRATION,
+        checksum: reviewedChecksum,
+        finished_at: new Date(),
+        rolled_back_at: null,
+      },
+    ];
+
+    expect(assertMigrationLedgerState({
+      localMigrationNames,
+      migrationRows,
+      allowAlreadyApplied: true,
+      allowReviewedBankTransferMigration: true,
+    })).toMatchObject({
+      pendingMigrationNames: [EXPECTED_BANK_TRANSFER_MIGRATION],
+      targetApplied: true,
+    });
+
+    // The same state remains blocked unless the reviewed additive migration is
+    // explicitly enabled. Other pending migrations are never authorized.
+    expect(() => assertMigrationLedgerState({
+      localMigrationNames,
+      migrationRows,
+      allowAlreadyApplied: true,
+    })).toThrow('Production migration preflight failed');
+    expect(() => assertMigrationLedgerState({
+      localMigrationNames: [...localMigrationNames, '20261023000000_unknown'],
+      migrationRows,
+      allowAlreadyApplied: true,
+      allowReviewedBankTransferMigration: true,
+    })).toThrow('Production migration preflight failed');
+    expect(() => assertMigrationLedgerState({
+      localMigrationNames,
+      migrationRows: migrationRows.slice(0, 1),
+      allowAlreadyApplied: true,
+      allowReviewedBankTransferMigration: true,
+    })).toThrow('Production migration preflight failed');
+  });
+
+  it('requires both reviewed migrations to be recorded after bank schema deployment', () => {
+    const reconciliationChecksum =
+      '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F';
+    const bankChecksum =
+      'C26538AF0A17D8F1CEE9CE78FC974141ADF50C13E55E79356D8372D661A80244';
+    const localMigrationNames = [
+      EXPECTED_RECONCILIATION_MIGRATION,
+      EXPECTED_BANK_TRANSFER_MIGRATION,
+    ];
+    const localMigrationChecksums = {
+      [EXPECTED_RECONCILIATION_MIGRATION]: reconciliationChecksum,
+      [EXPECTED_BANK_TRANSFER_MIGRATION]: bankChecksum,
+    };
+    const migrationRows = localMigrationNames.map((migration_name) => ({
+      migration_name,
+      checksum: localMigrationChecksums[migration_name],
+      finished_at: new Date(),
+      rolled_back_at: null,
+    }));
+
+    expect(assertMigrationAppliedExactlyOnce({
+      localMigrationNames,
+      localMigrationChecksums,
+      migrationRows,
+    })).toMatchObject({ targetApplied: true });
+    expect(() => assertMigrationAppliedExactlyOnce({
+      localMigrationNames,
+      localMigrationChecksums,
+      migrationRows: migrationRows.slice(0, 1),
+    })).toThrow('Production migration preflight failed');
+    expect(() => assertMigrationAppliedExactlyOnce({
+      localMigrationNames,
+      localMigrationChecksums,
+      migrationRows: [migrationRows[0], { ...migrationRows[1], checksum: 'b'.repeat(64) }],
+    })).toThrow('Production migration preflight failed');
   });
 
   it('allows exactly the reviewed migration as the only pending migration', () => {

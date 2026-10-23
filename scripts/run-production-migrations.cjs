@@ -14,6 +14,13 @@ const EXPECTED_RECONCILIATION_MIGRATION =
   '20260916123000_harden_reconciliation_source_identity';
 const EXPECTED_RECONCILIATION_MIGRATION_SHA256 =
   '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F';
+// The PAYW-01 schema is additive and must never authorize payment activation.
+// Pin its reviewed artifact so recovery from the September reconciliation gate
+// cannot be used to execute arbitrary future migrations.
+const EXPECTED_BANK_TRANSFER_MIGRATION =
+  '20261022010000_add_manual_bank_transfer';
+const EXPECTED_BANK_TRANSFER_MIGRATION_SHA256 =
+  'C26538AF0A17D8F1CEE9CE78FC974141ADF50C13E55E79356D8372D661A80244';
 const RECONCILIATION_FINANCIAL_KINDS = [
   'duplicate_collection',
   'late_payment',
@@ -278,6 +285,28 @@ function assertReviewedMigrationFingerprint(rootDirectory) {
   return actualHash;
 }
 
+function assertReviewedBankTransferMigrationFingerprint(rootDirectory) {
+  let actualHash;
+  try {
+    actualHash = createHash('sha256')
+      .update(readFileSync(join(
+        rootDirectory,
+        'prisma',
+        'migrations',
+        EXPECTED_BANK_TRANSFER_MIGRATION,
+        'migration.sql',
+      )))
+      .digest('hex')
+      .toUpperCase();
+  } catch {
+    throw migrationPreflightFailure('MIGRATION_ARTIFACT_UNAVAILABLE');
+  }
+  if (actualHash !== EXPECTED_BANK_TRANSFER_MIGRATION_SHA256) {
+    throw migrationPreflightFailure('MIGRATION_ARTIFACT_HASH_MISMATCH');
+  }
+  return actualHash;
+}
+
 function localMigrationChecksums(rootDirectory, migrationNames) {
   const names = Array.isArray(migrationNames)
     ? migrationNames
@@ -304,6 +333,7 @@ function assertMigrationLedgerState({
   expectedMigrationName = EXPECTED_RECONCILIATION_MIGRATION,
   expectedMigrationSha256 = EXPECTED_RECONCILIATION_MIGRATION_SHA256,
   allowAlreadyApplied = false,
+  allowReviewedBankTransferMigration = false,
   localMigrationNames: localNames,
   localMigrationChecksums: localChecksums,
   migrationRows,
@@ -357,10 +387,14 @@ function assertMigrationLedgerState({
   }
 
   const pendingMigrationNames = localNames.filter((name) => !applied.has(name));
+  const onlyReviewedBankTransferPending =
+    allowReviewedBankTransferMigration &&
+    pendingMigrationNames.length === 1 &&
+    pendingMigrationNames[0] === EXPECTED_BANK_TRANSFER_MIGRATION;
   if (
     allowAlreadyApplied &&
     targetRows.length === 1 &&
-    pendingMigrationNames.length === 0
+    (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending)
   ) {
     if (
       targetRows[0].checksum.toUpperCase() !== expectedMigrationSha256.toUpperCase()
@@ -1611,6 +1645,8 @@ function assertReconciliationPreflightStable(before, after) {
     throw safeDatabaseFailure('MIGRATION_PREFLIGHT_STATE_DRIFT');
   }
   if (
+    before.migrationHash !== after.migrationHash ||
+    before.bankTransferMigrationHash !== after.bankTransferMigrationHash ||
     before.ledger?.currentSchemaVersion !== after.ledger?.currentSchemaVersion ||
     JSON.stringify(before.ledger?.pendingMigrationNames) !==
       JSON.stringify(after.ledger?.pendingMigrationNames) ||
@@ -1901,6 +1937,10 @@ async function runMigrationPreflight({
     'ARTIFACT',
     () => assertReviewedMigrationFingerprint(rootDirectory),
   );
+  const bankTransferMigrationHash = await runSafePreflightStage(
+    'ARTIFACT',
+    () => assertReviewedBankTransferMigrationFingerprint(rootDirectory),
+  );
   const roles = await runSafePreflightStage(
     'ROLE_VERIFICATION',
     () => verifyDatabaseRoleSeparationAtServer(runtimeUrl, migrationUrl),
@@ -1949,6 +1989,7 @@ async function runMigrationPreflight({
         const ledger = assertMigrationLedgerState({
           expectedMigrationSha256: migrationHash,
           allowAlreadyApplied,
+          allowReviewedBankTransferMigration: true,
           localMigrationNames: localNames,
           localMigrationChecksums: localChecksums,
           migrationRows: ledgerResult.rows,
@@ -1999,6 +2040,7 @@ async function runMigrationPreflight({
 
   return {
     migrationHash,
+    bankTransferMigrationHash,
     roles,
     privileges,
     localMigrationNames: localNames,
@@ -2140,7 +2182,11 @@ async function run() {
   if (migrationHashBeforeApply !== preflight.migrationHash) {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   }
-  if (preflight.ledger.targetApplied) {
+  const bankMigrationHashBeforeApply = assertReviewedBankTransferMigrationFingerprint(rootDirectory);
+  if (bankMigrationHashBeforeApply !== preflight.bankTransferMigrationHash) {
+    throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
+  }
+  if (preflight.ledger.targetApplied && preflight.ledger.pendingMigrationNames.length === 0) {
     console.log('migrationApply: SKIPPED_ALREADY_APPLIED');
   } else {
     const migration = spawnSync(
@@ -2236,6 +2282,8 @@ if (require.main === module) {
 module.exports = {
   EXPECTED_RECONCILIATION_MIGRATION,
   EXPECTED_RECONCILIATION_MIGRATION_SHA256,
+  EXPECTED_BANK_TRANSFER_MIGRATION,
+  EXPECTED_BANK_TRANSFER_MIGRATION_SHA256,
   FINANCIAL_DIGEST_KEYS,
   RECONCILIATION_FINANCIAL_ROW_COUNTS,
   RECONCILIATION_CASE_STATE_QUERY,
@@ -2246,6 +2294,7 @@ module.exports = {
   RUNTIME_FINANCIAL_GUARD_QUERY,
   assertMigrationAppliedExactlyOnce,
   assertMigrationLedgerState,
+  assertReviewedBankTransferMigrationFingerprint,
   assertReconciliationFinancialBaseline,
   assertReconciliationAppliedState,
   assertReconciliationPreflightStable,
