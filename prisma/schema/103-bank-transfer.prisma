@@ -1,4 +1,5 @@
 model CommerceBankTransferRequest {
+  receiptClaims CommerceBankReceiptClaim[]
   id String @id @db.Uuid
   orderId String @unique @map("order_id") @db.Uuid
   paymentAttemptId String @unique @map("payment_attempt_id") @db.Uuid

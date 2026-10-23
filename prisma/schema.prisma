@@ -201,6 +201,7 @@ enum TmiEntitlementStatus {
 }
 
 model User {
+  bankReceiptClaims CommerceBankReceiptClaim[] @relation("BankReceiptBuyer")
   bankStatements CommerceBankStatementEvidence[] @relation("BankStatementRecorder")
   bankApprovals CommerceBankApproval[] @relation("BankStatementApprover")
   bankSupportRequests CommerceBankSupportRequest[] @relation("BankSupportRequester")
@@ -510,6 +511,7 @@ model CommerceCartLine {
 }
 
 model CommerceOrder {
+  bankReceiptClaims CommerceBankReceiptClaim[]
   bankTransferRequest CommerceBankTransferRequest?
   id                    String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderNumber           String                    @unique @map("order_number") @db.VarChar(40)
@@ -1218,6 +1220,7 @@ model CourseAccessBackfillIssue {
 }
 
 model CommerceBankTransferRequest {
+  receiptClaims CommerceBankReceiptClaim[]
   id String @id @db.Uuid
   orderId String @unique @map("order_id") @db.Uuid
   paymentAttemptId String @unique @map("payment_attempt_id") @db.Uuid
@@ -1281,6 +1284,36 @@ model CommerceBankSupportRequest {
   @@unique([actorId, operationKeyHash])
   @@index([requestId])
   @@map("commerce_bank_support_requests")
+}
+
+model CommerceBankReceiptClaim {
+  id String @id @db.Uuid
+  requestId String @map("request_id") @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  buyerId String @map("buyer_id") @db.Uuid
+  operationKeyHash String @map("operation_key_hash") @db.VarChar(64)
+  originalSha256 String @unique @map("original_sha256") @db.VarChar(64)
+  imageSha256 String @unique @map("image_sha256") @db.VarChar(64)
+  width Int
+  height Int
+  bytes Int
+  status String @default("PROCESSING") @db.VarChar(24)
+  fieldsJson Json? @map("fields_json") @db.JsonB
+  warnings String[] @default([])
+  confidence Int?
+  transactionKeyHash String? @unique @map("transaction_key_hash") @db.VarChar(64)
+  createdAt DateTime @default(now()) @map("created_at")
+  processingExpiresAt DateTime @map("processing_expires_at")
+  assessedAt DateTime? @map("assessed_at")
+  expiresAt DateTime @map("expires_at")
+  imageDeletedAt DateTime? @map("image_deleted_at")
+  request CommerceBankTransferRequest @relation(fields: [requestId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order CommerceOrder @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  buyer User @relation("BankReceiptBuyer", fields: [buyerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@unique([buyerId, operationKeyHash])
+  @@index([orderId, createdAt])
+  @@index([expiresAt, imageDeletedAt])
+  @@map("commerce_bank_receipt_claims")
 }
 
 model Role {

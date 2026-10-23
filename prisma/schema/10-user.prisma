@@ -1,4 +1,5 @@
 model User {
+  bankReceiptClaims CommerceBankReceiptClaim[] @relation("BankReceiptBuyer")
   bankStatements CommerceBankStatementEvidence[] @relation("BankStatementRecorder")
   bankApprovals CommerceBankApproval[] @relation("BankStatementApprover")
   bankSupportRequests CommerceBankSupportRequest[] @relation("BankSupportRequester")
