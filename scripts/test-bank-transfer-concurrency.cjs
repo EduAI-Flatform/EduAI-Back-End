@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 // Disposable CI PostgreSQL only. This script never loads dotenv or application config.
 const assert = require('node:assert/strict');
 const { randomUUID, createHash } = require('node:crypto');
@@ -158,7 +158,7 @@ async function main() {
     assert.ok(cappedSuccesses>=1 && cappedSuccesses<=3);
     assert.ok(cappedResults.some(result=>result.status==='rejected'));
     for(const result of cappedResults) {
-      if(result.status==='rejected') assert.ok(result.reason?.code==='P2034' || /RECEIPT_UPLOAD_LIMIT/.test(result.reason?.message ?? ''),
+      if(result.status==='rejected') assert.ok(result.reason?.code==='P2034' || /RECEIPT_UPLOAD_LIMIT|RECEIPT_CONCURRENT_OPERATION/.test(result.reason?.message ?? ''),
         'Competing receipt uploads may reject only for the upload cap or bounded serialization retry exhaustion');
     }
     let cappedCount=await count('commerce_bank_receipt_claims',cappedReceipt.orderId);
@@ -191,10 +191,11 @@ async function main() {
     await assertReceiptNonfinancial(canonicalA.orderId); await assertReceiptNonfinancial(canonicalB.orderId);
     console.log('PASS receipt cross-order canonical image replay rejected despite different PNG encodings');
 
+    for(let receiptRace=0;receiptRace<3;receiptRace++) {
     const transactionA=await prepareReceipt(); const transactionB=await prepareReceipt();
     const receiptTransactionId='RECEIPT-TX-'+randomUUID().toUpperCase();
-    const transactionFileA=await receiptFile(transactionA.bankRequest,'#440001',receiptTransactionId);
-    const transactionFileB=await receiptFile(transactionB.bankRequest,'#440002',receiptTransactionId);
+    const transactionFileA=await receiptFile(transactionA.bankRequest,'#44'+receiptRace.toString(16).padStart(2,'0')+'01',receiptTransactionId);
+    const transactionFileB=await receiptFile(transactionB.bankRequest,'#44'+receiptRace.toString(16).padStart(2,'0')+'02',receiptTransactionId);
     const transactionClaims=await Promise.all([
       receiptServices[0].upload(ids.buyer,transactionA.orderId,key(),transactionFileA),
       receiptServices[1].upload(ids.buyer,transactionB.orderId,key(),transactionFileB),
@@ -206,6 +207,8 @@ async function main() {
     await assertReceiptNonfinancial(transactionA.orderId);await assertReceiptNonfinancial(transactionB.orderId);
     assert.deepEqual(await entitlementCounts(),beforeReceiptEntitlements);
     console.log('PASS receipt scoped transaction replay requires review; no settlements, fulfillment or entitlements created');
+
+    }
 
     const same = await prepare();
     const repeats=await Promise.all(services.map(s=>s.approve(ids.admin1,same.e.id,key(),same.f)));

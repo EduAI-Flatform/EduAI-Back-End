@@ -40,7 +40,26 @@ describe('Private synthetic receipt intake', () => {
     const config={app:{nodeEnv:'test'}};
     return {service:new BankReceiptService(tx,config as any,audit as any,storage as any,ocr as any),tx,claims,storage,ocr,config,request,order,audit};
   };
-  it('denies production before database or decoding',async()=>{
+  it('retries a structured driver serialization conflict during final assessment',async()=>{
+    const h=harness();let calls=0;
+    const conflict=Object.assign(new Error('TransactionWriteConflict'),{name:'DriverAdapterError',cause:{kind:'TransactionWriteConflict'}});
+    h.tx.$transaction.mockImplementation(async(fn:any)=>{calls++;if(calls===3)throw conflict;return fn(h.tx);});
+    const result=await h.service.upload(buyer,'order','upload-conflict-1',file);
+    expect(result.status).toBe('MATCHED_CLAIM');expect(h.claims).toHaveLength(1);expect(h.ocr.assess).toHaveBeenCalledTimes(1);
+    expect(h.order.status).toBe('pending_payment');expect(calls).toBe(4);
+  });
+  it('bounds repeated driver conflicts and returns a safe retryable conflict',async()=>{
+    const h=harness();const conflict=Object.assign(new Error('TransactionWriteConflict'),{name:'DriverAdapterError',cause:{kind:'TransactionWriteConflict'}});
+    h.tx.$transaction.mockRejectedValue(conflict);
+    await expect(h.service.upload(buyer,'order','upload-conflict-2',file)).rejects.toThrow('RECEIPT_CONCURRENT_OPERATION');
+    expect(h.tx.$transaction).toHaveBeenCalledTimes(3);expect(decodeReceiptImage).not.toHaveBeenCalled();
+  });
+  it('does not retry unrelated driver failures',async()=>{
+    const h=harness();const failure=Object.assign(new Error('database unavailable'),{name:'DriverAdapterError',cause:{kind:'AuthenticationFailed'}});
+    h.tx.$transaction.mockRejectedValue(failure);
+    await expect(h.service.upload(buyer,'order','upload-conflict-3',file)).rejects.toThrow('database unavailable');
+    expect(h.tx.$transaction).toHaveBeenCalledTimes(1);
+  });  it('denies production before database or decoding',async()=>{
     const h=harness();h.config.app.nodeEnv='production';
     await expect(h.service.upload(buyer,'order','upload-key-1',file)).rejects.toThrow('BANK_RECEIPT_DISABLED');
     expect(h.tx.$transaction).not.toHaveBeenCalled();expect(decodeReceiptImage).not.toHaveBeenCalled();
