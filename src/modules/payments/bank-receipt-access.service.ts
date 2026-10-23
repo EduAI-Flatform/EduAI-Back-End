@@ -46,7 +46,14 @@ export class BankReceiptAccessService {
     return this.serializable(async tx=>{const {order}=await this.load(tx,claimId,buyerId);return this.describe(await this.latest(tx,order.id));});
   }
   async describeClaimAdmin(actorId:string,claimId:string) {
-    return this.serializable(async tx=>{await this.operator(tx,actorId);const {order}=await this.load(tx,claimId);return this.describe(await this.latest(tx,order.id));});
+    return this.serializable(async tx=>{
+      await this.operator(tx,actorId);const {order}=await this.load(tx,claimId);
+      const state=this.describe(await this.latest(tx,order.id));
+      const history=await tx.commerceReceiptAccessEvent.findMany({where:{generation:{orderId:order.id}},
+        orderBy:[{createdAt:'asc'},{id:'asc'}],take:200,
+        select:{id:true,action:true,actorId:true,reason:true,createdAt:true,generation:{select:{generation:true}}}});
+      return {...state,history};
+    });
   }
 
   /** Caller holds canonical payment proof; order + buyer locks make revoke/payment races serial. */
@@ -91,6 +98,7 @@ export class BankReceiptAccessService {
         changed=await tx.commerceReceiptAccessGeneration.update({where:{id:generation.id},data:{status:'REVOKED',closedAt:new Date()}});
       } else {
         this.assertGrantEnabled(order.buyerId);
+
         await this.requireEligible(tx,order,claim.status,claim.expiresAt);
         changed=await this.createGeneration(tx,order,claimId,actorId,generation.generation+1,generation.accessStartsAt);
       }
@@ -152,6 +160,8 @@ export class BankReceiptAccessService {
   }
   private async requireEligible(tx:Prisma.TransactionClient,order:AccessOrder,claimStatus:string,claimExpiresAt:Date) {
     this.assertGrantEnabled(order.buyerId);
+    const eligibleBuyer=await tx.user.findFirst({where:{id:order.buyerId,status:'active',deletedAt:null},select:{id:true}});
+    if(!eligibleBuyer)throw new ConflictException('RECEIPT_BUYER_NOT_ELIGIBLE');
     const now=new Date();const request=await tx.commerceBankTransferRequest.findUnique({where:{orderId:order.id}});
     if(claimStatus!=='MATCHED_CLAIM' || claimExpiresAt<=now || order.status!=='pending_payment' || order.confirmedSettlementId || !request || !['PENDING','UNDER_REVIEW','NEEDS_SUPPORT'].includes(request.status) || request.expiresAt<=now)throw new ConflictException('RECEIPT_ACCESS_NOT_ELIGIBLE');
     const sellers=(process.env.BANK_RECEIPT_SYNTHETIC_SELLER_IDS??'').split(',').map(id=>id.trim()).filter(Boolean);
@@ -165,8 +175,10 @@ export class BankReceiptAccessService {
     const order=await tx.commerceOrder.findUnique({where:{id:claim.orderId},include:includeOrder});
     if(!order || order.buyerId!==claim.buyerId)throw new NotFoundException('RECEIPT_NOT_FOUND');
     await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id=${order.buyerId}::uuid FOR UPDATE`);
-    const buyer=await tx.user.findFirst({where:{id:order.buyerId,status:'active',deletedAt:null},select:{id:true}});
-    if(!buyer)throw new NotFoundException('RECEIPT_NOT_FOUND');
+    if(buyerId) {
+      const buyer=await tx.user.findFirst({where:{id:order.buyerId,status:'active',deletedAt:null},select:{id:true}});
+      if(!buyer)throw new NotFoundException('RECEIPT_NOT_FOUND');
+    }
     return {claim,order};
   }
   private latest(tx:Prisma.TransactionClient,orderId:string) {

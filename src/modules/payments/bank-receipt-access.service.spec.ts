@@ -22,7 +22,7 @@ describe('Full synthetic receipt access provenance',()=>{
         findUnique:jest.fn().mockImplementation(async({where}:any)=>generations.find(g=>g.id===where.id)??null),
         update:jest.fn().mockImplementation(async({where,data}:any)=>Object.assign(generations.find(g=>g.id===where.id),data))},
       commerceReceiptAccessEffect:{create:jest.fn().mockImplementation(async({data}:any)=>{effects.push(data);return data;}),findMany:jest.fn().mockImplementation(async({where}:any)=>effects.filter(e=>e.generationId===where.generationId))},
-      commerceReceiptAccessEvent:{findUnique:jest.fn().mockImplementation(async({where}:any)=>events.find(e=>e.actorId===where.actorId_operationKeyHash.actorId&&e.operationKeyHash===where.actorId_operationKeyHash.operationKeyHash)??null),
+      commerceReceiptAccessEvent:{findMany:jest.fn().mockImplementation(async()=>events),findUnique:jest.fn().mockImplementation(async({where}:any)=>events.find(e=>e.actorId===where.actorId_operationKeyHash.actorId&&e.operationKeyHash===where.actorId_operationKeyHash.operationKeyHash)??null),
         create:jest.fn().mockImplementation(async({data}:any)=>{events.push(data);return data;})},
       courseAccessGrant:{findUnique:jest.fn().mockImplementation(async({where}:any)=>grants.find(g=>g.id===where.id))},
       membershipSubscription:{findFirst:jest.fn().mockResolvedValue(null),create:jest.fn(),updateMany:jest.fn()},serviceEntitlementGrant:{updateMany:jest.fn()},
@@ -93,4 +93,17 @@ describe('Full synthetic receipt access provenance',()=>{
     await h.service.restore(admin,'claim','membership-restore',{reason:'Synthetic membership restored',expectedGeneration:1});
     expect(h.tx.serviceEntitlementGrant.create.mock.calls[1][0].data.quotaPoolId).toBe('pool');
     expect(h.tx.serviceEntitlementGrant.create.mock.calls[1][0].data.endsAt).toEqual(endsAt);
+  });  it('returns full source-generation chronology to an authorized Admin only',async()=>{
+    const h=harness();await h.service.grantForClaim(buyer,'claim');
+    await h.service.revoke(admin,'claim','admin-history-key',{reason:'Synthetic discrepancy reviewed',expectedGeneration:1});
+    const result=await h.service.describeClaimAdmin(admin,'claim');
+    expect(result.history).toHaveLength(2);expect(result.history[1]).toMatchObject({reason:'Synthetic discrepancy reviewed',action:'REVOKED'});
+    expect(h.tx.commerceReceiptAccessEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{generation:{orderId:'order'}}}));
+    h.tx.user.findFirst.mockResolvedValue(null);
+    await expect(h.service.describeClaimAdmin(admin,'claim')).rejects.toThrow('RECEIPT_OPERATOR_REQUIRED');
+  });  it('allows an authorized Admin to revoke a disabled buyer but refuses restoration',async()=>{
+    const h=harness();await h.service.grantForClaim(buyer,'claim');
+    h.tx.user.findFirst.mockImplementation(async({where}:any)=>where.id===admin?{id:admin}:null);
+    await expect(h.service.revoke(admin,'claim','disabled-buyer-revoke',{reason:'Disabled buyer source cleanup',expectedGeneration:1})).resolves.toMatchObject({state:'REVOKED'});
+    await expect(h.service.restore(admin,'claim','disabled-buyer-restore',{reason:'Disabled buyer restore denied',expectedGeneration:1})).rejects.toThrow('RECEIPT_BUYER_NOT_ELIGIBLE');
   });});

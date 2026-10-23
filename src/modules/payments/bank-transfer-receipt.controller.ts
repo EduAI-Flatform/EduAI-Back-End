@@ -1,4 +1,5 @@
-﻿import { BadRequestException, Controller, Get, Header, Headers, Param, ParseUUIDPipe, Post, Query, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { IsIn, IsOptional } from 'class-validator';
+import { BadRequestException, Controller, Get, Header, Headers, Param, ParseUUIDPipe, Post, Query, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
@@ -10,6 +11,10 @@ import { Roles } from '../auth/roles.decorator';
 import { ListPendingPaymentQueryDto } from './dto/payment-request-response.dto';
 import { MAX_RECEIPT_BYTES, ReceiptImageUpload } from './bank-transfer-receipt-image';
 import { BankReceiptService } from './bank-transfer-receipt.service';
+
+export class ReceiptReviewQueueDto extends ListPendingPaymentQueryDto {
+  @IsOptional() @IsIn(['pending', 'all']) scope?: 'pending' | 'all';
+}
 
 @ApiTags('Bank Receipt Claims') @ApiBearerAuth()
 @Controller('payments') @UseGuards(JwtAuthGuard, RolesGuard) @Roles(RoleName.student)
@@ -46,7 +51,7 @@ export class BankReceiptController {
 export class BankReceiptAdminController {
   constructor(private readonly receipts:BankReceiptService) {}
   @Get() @Header('Cache-Control','no-store')
-  list(@CurrentUser('id') actorId:string,@Query() query:ListPendingPaymentQueryDto) {return this.receipts.listAdmin(actorId,query);}
+  list(@CurrentUser('id') actorId:string,@Query() query:ReceiptReviewQueueDto) {return this.receipts.listAdmin(actorId,query);}
   @Get(':receiptId') @Header('Cache-Control','no-store')
   detail(@CurrentUser('id') actorId:string,@Param('receiptId',new ParseUUIDPipe({version:'4'})) receiptId:string) {
     return this.receipts.detailAdmin(actorId,receiptId);

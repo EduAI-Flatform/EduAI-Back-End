@@ -360,4 +360,8 @@ describe('MembershipCheckoutService', () => {
     await expect(service.current(learnerId)).resolves.toMatchObject({membership:{
       source:'UNVERIFIED_RECEIPT_ACCESS',verificationStatus:'PENDING_RECONCILIATION',financialProof:false,
     }});
+  });  it('recovers pending purchase and renewal orders as well as plan changes',async()=>{
+    const {service,prisma}=harness();await service.current(learnerId);
+    const where=prisma.membershipCheckoutIntent.findFirst.mock.calls[0][0].where;
+    expect(where).not.toHaveProperty('action');expect(where.order).toEqual({status:'pending_payment'});
   });});

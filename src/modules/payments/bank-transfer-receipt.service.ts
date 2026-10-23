@@ -103,21 +103,39 @@ export class BankReceiptService {
     await this.serializable(tx => this.ownedOrder(tx, buyerId, row.orderId));
     return this.readImage(row, buyerId);
   }
-  async listAdmin(actorId: string, query: { page: number; pageSize: number }) {
+  async listAdmin(actorId: string, query: { page: number; pageSize: number; scope?: 'pending' | 'all' }) {
     await this.admin(actorId);
     const page = Math.max(1, Math.min(100_000, Math.floor(query.page) || 1));
     const pageSize = Math.max(1, Math.min(100, Math.floor(query.pageSize) || 20));
+    const where: Prisma.CommerceBankReceiptClaimWhereInput = query.scope === 'all' ? {} : { order: { OR: [
+      { status: 'pending_payment' }, { receiptAccessGenerations: { some: { status: 'ACCESS_UNVERIFIED' } } },
+    ] } };
     const [rows, total] = await Promise.all([
-      this.prisma.commerceBankReceiptClaim.findMany({ orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
-      this.prisma.commerceBankReceiptClaim.count(),
+      this.prisma.commerceBankReceiptClaim.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.commerceBankReceiptClaim.count({ where }),
     ]);
-    return { items: await Promise.all(rows.map(async row => this.response(await this.expireProcessing(row)))), page, pageSize, total, totalPages: Math.ceil(total / pageSize) };
+    return { items: await this.adminResponses(rows), page, pageSize, total, totalPages: Math.ceil(total / pageSize) };
   }
   async detailAdmin(actorId: string, receiptId: string) {
     await this.admin(actorId);
     const row = await this.prisma.commerceBankReceiptClaim.findUnique({ where: { id: receiptId } });
     if (!row) throw new NotFoundException('RECEIPT_NOT_FOUND');
-    return this.response(await this.expireProcessing(row));
+    return (await this.adminResponses([row]))[0];
+  }
+  private async adminResponses(rows: CommerceBankReceiptClaim[]) {
+    if (rows.length === 0) return [];
+    const orders = await this.prisma.commerceOrder.findMany({
+      where: { id: { in: [...new Set(rows.map(row => row.orderId))] } },
+      select: { id: true, orderNumber: true, status: true, payableAmountMinor: true, currency: true,
+        buyer: { select: { id: true, fullName: true, email: true } },
+        lines: { select: { productType: true, displayTitle: true } } },
+    });
+    const byId = new Map(orders.map(order => [order.id, order]));
+    return Promise.all(rows.map(async row => {
+      const order = byId.get(row.orderId);
+      return { ...this.response(await this.expireProcessing(row)),
+        order: order ? { ...order, payableAmountMinor: order.payableAmountMinor.toString() } : null };
+    }));
   }
   async imageAdmin(actorId: string, receiptId: string): Promise<Buffer> {
     await this.admin(actorId);
@@ -243,6 +261,8 @@ export class BankReceiptService {
           if (unique) throw error; // Preserve the caller's duplicate-claim/transaction handling.
           throw new ConflictException('RECEIPT_CONCURRENT_OPERATION');
         }
+        // Release the failed transaction before a bounded pause; hot retries can overlap the same winning commit.
+        if (serialization) await new Promise<void>(resolve => setTimeout(resolve, 25 * (attempt + 1)));
       }
     }
     throw new ConflictException('RECEIPT_CONCURRENT_OPERATION');

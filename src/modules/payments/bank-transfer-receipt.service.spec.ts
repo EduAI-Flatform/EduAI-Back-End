@@ -22,7 +22,7 @@ describe('Private synthetic receipt intake', () => {
     const tx:any={
       $queryRaw:jest.fn().mockResolvedValue([]),
       user:{findFirst:jest.fn().mockResolvedValue({id:buyer})},
-      commerceOrder:{findFirst:jest.fn().mockImplementation(async ({where}) => where.buyerId===buyer?order:null)},
+      commerceOrder:{findMany:jest.fn().mockResolvedValue([]),findFirst:jest.fn().mockImplementation(async ({where}) => where.buyerId===buyer?order:null)},
       commerceBankTransferRequest:{findUnique:jest.fn().mockResolvedValue(request)},
       commerceBankReceiptClaim:{
         findUnique:jest.fn().mockImplementation(async ({where}) => claims.find(c=>where.id?c.id===where.id:c.buyerId===where.buyerId_operationKeyHash.buyerId&&c.operationKeyHash===where.buyerId_operationKeyHash.operationKeyHash)??null),
@@ -179,4 +179,33 @@ describe('Private synthetic receipt intake', () => {
     h.claims[0].expiresAt=new Date(0);h.tx.commerceBankReceiptClaim.findMany.mockResolvedValue(h.claims);h.storage.remove.mockRejectedValue(new Error('busy'));
     expect(await h.service.cleanupExpired()).toEqual({deleted:0});expect(h.claims[0].imageDeletedAt).toBeNull();
   });
-});
+  it('returns buyer and exact order facts only in the protected Admin review queue',async()=>{
+    const h=harness();await h.service.upload(buyer,'order','admin-context-key',file);
+    process.env.BANK_TRANSFER_SANDBOX_OPERATOR_IDS=buyer;
+    h.tx.commerceBankReceiptClaim.findMany.mockResolvedValue(h.claims);
+    h.tx.commerceOrder.findMany.mockResolvedValue([{id:'order',orderNumber:'EDU-SYNTHETIC',status:'pending_payment',
+      payableAmountMinor:1000n,currency:'VND',buyer:{id:buyer,fullName:'Synthetic buyer',email:'synthetic@example.test'},
+      lines:[{productType:'course',displayTitle:'Synthetic course'}]}]);
+    const response=await h.service.listAdmin(buyer,{page:1,pageSize:20});
+    expect(response.items[0]).toMatchObject({financialProof:false,order:{orderNumber:'EDU-SYNTHETIC',
+      payableAmountMinor:'1000',buyer:{fullName:'Synthetic buyer'}}});
+    const owned=await h.service.listOwned(buyer,'order');expect(owned.items[0]).not.toHaveProperty('order');
+  });  it('yields between structured serialization retries so a competing commit can finish',async()=>{
+    jest.useFakeTimers();
+    try{const h=harness();const conflict=Object.assign(new Error('TransactionWriteConflict'),{name:'DriverAdapterError',cause:{kind:'TransactionWriteConflict'}});
+      h.tx.$transaction.mockRejectedValue(conflict);
+      const result=h.service.upload(buyer,'order','backoff-conflict-key',file).catch(error=>error);
+      await jest.advanceTimersByTimeAsync(0);expect(h.tx.$transaction).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(25);expect(h.tx.$transaction).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(50);expect(h.tx.$transaction).toHaveBeenCalledTimes(3);
+      expect((await result).message).toBe('RECEIPT_CONCURRENT_OPERATION');
+    }finally{jest.useRealTimers();}
+  });  it('defaults Admin queue to pending orders or still-active early access, with an explicit history view',async()=>{
+    const h=harness();process.env.BANK_TRANSFER_SANDBOX_OPERATOR_IDS=buyer;
+    await h.service.listAdmin(buyer,{page:1,pageSize:20});
+    const filter=h.tx.commerceBankReceiptClaim.findMany.mock.calls[0][0].where;
+    expect(filter).toEqual({order:{OR:[{status:'pending_payment'},{receiptAccessGenerations:{some:{status:'ACCESS_UNVERIFIED'}}}]}});
+    expect(h.tx.commerceBankReceiptClaim.count).toHaveBeenCalledWith({where:filter});
+    await h.service.listAdmin(buyer,{page:1,pageSize:20,scope:'all'});
+    expect(h.tx.commerceBankReceiptClaim.findMany.mock.calls[1][0].where).toEqual({});
+  });});

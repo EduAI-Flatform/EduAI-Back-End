@@ -22,6 +22,9 @@ export class PaymentAttemptResponseDto {
   receiptUploadEnabled?: boolean;
 
   @ApiPropertyOptional()
+  receiptReviewEnabled?: boolean;
+
+  @ApiPropertyOptional()
   bankTransfer?: { bankName: string; bankBin: string; accountNumber: string; beneficiaryName: string; transferContent: string };
 
   @ApiProperty({ example: 'PENDING' })

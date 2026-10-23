@@ -191,7 +191,7 @@ async function main() {
     await assertReceiptNonfinancial(canonicalA.orderId); await assertReceiptNonfinancial(canonicalB.orderId);
     console.log('PASS receipt cross-order canonical image replay rejected despite different PNG encodings');
 
-    for(let receiptRace=0;receiptRace<3;receiptRace++) {
+    for(let receiptRace=0;receiptRace<10;receiptRace++) {
     const transactionA=await prepareReceipt(); const transactionB=await prepareReceipt();
     const receiptTransactionId='RECEIPT-TX-'+randomUUID().toUpperCase();
     const transactionFileA=await receiptFile(transactionA.bankRequest,'#44'+receiptRace.toString(16).padStart(2,'0')+'01',receiptTransactionId);
