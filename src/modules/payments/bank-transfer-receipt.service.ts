@@ -103,13 +103,16 @@ export class BankReceiptService {
     await this.serializable(tx => this.ownedOrder(tx, buyerId, row.orderId));
     return this.readImage(row, buyerId);
   }
-  async listAdmin(actorId: string, query: { page: number; pageSize: number }) {
+  async listAdmin(actorId: string, query: { page: number; pageSize: number; scope?: 'pending' | 'all' }) {
     await this.admin(actorId);
     const page = Math.max(1, Math.min(100_000, Math.floor(query.page) || 1));
     const pageSize = Math.max(1, Math.min(100, Math.floor(query.pageSize) || 20));
+    const where: Prisma.CommerceBankReceiptClaimWhereInput = query.scope === 'all' ? {} : { order: { OR: [
+      { status: 'pending_payment' }, { receiptAccessGenerations: { some: { status: 'ACCESS_UNVERIFIED' } } },
+    ] } };
     const [rows, total] = await Promise.all([
-      this.prisma.commerceBankReceiptClaim.findMany({ orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
-      this.prisma.commerceBankReceiptClaim.count(),
+      this.prisma.commerceBankReceiptClaim.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.commerceBankReceiptClaim.count({ where }),
     ]);
     return { items: await this.adminResponses(rows), page, pageSize, total, totalPages: Math.ceil(total / pageSize) };
   }

@@ -200,4 +200,12 @@ describe('Private synthetic receipt intake', () => {
       await jest.advanceTimersByTimeAsync(50);expect(h.tx.$transaction).toHaveBeenCalledTimes(3);
       expect((await result).message).toBe('RECEIPT_CONCURRENT_OPERATION');
     }finally{jest.useRealTimers();}
+  });  it('defaults Admin queue to pending orders or still-active early access, with an explicit history view',async()=>{
+    const h=harness();process.env.BANK_TRANSFER_SANDBOX_OPERATOR_IDS=buyer;
+    await h.service.listAdmin(buyer,{page:1,pageSize:20});
+    const filter=h.tx.commerceBankReceiptClaim.findMany.mock.calls[0][0].where;
+    expect(filter).toEqual({order:{OR:[{status:'pending_payment'},{receiptAccessGenerations:{some:{status:'ACCESS_UNVERIFIED'}}}]}});
+    expect(h.tx.commerceBankReceiptClaim.count).toHaveBeenCalledWith({where:filter});
+    await h.service.listAdmin(buyer,{page:1,pageSize:20,scope:'all'});
+    expect(h.tx.commerceBankReceiptClaim.findMany.mock.calls[1][0].where).toEqual({});
   });});
