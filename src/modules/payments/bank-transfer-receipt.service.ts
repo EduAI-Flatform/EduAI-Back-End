@@ -217,7 +217,16 @@ export class BankReceiptService {
     for (let attempt = 0; attempt < 3; attempt++) {
       try { return await this.prisma.$transaction(operation, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }); }
       catch (error) {
-        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || !['P2034', 'P2002'].includes(error.code) || attempt === 2) throw error;
+        const unique = this.isUniqueError(error);
+        const cause = error instanceof Error ? (error as Error & { cause?: { kind?: unknown } }).cause : undefined;
+        const serialization = (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034')
+          || (error instanceof Error && error.name === 'DriverAdapterError' && cause?.kind === 'TransactionWriteConflict');
+        if (!unique && !serialization) throw error;
+        // Prisma driver adapters may surface SQLSTATE40001 directly at COMMIT instead of P2034.
+        if (attempt === 2) {
+          if (unique) throw error; // Preserve the caller's duplicate-claim/transaction handling.
+          throw new ConflictException('RECEIPT_CONCURRENT_OPERATION');
+        }
       }
     }
     throw new ConflictException('RECEIPT_CONCURRENT_OPERATION');
