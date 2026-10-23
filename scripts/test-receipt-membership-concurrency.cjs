@@ -2,6 +2,7 @@
 // Invoked only after the parent harness validates an empty, disposable localhost CI database.
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const { ConflictException } = require('@nestjs/common');
 module.exports = async function membershipReceiptAcceptance(context) {
   const { clients, pool, ids, receiptStorage, receiptOcr, receiptFile, facts, key } = context;
   const { CourseAccessService } = require('../dist/src/modules/access/course-access.service.js');
@@ -13,25 +14,31 @@ module.exports = async function membershipReceiptAcceptance(context) {
   const { MembershipCheckoutService } = require('../dist/src/modules/memberships/membership-checkout.service.js');
   const { ServiceEntitlementService } = require('../dist/src/modules/memberships/service-entitlement.service.js');
   const { CommerceProductService } = require('../dist/src/modules/commerce/commerce-product.service.js');
+  // Narrow runtime doubles intentionally omit unrelated config and outbound delivery services.
+  /** @type {any} */
   const config = { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-ci-quota-only' } };
   const access = [], banks = [], quotas = [], checkouts = [], courses = [], receipts = [];
   for (const client of clients) {
+    /** @type {any} */
     const audit = { record: async (input, tx) => tx.auditLog.create({ data: { actorKind: input.actorKind ?? 'USER', actorId: input.actorId ?? null,
       action: input.action, targetType: input.target.type, targetId: input.target.id, metadataJson: input.metadata ?? {} } }) };
     const course = new CourseAccessService(client, config);
     const receiptAccess = new BankReceiptAccessService(client, course, audit, config);
-    const fulfillment = new CommerceFulfillmentService(client, course, audit, { createForUser: async () => {} }, receiptAccess);
+    /** @type {any} */
+    const notifications = { createForUser: async () => {} };
+    const fulfillment = new CommerceFulfillmentService(client, course, audit, notifications, receiptAccess);
     receipts.push(new BankReceiptService(client, config, audit, receiptStorage, receiptOcr, receiptAccess));
     courses.push(course); access.push(receiptAccess); banks.push(new BankTransferService(client, config, audit, fulfillment));
     quotas.push(new ServiceEntitlementService(client, config));
     checkouts.push(new MembershipCheckoutService(client, audit, new CommerceProductService(audit), new MembershipContinuityService(client, course, audit)));
   }
+  /** @type {import('../generated/prisma/client').PrismaClient} */
   const db = clients[0];
   const fixture = Object.fromEntries(['plan','version','duration','definition','course'].map(name => [name, randomUUID()]));
   const role = await db.role.upsert({where:{name:'student'},create:{name:'student'},update:{}});
   await db.userRole.createMany({data:[{userId:ids.buyer,roleId:role.id}],skipDuplicates:true});
   await db.course.create({data:{id:fixture.course,instructorId:ids.seller,title:'Synthetic private membership course',slug:'receipt-member-'+fixture.course,
-    level:'beginner',status:'published',visibility:'private',priceAmountMinor:1000n,priceCurrency:'VND'}});
+    level:'beginner',status:'published',visibility:'private',priceAmountMinor:1000,priceCurrency:'VND'}});
   await db.membershipPlan.create({data:{id:fixture.plan,code:'SYNTHETIC_'+fixture.plan.replace(/-/g,'').toUpperCase()}});
   await db.membershipPlanVersion.create({data:{id:fixture.version,planId:fixture.plan,versionNumber:1,displayName:'Synthetic receipt membership',
     baseMonthlyPriceAmountMinor:1000n,currency:'VND',createdById:ids.admin1}});
@@ -45,7 +52,11 @@ module.exports = async function membershipReceiptAcceptance(context) {
   const created=await Promise.all(checkouts.map(service=>service.createCheckout(ids.buyer,checkoutKey,input)));
   assert.equal(created[0].order.id,created[1].order.id);
   const orderId=created[0].order.id;
-  await assert.rejects(checkouts[0].createCheckout(ids.buyer,key(),input),error=>error?.getResponse?.()?.error==='MEMBERSHIP_CHANGE_PENDING');
+  await assert.rejects(checkouts[0].createCheckout(ids.buyer,key(),input),error=>{
+    if(!(error instanceof ConflictException))return false;
+    const response=error.getResponse();
+    return typeof response==='object' && 'error' in response && response.error==='MEMBERSHIP_CHANGE_PENDING';
+  });
   console.log('PASS real membership checkout same-key race returns one order and rejects a second pending checkout');
   await banks[0].create(ids.buyer,orderId,key());
   const request=(await pool.query('SELECT * FROM commerce_bank_transfer_requests WHERE order_id=$1',[orderId])).rows[0];
@@ -54,11 +65,12 @@ module.exports = async function membershipReceiptAcceptance(context) {
   process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED='true';
   const uploadKey=key();
   const claim=await receipts[0].upload(ids.buyer,orderId,uploadKey,image);
-  assert.equal(claim.status,'MATCHED_CLAIM');assert.equal(claim.access.state,'ACCESS_UNVERIFIED');
+  assert.equal(claim.status,'MATCHED_CLAIM');assert.ok('access' in claim);assert.equal(claim.access.state,'ACCESS_UNVERIFIED');assert.ok('generationId' in claim.access);
   const replay=await receipts[1].upload(ids.buyer,orderId,uploadKey,image);
-  assert.equal(replay.id,claim.id);assert.equal(replay.access.generationId,claim.access.generationId);
+  assert.equal(replay.id,claim.id);assert.ok('access' in replay && 'generationId' in replay.access);assert.equal(replay.access.generationId,claim.access.generationId);
   const grants=await Promise.all(access.map(service=>service.grantForClaim(ids.buyer,claim.id)));
   assert.equal(grants[0].generationId,grants[1].generationId);
+  /** @type {import('../src/modules/access/course-access.service').CourseAccessRequest} */
   const learning={user:{id:ids.buyer,roles:['student']},courseId:fixture.course,operation:'FULL_LEARNING'};
   assert.equal((await courses[0].decide(learning)).mode,'LEARNER');
   assert.equal((await quotas[0].resolve(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA')).remaining,'3');
