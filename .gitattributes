@@ -1,0 +1,2 @@
+# Migration fingerprints are byte-exact release artifacts on every platform.
+prisma/migrations/**/migration.sql text eol=lf
