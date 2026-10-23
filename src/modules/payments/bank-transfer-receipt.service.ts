@@ -258,6 +258,8 @@ export class BankReceiptService {
           if (unique) throw error; // Preserve the caller's duplicate-claim/transaction handling.
           throw new ConflictException('RECEIPT_CONCURRENT_OPERATION');
         }
+        // Release the failed transaction before a bounded pause; hot retries can overlap the same winning commit.
+        if (serialization) await new Promise<void>(resolve => setTimeout(resolve, 25 * (attempt + 1)));
       }
     }
     throw new ConflictException('RECEIPT_CONCURRENT_OPERATION');

@@ -190,4 +190,14 @@ describe('Private synthetic receipt intake', () => {
     expect(response.items[0]).toMatchObject({financialProof:false,order:{orderNumber:'EDU-SYNTHETIC',
       payableAmountMinor:'1000',buyer:{fullName:'Synthetic buyer'}}});
     const owned=await h.service.listOwned(buyer,'order');expect(owned.items[0]).not.toHaveProperty('order');
+  });  it('yields between structured serialization retries so a competing commit can finish',async()=>{
+    jest.useFakeTimers();
+    try{const h=harness();const conflict=Object.assign(new Error('TransactionWriteConflict'),{name:'DriverAdapterError',cause:{kind:'TransactionWriteConflict'}});
+      h.tx.$transaction.mockRejectedValue(conflict);
+      const result=h.service.upload(buyer,'order','backoff-conflict-key',file).catch(error=>error);
+      await jest.advanceTimersByTimeAsync(0);expect(h.tx.$transaction).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(25);expect(h.tx.$transaction).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(50);expect(h.tx.$transaction).toHaveBeenCalledTimes(3);
+      expect((await result).message).toBe('RECEIPT_CONCURRENT_OPERATION');
+    }finally{jest.useRealTimers();}
   });});
