@@ -111,13 +111,28 @@ export class BankReceiptService {
       this.prisma.commerceBankReceiptClaim.findMany({ orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
       this.prisma.commerceBankReceiptClaim.count(),
     ]);
-    return { items: await Promise.all(rows.map(async row => this.response(await this.expireProcessing(row)))), page, pageSize, total, totalPages: Math.ceil(total / pageSize) };
+    return { items: await this.adminResponses(rows), page, pageSize, total, totalPages: Math.ceil(total / pageSize) };
   }
   async detailAdmin(actorId: string, receiptId: string) {
     await this.admin(actorId);
     const row = await this.prisma.commerceBankReceiptClaim.findUnique({ where: { id: receiptId } });
     if (!row) throw new NotFoundException('RECEIPT_NOT_FOUND');
-    return this.response(await this.expireProcessing(row));
+    return (await this.adminResponses([row]))[0];
+  }
+  private async adminResponses(rows: CommerceBankReceiptClaim[]) {
+    if (rows.length === 0) return [];
+    const orders = await this.prisma.commerceOrder.findMany({
+      where: { id: { in: [...new Set(rows.map(row => row.orderId))] } },
+      select: { id: true, orderNumber: true, status: true, payableAmountMinor: true, currency: true,
+        buyer: { select: { id: true, fullName: true, email: true } },
+        lines: { select: { productType: true, displayTitle: true } } },
+    });
+    const byId = new Map(orders.map(order => [order.id, order]));
+    return Promise.all(rows.map(async row => {
+      const order = byId.get(row.orderId);
+      return { ...this.response(await this.expireProcessing(row)),
+        order: order ? { ...order, payableAmountMinor: order.payableAmountMinor.toString() } : null };
+    }));
   }
   async imageAdmin(actorId: string, receiptId: string): Promise<Buffer> {
     await this.admin(actorId);

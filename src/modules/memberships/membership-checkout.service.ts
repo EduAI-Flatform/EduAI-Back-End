@@ -89,7 +89,6 @@ export class MembershipCheckoutService {
       this.prisma.membershipCheckoutIntent.findFirst({
         where: {
           userId: learnerId,
-          action: { in: [MembershipCheckoutAction.upgrade, MembershipCheckoutAction.downgrade] },
           order: { status: CommerceOrderStatus.pending_payment },
         },
         orderBy: { createdAt: 'desc' },

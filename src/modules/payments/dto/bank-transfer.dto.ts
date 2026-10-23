@@ -22,6 +22,7 @@ export class BankStatementDto {
 }
 
 export class BankApprovalDto {
+  @IsOptional() @IsString() @Length(8, 300) reason?: string;
   @IsIn(['BANK_STATEMENT_CHECKED']) source!: 'BANK_STATEMENT_CHECKED';
   @Matches(/^[a-f0-9]{64}$/) statementSha256!: string;
   @Matches(/^[A-Z0-9._:-]{1,100}$/) transactionId!: string;

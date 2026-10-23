@@ -143,4 +143,17 @@ describe('manual bank statement authorization and settlement', () => {
       commerceBankStatementEvidence: { findUnique: jest.fn().mockResolvedValue(null) } };
     await expect(requireBankTransferProof(tx, 'order', 's')).rejects.toThrow('BANK_STATEMENT_PROOF_REQUIRED');
   });
-});
+  it('retains receipt review after expiry while refusing new uploads',async()=>{
+    const h=harness();const saved={...process.env};
+    try{process.env.BANK_RECEIPT_SANDBOX_ENABLED='true';process.env.BANK_RECEIPT_SYNTHETIC_BUYER_IDS='learner';
+      h.request.status='EXPIRED';h.prisma.commerceOrder={findFirst:jest.fn().mockResolvedValue(h.order)};
+      h.prisma.commerceBankTransferRequest={findUnique:jest.fn().mockResolvedValue(h.request)};
+      const response=await h.service.status('learner','order');
+      expect(response.payment).toMatchObject({receiptReviewEnabled:true});expect(response.payment).not.toHaveProperty('receiptUploadEnabled');
+    }finally{process.env=saved;}
+  });
+  it('records an optional bank-review reason without relaxing dual approval',async()=>{
+    const h=harness();await h.service.approve(reviewer,'evidence','reason-key-01',{...h.input,reason:'Independent bank statement checked'});
+    expect(h.audit.record).toHaveBeenCalledWith(expect.objectContaining({metadata:expect.objectContaining({reason:'Independent bank statement checked',distinctApprovalCount:1})}),h.tx);
+    expect(h.tx.commerceSettlement.create).not.toHaveBeenCalled();
+  });});

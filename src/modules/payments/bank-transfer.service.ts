@@ -93,7 +93,7 @@ export class BankTransferService {
     return { orderId, orderNumber: order.orderNumber, orderStatus: request.status === 'EXPIRED' ? 'EXPIRED' : order.status.toUpperCase(), paymentRequired: true,
       payment: { id: request.paymentAttemptId, provider: 'bank_transfer', status: request.status,
         amount: { amountMinor: request.amountMinor.toString(), currency: 'VND' }, expiresAt: request.expiresAt, bankTransfer,
-        ...(pending && receiptSandboxEnabled(this.config.app.nodeEnv, process.env, learnerId) ? { receiptUploadEnabled: true } : {}),
+        ...(receiptSandboxEnabled(this.config.app.nodeEnv, process.env, learnerId) ? { receiptReviewEnabled: true, ...(pending ? { receiptUploadEnabled: true } : {}) } : {}),
         ...(pending ? { qrCodeDataUrl: await QRCode.toDataURL(createVietQrPayload(request.bankBin, request.accountNumber, request.amountMinor, request.transferContent), { margin: 4, width: 480 }) } : {}) } };
   }
   async support(learnerId: string, orderId: string, key: string | undefined, reason: string) {
@@ -205,7 +205,7 @@ export class BankTransferService {
       // Recheck current active admin authority for BOTH approvers before committing money.
       for (const approval of approvals) await this.operator(tx, approval.actorId);
       await this.audit.record({ actorId, action: AuditAction.PaymentReconciliationChecked,
-        target: { type: 'commerce_bank_statement_evidence', id: evidenceId }, metadata: { distinctApprovalCount: approvals.length } }, tx);
+        target: { type: 'commerce_bank_statement_evidence', id: evidenceId }, metadata: { distinctApprovalCount: approvals.length, ...(input.reason ? { reason: input.reason.trim() } : {}) } }, tx);
       if (approvals.length < 2) return { orderId: request.orderId, settlementId: null, status: 'UNDER_REVIEW' };
       const order = await tx.commerceOrder.findUniqueOrThrow({ where: { id: request.orderId } });
       if (order.status !== 'pending_payment' || order.payableAmountMinor !== request.amountMinor || order.confirmedSettlementId) throw new ConflictException('ORDER_NOT_PAYABLE');
