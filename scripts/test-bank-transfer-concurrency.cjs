@@ -34,10 +34,15 @@ async function main() {
     const { PrismaPg } = require('@prisma/adapter-pg');
     const { PrismaClient } = require('../dist/generated/prisma/client.js');
     const { BankTransferService } = require('../dist/src/modules/payments/bank-transfer.service.js');
+    const { BankReceiptService } = require('../dist/src/modules/payments/bank-transfer-receipt.service.js');
+    const { decodeReceiptImage } = require('../dist/src/modules/payments/bank-transfer-receipt-image.js');
+    const sharp = require('sharp');
     const { requireBankTransferProof } = require('../dist/src/modules/payments/bank-transfer-proof.js');
     const ids = Object.fromEntries(['seller','buyer','admin1','admin2','role','course','product'].map(k => [k,randomUUID()]));
     process.env.BANK_TRANSFER_SANDBOX_ENABLED = 'true';
     process.env.BANK_TRANSFER_SANDBOX_OPERATOR_IDS = [ids.admin1,ids.admin2].join(',');
+    process.env.BANK_RECEIPT_SANDBOX_ENABLED = 'true';
+    process.env.BANK_RECEIPT_SYNTHETIC_BUYER_IDS = ids.buyer;
     await pool.query(`INSERT INTO users(id,email,password_hash,full_name,updated_at) VALUES
       ($1,'seller@example.test','hash','Seller',NOW()),($2,'buyer@example.test','hash','Buyer',NOW()),
       ($3,'admin1@example.test','hash','Admin 1',NOW()),($4,'admin2@example.test','hash','Admin 2',NOW())`, [ids.seller,ids.buyer,ids.admin1,ids.admin2]);
@@ -50,15 +55,29 @@ async function main() {
     // Marker represents the idempotent fulfillment boundary, never a real enrollment.
     await pool.query('CREATE TABLE payw_test_fulfillment_markers(settlement_id uuid PRIMARY KEY REFERENCES commerce_settlements(id),order_id uuid NOT NULL)');
     const services = [];
+    const receiptServices = [];
+    const receiptOcrOutputs = new Map();
+    const receiptImages = new Map();
+    const receiptStorage = {
+      put: async (id, buffer) => { receiptImages.set(id, Buffer.from(buffer)); },
+      read: async id => receiptImages.get(id),
+      remove: async id => { receiptImages.delete(id); },
+    };
+    const receiptOcr = { assess: async buffer => {
+      const result=receiptOcrOutputs.get(createHash('sha256').update(buffer).digest('hex'));
+      assert.ok(result, 'Every OCR image must be an explicitly registered synthetic fixture');
+      return result;
+    } };
     for (let i=0;i<2;i++) {
       const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: raw, max: 4 }) });
       await client.$connect(); clients.push(client);
-      const audit = { record: async (input, tx) => tx.auditLog.create({data:{actorKind:'USER',actorId:input.actorId,action:input.action,targetType:input.target.type,targetId:input.target.id,metadataJson:input.metadata ?? {}}}) };
+      const audit = { record: async (input, tx) => tx.auditLog.create({data:{actorKind:input.actorKind ?? 'USER',actorId:input.actorId ?? null,action:input.action,targetType:input.target.type,targetId:input.target.id,metadataJson:input.metadata ?? {}}}) };
       const fulfillment = { fulfillConfirmedPayment: async (orderId, settlementId) => client.$transaction(async tx => {
         await requireBankTransferProof(tx, orderId, settlementId);
         await tx.$executeRawUnsafe('INSERT INTO payw_test_fulfillment_markers(settlement_id,order_id) VALUES($1::uuid,$2::uuid) ON CONFLICT DO NOTHING',settlementId,orderId);
       }) };
       services.push(new BankTransferService(client,{app:{nodeEnv:'test'}},audit,fulfillment));
+      receiptServices.push(new BankReceiptService(client,{app:{nodeEnv:'test'}},audit,receiptStorage,receiptOcr));
     }
     const order = async () => {
       const oid=randomUUID(); const connection=await pool.connect();
@@ -92,6 +111,101 @@ async function main() {
     const supportCount=await pool.query('SELECT count(*)::int AS count FROM commerce_bank_support_requests WHERE request_id=$1',[(await request(oid)).id]);
     assert.equal(supportCount.rows[0].count,1);
     console.log('PASS support replay never settles');
+
+    const prepareReceipt = async () => {
+      const orderId=await order(); await services[0].create(ids.buyer,orderId,key());
+      return { orderId, bankRequest:await request(orderId) };
+    };
+    const receiptFile = async (bankRequest, color, transactionId=null, compressionLevel=9) => {
+      const buffer=await sharp({create:{width:64,height:64,channels:3,background:color}}).png({compressionLevel}).toBuffer();
+      const file={buffer,size:buffer.length,mimetype:'image/png'};
+      const image=await decodeReceiptImage(file);
+      receiptOcrOutputs.set(image.imageSha256,{confidence:99,warnings:[],fields:{
+        bankBin:bankRequest.bank_bin,accountNumber:bankRequest.account_number,beneficiaryName:bankRequest.beneficiary_name,
+        amountMinor:bankRequest.amount_minor.toString(),transferContent:bankRequest.transfer_content,
+        occurredAt:new Date().toISOString(),transactionId,
+      }});
+      return file;
+    };
+    const assertReceiptNonfinancial = async orderId => {
+      assert.equal(await count('commerce_settlements',orderId),0);
+      assert.equal(await count('payw_test_fulfillment_markers',orderId),0);
+      const state=(await pool.query('SELECT status,fulfillment_status,confirmed_settlement_id FROM commerce_orders WHERE id=$1',[orderId])).rows[0];
+      assert.deepEqual(state,{status:'pending_payment',fulfillment_status:'not_started',confirmed_settlement_id:null});
+      const attempt=(await pool.query('SELECT status FROM commerce_payment_attempts WHERE order_id=$1',[orderId])).rows;
+      assert.deepEqual(attempt,[{status:'pending'}]);
+    };
+    const entitlementCounts = async () => (await pool.query(`SELECT
+      (SELECT count(*)::int FROM course_access_grants) AS course_grants,
+      (SELECT count(*)::int FROM membership_subscriptions) AS memberships,
+      (SELECT count(*)::int FROM service_entitlement_grants) AS service_grants`)).rows[0];
+    const beforeReceiptEntitlements=await entitlementCounts();
+
+    const replayReceipt=await prepareReceipt();
+    const replayFile=await receiptFile(replayReceipt.bankRequest,'#110011'); const replayKey=key();
+    const receiptReplay=await Promise.all(receiptServices.map(service=>service.upload(ids.buyer,replayReceipt.orderId,replayKey,replayFile)));
+    assert.equal(receiptReplay[0].id,receiptReplay[1].id);
+    assert.equal(await count('commerce_bank_receipt_claims',replayReceipt.orderId),1);
+    const replayState=(await pool.query('SELECT status FROM commerce_bank_receipt_claims WHERE order_id=$1',[replayReceipt.orderId])).rows[0];
+    assert.equal(replayState.status,'MATCHED_CLAIM');
+    await assertReceiptNonfinancial(replayReceipt.orderId);
+    console.log('PASS receipt concurrent same-key replay creates one nonfinancial claim');
+
+    const cappedReceipt=await prepareReceipt();
+    const cappedFiles=await Promise.all(['#220001','#220002','#220003','#220004'].map(color=>receiptFile(cappedReceipt.bankRequest,color)));
+    const cappedResults=await Promise.allSettled(cappedFiles.map((file,index)=>receiptServices[index%2].upload(ids.buyer,cappedReceipt.orderId,key(),file)));
+    const cappedSuccesses=cappedResults.filter(result=>result.status==='fulfilled').length;
+    assert.ok(cappedSuccesses>=1 && cappedSuccesses<=3);
+    assert.ok(cappedResults.some(result=>result.status==='rejected'));
+    for(const result of cappedResults) {
+      if(result.status==='rejected') assert.ok(result.reason?.code==='P2034' || /RECEIPT_UPLOAD_LIMIT/.test(result.reason?.message ?? ''),
+        'Competing receipt uploads may reject only for the upload cap or bounded serialization retry exhaustion');
+    }
+    let cappedCount=await count('commerce_bank_receipt_claims',cappedReceipt.orderId);
+    assert.ok(cappedCount>=1 && cappedCount<=3);
+    // Retry exhaustion is allowed under contention; it must never evade the DB cap.
+    // Complete remaining capacity sequentially, then prove a fresh fourth claim fails.
+    for(let fill=0;fill<3 && cappedCount<3;fill++) {
+      const fillFile=await receiptFile(cappedReceipt.bankRequest,['#225500','#225501','#225502'][fill]);
+      await receiptServices[0].upload(ids.buyer,cappedReceipt.orderId,key(),fillFile);
+      cappedCount=await count('commerce_bank_receipt_claims',cappedReceipt.orderId);
+    }
+    const fourthFile=await receiptFile(cappedReceipt.bankRequest,'#22ffff');
+    await assert.rejects(receiptServices[0].upload(ids.buyer,cappedReceipt.orderId,key(),fourthFile),/RECEIPT_UPLOAD_LIMIT/);
+    assert.equal(await count('commerce_bank_receipt_claims',cappedReceipt.orderId),3);
+    await assertReceiptNonfinancial(cappedReceipt.orderId);
+    console.log('PASS receipt four-way competing uploads never exceed three-claim limit');
+
+    const canonicalA=await prepareReceipt(); const canonicalB=await prepareReceipt();
+    const canonicalFileA=await receiptFile(canonicalA.bankRequest,'#330033',null,0);
+    const canonicalFileB=await receiptFile(canonicalB.bankRequest,'#330033',null,9);
+    assert.notEqual(createHash('sha256').update(canonicalFileA.buffer).digest('hex'),createHash('sha256').update(canonicalFileB.buffer).digest('hex'));
+    assert.equal((await decodeReceiptImage(canonicalFileA)).imageSha256,(await decodeReceiptImage(canonicalFileB)).imageSha256);
+    const canonicalCollision=await Promise.allSettled([
+      receiptServices[0].upload(ids.buyer,canonicalA.orderId,key(),canonicalFileA),
+      receiptServices[1].upload(ids.buyer,canonicalB.orderId,key(),canonicalFileB),
+    ]);
+    assert.equal(canonicalCollision.filter(result=>result.status==='fulfilled').length,1);
+    assert.equal(canonicalCollision.filter(result=>result.status==='rejected').length,1);
+    assert.equal(await count('commerce_bank_receipt_claims',canonicalA.orderId)+await count('commerce_bank_receipt_claims',canonicalB.orderId),1);
+    await assertReceiptNonfinancial(canonicalA.orderId); await assertReceiptNonfinancial(canonicalB.orderId);
+    console.log('PASS receipt cross-order canonical image replay rejected despite different PNG encodings');
+
+    const transactionA=await prepareReceipt(); const transactionB=await prepareReceipt();
+    const receiptTransactionId='RECEIPT-TX-'+randomUUID().toUpperCase();
+    const transactionFileA=await receiptFile(transactionA.bankRequest,'#440001',receiptTransactionId);
+    const transactionFileB=await receiptFile(transactionB.bankRequest,'#440002',receiptTransactionId);
+    const transactionClaims=await Promise.all([
+      receiptServices[0].upload(ids.buyer,transactionA.orderId,key(),transactionFileA),
+      receiptServices[1].upload(ids.buyer,transactionB.orderId,key(),transactionFileB),
+    ]);
+    assert.deepEqual(transactionClaims.map(claim=>claim.status).sort(),['MATCHED_CLAIM','REVIEW_REQUIRED']);
+    assert.ok(transactionClaims.some(claim=>claim.warnings.includes('TRANSACTION_REUSED')));
+    const transactionRows=(await pool.query('SELECT transaction_key_hash FROM commerce_bank_receipt_claims WHERE order_id=ANY($1::uuid[])',[[transactionA.orderId,transactionB.orderId]])).rows;
+    assert.equal(transactionRows.length,2);assert.equal(transactionRows.filter(row=>row.transaction_key_hash!==null).length,1);
+    await assertReceiptNonfinancial(transactionA.orderId);await assertReceiptNonfinancial(transactionB.orderId);
+    assert.deepEqual(await entitlementCounts(),beforeReceiptEntitlements);
+    console.log('PASS receipt scoped transaction replay requires review; no settlements, fulfillment or entitlements created');
 
     const same = await prepare();
     const repeats=await Promise.all(services.map(s=>s.approve(ids.admin1,same.e.id,key(),same.f)));
@@ -131,7 +245,7 @@ async function main() {
       assert.equal(actual,state.status==='PAID'?'confirmed':'cancelled');
     }
     console.log('PASS cancel versus approval races (5 iterations)');
-    console.log('PAYW_POSTGRES_CONCURRENCY=PASS; live PostgreSQL, two independent Prisma clients, synthetic money only');
+    console.log('PAYW_POSTGRES_CONCURRENCY=PASS; live PostgreSQL, two independent Prisma clients, 4 receipt race scenarios, synthetic money only');
   } finally {
     for(const client of clients) await client.$disconnect();
     await pool.end();

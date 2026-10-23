@@ -1,3 +1,8 @@
+import { BankReceiptCleanupScheduler } from './bank-transfer-receipt-cleanup.scheduler';
+import { BankReceiptService } from './bank-transfer-receipt.service';
+import { BankReceiptStorageService } from './bank-transfer-receipt-storage.service';
+import { BankReceiptOcrService } from './bank-transfer-receipt-ocr.service';
+import { BankReceiptController, BankReceiptAdminController } from './bank-transfer-receipt.controller';
 import { Module } from '@nestjs/common';
 import { BankTransferService } from './bank-transfer.service';
 import { BankTransferController, BankTransferAdminController } from './bank-transfer.controller';
@@ -38,8 +43,9 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
 
 @Module({
   imports: [AppConfigModule, AuditModule, AuthModule, PrismaModule, NotificationsModule],
-  controllers: [BankTransferController, BankTransferAdminController, PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController, PaymentRefundController],
+  controllers: [BankReceiptController, BankReceiptAdminController, BankTransferController, BankTransferAdminController, PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController, PaymentRefundController],
   providers: [
+    BankReceiptService, BankReceiptStorageService, BankReceiptOcrService, BankReceiptCleanupScheduler,
     BankTransferService,
     PaymentRequestService,
     PaymentWebhookService,
