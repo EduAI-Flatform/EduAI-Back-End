@@ -250,6 +250,7 @@ async function main() {
     console.log('PASS cancel versus approval races (5 iterations)');
     await require('./test-receipt-quota-concurrency.cjs')(pool);
     await require('./test-receipt-access-concurrency.cjs')({clients,pool,ids,prepareReceipt,receiptFile,receiptServices,facts,key});
+    await require('./test-receipt-membership-concurrency.cjs')({clients,pool,ids,receiptStorage,receiptOcr,receiptFile,facts,key});
     console.log('PAYW_POSTGRES_CONCURRENCY=PASS; live PostgreSQL, two independent Prisma clients, 4 receipt race scenarios, synthetic money only');
   } finally {
     for(const client of clients) await client.$disconnect();

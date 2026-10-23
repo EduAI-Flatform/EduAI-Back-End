@@ -1,0 +1,111 @@
+'use strict';
+// Invoked only after the parent harness validates an empty, disposable localhost CI database.
+const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
+const { ConflictException } = require('@nestjs/common');
+module.exports = async function membershipReceiptAcceptance(context) {
+  const { clients, pool, ids, receiptStorage, receiptOcr, receiptFile, facts, key } = context;
+  const { CourseAccessService } = require('../dist/src/modules/access/course-access.service.js');
+  const { BankReceiptAccessService } = require('../dist/src/modules/payments/bank-receipt-access.service.js');
+  const { CommerceFulfillmentService } = require('../dist/src/modules/payments/commerce-fulfillment.service.js');
+  const { BankReceiptService } = require('../dist/src/modules/payments/bank-transfer-receipt.service.js');
+  const { BankTransferService } = require('../dist/src/modules/payments/bank-transfer.service.js');
+  const { MembershipContinuityService } = require('../dist/src/modules/memberships/membership-continuity.service.js');
+  const { MembershipCheckoutService } = require('../dist/src/modules/memberships/membership-checkout.service.js');
+  const { ServiceEntitlementService } = require('../dist/src/modules/memberships/service-entitlement.service.js');
+  const { CommerceProductService } = require('../dist/src/modules/commerce/commerce-product.service.js');
+  // Narrow runtime doubles intentionally omit unrelated config and outbound delivery services.
+  /** @type {any} */
+  const config = { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-ci-quota-only' } };
+  const access = [], banks = [], quotas = [], checkouts = [], courses = [], receipts = [];
+  for (const client of clients) {
+    /** @type {any} */
+    const audit = { record: async (input, tx) => tx.auditLog.create({ data: { actorKind: input.actorKind ?? 'USER', actorId: input.actorId ?? null,
+      action: input.action, targetType: input.target.type, targetId: input.target.id, metadataJson: input.metadata ?? {} } }) };
+    const course = new CourseAccessService(client, config);
+    const receiptAccess = new BankReceiptAccessService(client, course, audit, config);
+    /** @type {any} */
+    const notifications = { createForUser: async () => {} };
+    const fulfillment = new CommerceFulfillmentService(client, course, audit, notifications, receiptAccess);
+    receipts.push(new BankReceiptService(client, config, audit, receiptStorage, receiptOcr, receiptAccess));
+    courses.push(course); access.push(receiptAccess); banks.push(new BankTransferService(client, config, audit, fulfillment));
+    quotas.push(new ServiceEntitlementService(client, config));
+    checkouts.push(new MembershipCheckoutService(client, audit, new CommerceProductService(audit), new MembershipContinuityService(client, course, audit)));
+  }
+  /** @type {import('../generated/prisma/client').PrismaClient} */
+  const db = clients[0];
+  const fixture = Object.fromEntries(['plan','version','duration','definition','course'].map(name => [name, randomUUID()]));
+  const role = await db.role.upsert({where:{name:'student'},create:{name:'student'},update:{}});
+  await db.userRole.createMany({data:[{userId:ids.buyer,roleId:role.id}],skipDuplicates:true});
+  await db.course.create({data:{id:fixture.course,instructorId:ids.seller,title:'Synthetic private membership course',slug:'receipt-member-'+fixture.course,
+    level:'beginner',status:'published',visibility:'private',priceAmountMinor:1000,priceCurrency:'VND'}});
+  await db.membershipPlan.create({data:{id:fixture.plan,code:'SYNTHETIC_'+fixture.plan.replace(/-/g,'').toUpperCase()}});
+  await db.membershipPlanVersion.create({data:{id:fixture.version,planId:fixture.plan,versionNumber:1,displayName:'Synthetic receipt membership',
+    baseMonthlyPriceAmountMinor:1000n,currency:'VND',createdById:ids.admin1}});
+  await db.membershipDurationOption.create({data:{id:fixture.duration,versionId:fixture.version,months:1,discountPercent:0,displayOrder:0}});
+  await db.serviceEntitlementDefinition.create({data:{id:fixture.definition,code:'SYNTHETIC_RECEIPT_QUOTA',displayName:'Synthetic receipt quota',valueType:'metered',resetPeriod:'membership_term',createdById:ids.admin1}});
+  await db.membershipPlanEntitlement.create({data:{versionId:fixture.version,definitionId:fixture.definition,valueType:'metered',resetPeriod:'membership_term',quota:3n,createdById:ids.admin1}});
+  await db.membershipPlanIncludedCourse.create({data:{versionId:fixture.version,courseId:fixture.course,graceDays:0,createdById:ids.admin1}});
+  await db.membershipPlanVersion.update({where:{id:fixture.version},data:{status:'published',publishedById:ids.admin1,publishedAt:new Date()}});
+  const input={versionId:fixture.version,durationOptionId:fixture.duration,changedBenefitsConfirmed:true};
+  const checkoutKey=key();
+  const created=await Promise.all(checkouts.map(service=>service.createCheckout(ids.buyer,checkoutKey,input)));
+  assert.equal(created[0].order.id,created[1].order.id);
+  const orderId=created[0].order.id;
+  await assert.rejects(checkouts[0].createCheckout(ids.buyer,key(),input),error=>{
+    if(!(error instanceof ConflictException))return false;
+    const response=error.getResponse();
+    return typeof response==='object' && 'error' in response && response.error==='MEMBERSHIP_CHANGE_PENDING';
+  });
+  console.log('PASS real membership checkout same-key race returns one order and rejects a second pending checkout');
+  await banks[0].create(ids.buyer,orderId,key());
+  const request=(await pool.query('SELECT * FROM commerce_bank_transfer_requests WHERE order_id=$1',[orderId])).rows[0];
+  const image=await receiptFile(request,'#731942');
+  process.env.BANK_RECEIPT_SYNTHETIC_SELLER_IDS=[ids.seller,ids.admin1].join(',');
+  process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED='true';
+  const uploadKey=key();
+  const claim=await receipts[0].upload(ids.buyer,orderId,uploadKey,image);
+  assert.equal(claim.status,'MATCHED_CLAIM');assert.ok('access' in claim);assert.equal(claim.access.state,'ACCESS_UNVERIFIED');assert.ok('generationId' in claim.access);
+  const replay=await receipts[1].upload(ids.buyer,orderId,uploadKey,image);
+  assert.equal(replay.id,claim.id);assert.ok('access' in replay && 'generationId' in replay.access);assert.equal(replay.access.generationId,claim.access.generationId);
+  const grants=await Promise.all(access.map(service=>service.grantForClaim(ids.buyer,claim.id)));
+  assert.equal(grants[0].generationId,grants[1].generationId);
+  /** @type {import('../src/modules/access/course-access.service').CourseAccessRequest} */
+  const learning={user:{id:ids.buyer,roles:['student']},courseId:fixture.course,operation:'FULL_LEARNING'};
+  assert.equal((await courses[0].decide(learning)).mode,'LEARNER');
+  assert.equal((await quotas[0].resolve(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA')).remaining,'3');
+  assert.equal(Number((await pool.query('SELECT count(*)::int AS n FROM commerce_settlements WHERE order_id=$1',[orderId])).rows[0].n),0);
+  assert.equal((await db.commerceOrder.findUnique({where:{id:orderId}})).status,'pending_payment');
+  console.log('PASS real matched receipt grants full private-course membership and service quota without settling money');
+  assert.equal((await quotas[0].consume(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA',2n,key())).remaining,'1');
+  await access[0].revoke(ids.admin1,claim.id,key(),{reason:'Synthetic membership discrepancy',expectedGeneration:1});
+  assert.equal((await courses[0].decide(learning)).allowed,false);
+  assert.equal((await courses[0].decide({...learning,courseId:ids.course})).allowed,true,'Independent paid course survives membership revocation');
+  assert.equal((await quotas[0].resolve(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA')).allowed,false);
+  const restoreKey=key();
+  const restored=await Promise.all(access.map(service=>service.restore(ids.admin1,claim.id,restoreKey,{reason:'Synthetic corrected membership evidence',expectedGeneration:1})));
+  assert.equal(restored[0].generation,2);assert.equal(restored[0].generationId,restored[1].generationId);
+  assert.equal((await quotas[0].resolve(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA')).remaining,'1');
+  assert.equal((await quotas[0].consume(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA',1n,key())).remaining,'0');
+  console.log('PASS real membership source revocation/restore preserves other paid access and the original spent quota');
+  const bankFacts=facts(request);
+  const evidence=await banks[0].recordStatement(ids.admin1,request.id,key(),bankFacts);
+  await banks[0].approve(ids.admin1,evidence.id,key(),bankFacts);
+  await banks[1].approve(ids.admin2,evidence.id,key(),bankFacts);
+  assert.equal((await access[0].describeClaim(ids.buyer,claim.id)).state,'VERIFIED_PAID');
+  process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED='false';
+  assert.equal((await courses[0].decide(learning)).mode,'LEARNER');
+  const remaining=await quotas[0].resolve(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA');
+  assert.equal(remaining.remaining,'0');assert.equal(remaining.allowed,false);
+  await assert.rejects(quotas[0].consume(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA',1n,key()),/unavailable or exhausted/);
+  const terms=await db.membershipSubscription.findMany({where:{userId:ids.buyer,versionId:fixture.version},orderBy:{createdAt:'asc'}});
+  assert.equal(terms.length,3);assert.deepEqual(terms.map(term=>term.status),['cancelled','cancelled','active']);
+  assert.ok(terms.every(term=>term.startsAt.getTime()===terms[0].startsAt.getTime()&&term.expiresAt.getTime()===terms[0].expiresAt.getTime()));
+  const serviceGrants=await db.serviceEntitlementGrant.findMany({where:{userId:ids.buyer,definitionId:fixture.definition}});
+  assert.equal(serviceGrants.length,3);assert.equal(new Set(serviceGrants.map(grant=>grant.quotaPoolId)).size,1);
+  assert.ok(serviceGrants[0].quotaPoolId);
+  const spent=await db.serviceEntitlementUsage.aggregate({where:{grant:{definitionId:fixture.definition,userId:ids.buyer}},_sum:{quantity:true},_count:{id:true}});
+  assert.equal(spent._sum.quantity,3n);assert.equal(spent._count.id,2,'No fabricated carry-forward usage');
+  console.log('PASS real dual-approved membership conversion preserves original term, full learning and exhausted quota with early flag OFF');
+  delete process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED;
+};

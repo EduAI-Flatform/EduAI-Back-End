@@ -106,5 +106,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Type-check receipt membership fixtures
+        run: >-
+          npx tsc --allowJs --checkJs --noEmit --target ES2022
+          --module Node16 --moduleResolution Node16 --skipLibCheck --experimentalDecorators
+          scripts/test-receipt-membership-concurrency.cjs
       - name: Exercise real concurrent payment transactions
         run: node --test scripts/test-bank-transfer-concurrency.cjs
