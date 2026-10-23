@@ -1,3 +1,4 @@
+import { receiptEarlyAccessEnabled } from '../../common/security/receipt-sandbox-policy';
 import { receiptSandboxEnabled, assessReceiptClaim } from './bank-transfer-receipt-policy';
 
 describe('receipt claim trust boundary', () => {
@@ -59,5 +60,19 @@ describe('strict OCR timestamp and Vietnamese payee handling', () => {
   });
   it('rejects future claims even within the order window', () => {
     expect(assessReceiptClaim(expected, { ...claim, occurredAt: '2026-03-02T01:11:00Z' }, now).status).toBe('REVIEW_REQUIRED');
+  });
+});
+
+describe('full unverified receipt capability',()=>{
+  const buyer='11111111-1111-4111-8111-111111111111';
+  const flags={BANK_TRANSFER_SANDBOX_ENABLED:'true',BANK_RECEIPT_SANDBOX_ENABLED:'true',BANK_RECEIPT_SYNTHETIC_BUYER_IDS:buyer,BANK_RECEIPT_EARLY_ACCESS_ENABLED:'true'};
+  it('requires every synthetic guard plus the separate early-access opt-in',()=>{
+    expect(receiptEarlyAccessEnabled('test',flags,buyer)).toBe(true);
+    expect(receiptEarlyAccessEnabled('test',{...flags,BANK_RECEIPT_EARLY_ACCESS_ENABLED:'false'},buyer)).toBe(false);
+    expect(receiptEarlyAccessEnabled('test',flags,'other')).toBe(false);
+    expect(receiptEarlyAccessEnabled('development',{...flags,BANK_RECEIPT_SANDBOX_ENABLED:'false'},buyer)).toBe(false);
+  });
+  it.each(['production','staging','unknown'])('cannot enable full early access in %s',runtime=>{
+    expect(receiptEarlyAccessEnabled(runtime,flags,buyer)).toBe(false);
   });
 });

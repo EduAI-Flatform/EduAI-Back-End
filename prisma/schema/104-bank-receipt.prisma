@@ -1,4 +1,5 @@
 model CommerceBankReceiptClaim {
+  accessGenerations CommerceReceiptAccessGeneration[]
   id String @id @db.Uuid
   requestId String @map("request_id") @db.Uuid
   orderId String @map("order_id") @db.Uuid

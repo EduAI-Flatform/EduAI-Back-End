@@ -1,11 +1,4 @@
-import { bankTransferEnabled } from './bank-transfer-policy';
-
-/** Receipt processing is a separate, opt-in synthetic capability, never a payment proof. */
-export function receiptSandboxEnabled(nodeEnv: string, env: NodeJS.ProcessEnv, buyerId: string): boolean {
-  const buyers = (env.BANK_RECEIPT_SYNTHETIC_BUYER_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean);
-  return bankTransferEnabled(nodeEnv, env.BANK_TRANSFER_SANDBOX_ENABLED)
-    && env.BANK_RECEIPT_SANDBOX_ENABLED === 'true' && buyers.includes(buyerId);
-}
+export { receiptSandboxEnabled, receiptEarlyAccessEnabled } from '../../common/security/receipt-sandbox-policy';
 
 export interface ReceiptClaimFields {
   bankBin: string | null;

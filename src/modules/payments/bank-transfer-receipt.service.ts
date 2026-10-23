@@ -1,5 +1,7 @@
+import { BankReceiptAccessService } from './bank-receipt-access.service';
+import { receiptEarlyAccessEnabled } from '../../common/security/receipt-sandbox-policy';
 import { createHash, randomUUID } from 'node:crypto';
-import { ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { CommerceBankReceiptClaim, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppConfigService } from '../../config/app-config.service';
@@ -17,7 +19,7 @@ const digest = (value: string) => createHash('sha256').update(value).digest('hex
 export class BankReceiptService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService,
     private readonly audit: AuditService, private readonly storage: BankReceiptStorageService,
-    private readonly ocr: BankReceiptOcrService) {}
+    private readonly ocr: BankReceiptOcrService, @Optional() private readonly access?: BankReceiptAccessService) {}
 
   async upload(buyerId: string, orderId: string, key: string | undefined, file: Upload) {
     this.assertBuyerEnabled(buyerId);
@@ -53,7 +55,7 @@ export class BankReceiptService {
       if (this.isUniqueError(error)) throw new ConflictException('RECEIPT_ALREADY_USED');
       throw error;
     }
-    if (!created.fresh) return this.response(await this.expireProcessing(created.claim));
+    if (!created.fresh) return this.uploadResponse(buyerId, await this.expireProcessing(created.claim));
     let output: Awaited<ReturnType<BankReceiptOcrService['assess']>> | null = null;
     let failure: string | null = null;
     try { await this.storage.put(created.claim.id, image.buffer); }
@@ -65,12 +67,26 @@ export class BankReceiptService {
     // The provider runs outside the DB transaction; a lease prevents indefinite PROCESSING.
     try {
       const result = await this.finalize(created.claim.id, output, failure);
-      return this.response(result);
+      return this.uploadResponse(buyerId, result);
     } catch (error) {
       // Two different orders may race to submit the same bank code. Preserve both claims,
       // but only the first can reserve the replay key; the second requires human review.
       if (!this.isUniqueError(error)) throw error;
-      return this.response(await this.finalize(created.claim.id, output, failure, true));
+      return this.uploadResponse(buyerId, await this.finalize(created.claim.id, output, failure, true));
+    }
+  }
+
+  private async uploadResponse(buyerId: string, claim: CommerceBankReceiptClaim) {
+    const response = this.response(claim);
+    if (!this.access || claim.status !== 'MATCHED_CLAIM'
+      || !receiptEarlyAccessEnabled(this.config.app.nodeEnv, process.env, buyerId)) return response;
+    // Financial assessment remains committed independently. Retry uses the same claim/order ledger.
+    try { return { ...response, access: await this.access.grantForClaim(buyerId, claim.id) }; }
+    catch (error) {
+      if (!(error instanceof ConflictException) && !(error instanceof ForbiddenException)
+        && !(error instanceof ServiceUnavailableException)) throw error;
+      return { ...response, access: { state: 'NONE', source: 'UNVERIFIED_RECEIPT_ACCESS',
+        generation: 0, warning: 'ACCESS_REVIEW_REQUIRED' } };
     }
   }
 

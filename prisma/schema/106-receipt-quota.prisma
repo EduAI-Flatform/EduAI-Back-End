@@ -1,0 +1,19 @@
+// Shared consumption identity survives receipt revocation/restoration and verified conversion.
+// Scalar owner/order/definition FKs are additionally enforced by the additive SQL migration.
+model ServiceEntitlementQuotaPool {
+  id           String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderLineId  String                        @map("order_line_id") @db.Uuid
+  userId       String                        @map("user_id") @db.Uuid
+  definitionId String                        @map("definition_id") @db.Uuid
+  valueType    ServiceEntitlementValueType    @map("value_type")
+  resetPeriod  ServiceEntitlementResetPeriod  @map("reset_period")
+  booleanValue Boolean?                      @map("boolean_value")
+  quota        BigInt?
+  startsAt     DateTime                      @map("starts_at")
+  endsAt       DateTime?                     @map("ends_at")
+  createdAt    DateTime                      @default(now()) @map("created_at")
+  grants       ServiceEntitlementGrant[]
+
+  @@unique([orderLineId, definitionId], map: "service_entitlement_quota_pools_line_definition_key")
+  @@map("service_entitlement_quota_pools")
+}

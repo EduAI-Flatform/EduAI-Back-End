@@ -166,11 +166,20 @@ export class MembershipContinuityService {
           AND source_type IN ('membership'::course_access_source_type, 'membership_grace'::course_access_source_type)
         FOR UPDATE
       `);
+      const receiptEffects = await tx.commerceReceiptAccessEffect.findMany({
+        where: { resourceType: 'course_access_grant', effectKind: { in: ['MEMBERSHIP_COURSE', 'MEMBERSHIP_GRACE'] },
+          generation: { buyerId: input.learnerId, status: 'ACCESS_UNVERIFIED' } },
+        select: { resourceId: true, generationId: true, orderLineId: true, effectKind: true },
+      });
       const grants = await tx.courseAccessGrant.findMany({
         where: {
           userId: input.learnerId,
           courseId: input.courseId,
-          sourceType: { in: [CourseAccessSourceType.membership, CourseAccessSourceType.membership_grace] },
+          OR: [
+            { sourceType: { in: [CourseAccessSourceType.membership, CourseAccessSourceType.membership_grace] } },
+            ...receiptEffects.map(effect => ({ id: effect.resourceId, sourceType: CourseAccessSourceType.unverified_receipt_access,
+              sourceId: `${effect.generationId}:${effect.orderLineId}${effect.effectKind === 'MEMBERSHIP_GRACE' ? ':grace' : ''}` })),
+          ],
           status: CourseAccessGrantStatus.active,
         },
         orderBy: { id: 'asc' },

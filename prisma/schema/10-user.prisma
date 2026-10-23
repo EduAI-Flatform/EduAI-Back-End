@@ -1,4 +1,7 @@
 model User {
+  receiptAccessGenerations CommerceReceiptAccessGeneration[] @relation("ReceiptAccessBuyer")
+  receiptAccessCreated CommerceReceiptAccessGeneration[] @relation("ReceiptAccessCreator")
+  receiptAccessEvents CommerceReceiptAccessEvent[] @relation("ReceiptAccessActor")
   bankReceiptClaims CommerceBankReceiptClaim[] @relation("BankReceiptBuyer")
   bankStatements CommerceBankStatementEvidence[] @relation("BankStatementRecorder")
   bankApprovals CommerceBankApproval[] @relation("BankStatementApprover")

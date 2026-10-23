@@ -1,4 +1,5 @@
 enum CourseAccessSourceType {
+  unverified_receipt_access
   course_purchase
   membership
   membership_grace

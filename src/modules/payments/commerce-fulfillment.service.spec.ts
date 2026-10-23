@@ -59,6 +59,7 @@ describe('CommerceFulfillmentService', () => {
     }],
     membershipCheckoutIntent: null,
   };
+  const receiptAccess = { convertForPaidOrder: jest.fn().mockResolvedValue(false) };
   const tx: any = {
     $queryRaw: jest.fn().mockResolvedValue([]),
     commerceOrder: { findUnique: jest.fn(), update: jest.fn() },
@@ -71,6 +72,7 @@ describe('CommerceFulfillmentService', () => {
       update: jest.fn().mockResolvedValue({}),
     },
     membershipSubscription: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
+    serviceEntitlementQuotaPool: { findUnique: jest.fn().mockResolvedValue(null) },
     serviceEntitlementGrant: {
       createMany: jest.fn(),
       findUnique: jest.fn().mockResolvedValue({ id: 'service-grant-id' }),
@@ -87,13 +89,18 @@ describe('CommerceFulfillmentService', () => {
     },
   };
   const notifications = { createForUser: jest.fn() };
-  const service = new CommerceFulfillmentService(prisma, courseAccess as any, audit as any, notifications as any);
+  const service = new CommerceFulfillmentService(prisma, courseAccess as any, audit as any, notifications as any, receiptAccess as any);
 
   beforeEach(() => {
     jest.clearAllMocks();
     tx.commerceOrder.findUnique.mockResolvedValue(order);
   });
 
+  it('converts receipt effects only after bank proof and before canonical purchase grants', async () => {
+    await service.fulfillConfirmedOrder(tx, order.id, CommerceActorKind.provider, null);
+    expect(receiptAccess.convertForPaidOrder).toHaveBeenCalledWith(tx, order.id, 'settlement-id');
+    expect(receiptAccess.convertForPaidOrder.mock.invocationCallOrder[0]).toBeLessThan(courseAccess.ensureGrant.mock.invocationCallOrder[0]);
+  });
   it('creates a perpetual purchase grant and records fulfillment exactly once', async () => {
     await service.fulfillConfirmedOrder(tx, order.id, CommerceActorKind.provider, null);
 

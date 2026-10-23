@@ -5,13 +5,14 @@ import {
   ServiceEntitlementValueType,
 } from '../../../generated/prisma/client';
 import { ServiceEntitlementService } from './service-entitlement.service';
+import { ensureReceiptQuotaPool } from './receipt-quota-pool';
 
 const now = new Date('2026-08-24T12:00:00.000Z');
 
 function grant(overrides: Record<string, unknown> = {}) {
   return {
     id: 'grant-id', userId: 'student-id', definitionId: 'definition-id',
-    sourceType: 'MEMBERSHIP_TERM', sourceId: 'term-id',
+    sourceType: 'MEMBERSHIP_TERM', sourceId: 'term-id', quotaPoolId: null,
     valueType: ServiceEntitlementValueType.metered,
     resetPeriod: ServiceEntitlementResetPeriod.calendar_month,
     booleanValue: null, quota: 3n,
@@ -49,17 +50,69 @@ function harness(grants = [grant()]) {
     },
     serviceEntitlementGrant: { findMany: findGrants, createMany: jest.fn() },
     membershipPlanEntitlement: { findMany: jest.fn().mockResolvedValue([]) },
+    commerceReceiptAccessEffect: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const prisma = {
     $transaction: jest.fn(async (operation) => operation(tx)),
     serviceEntitlementGrant: { findMany: findGrants },
     serviceEntitlementUsage: { aggregate: jest.fn().mockResolvedValue({ _sum: { quantity: 0n } }) },
+    commerceReceiptAccessEffect: tx.commerceReceiptAccessEffect,
   };
-  const config = { commerce: { idempotencySecret: 's'.repeat(32) } };
+  const config = { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 's'.repeat(32) } };
   return { service: new ServiceEntitlementService(prisma as never, config as never), tx };
 }
 
 describe('ServiceEntitlementService', () => {
+  const env = { ...process.env };
+  afterEach(() => { process.env = { ...env }; });
+  const earlyFlags = () => {
+    process.env.BANK_TRANSFER_SANDBOX_ENABLED = 'true';
+    process.env.BANK_RECEIPT_SANDBOX_ENABLED = 'true';
+    process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED = 'true';
+    process.env.BANK_RECEIPT_SYNTHETIC_BUYER_IDS = 'student-id';
+  };
+  it('immediately excludes early service grants when the capability is OFF', async () => {
+    delete process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED;
+    const { service, tx } = harness([grant({ sourceType: 'UNVERIFIED_RECEIPT_ACCESS', sourceId: 'generation:line', quotaPoolId: 'pool-id' })]);
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'early-off-operation', now)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.serviceEntitlementUsage.create).not.toHaveBeenCalled();
+  });
+  it('requires the exact active receipt generation effect for early service usage', async () => {
+    earlyFlags();
+    const { service, tx } = harness([grant({ sourceType: 'UNVERIFIED_RECEIPT_ACCESS', sourceId: 'generation:line', quotaPoolId: 'pool-id' })]);
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'early-no-effect-0001', now)).rejects.toBeInstanceOf(ForbiddenException);
+    tx.commerceReceiptAccessEffect.findMany.mockResolvedValue([{ resourceId: 'grant-id', generationId: 'generation', orderLineId: 'wrong-line' }]);
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'early-wrong-line-0002', now)).rejects.toBeInstanceOf(ForbiddenException);
+    tx.commerceReceiptAccessEffect.findMany.mockResolvedValue([{ resourceId: 'grant-id', generationId: 'generation', orderLineId: 'line' }]);
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'early-right-effect-0003', now)).resolves.toMatchObject({ remaining: '2' });
+    expect(tx.commerceReceiptAccessEffect.findMany).toHaveBeenLastCalledWith({ where: {
+      resourceType: 'service_entitlement_grant', resourceId: { in: ['grant-id'] },
+      generation: { buyerId: 'student-id', status: 'ACCESS_UNVERIFIED' },
+    }, select: { resourceId: true, generationId: true, orderLineId: true } });
+  });
+  it('preserves spent quota when restored and canonical paid grants share the same pool', async () => {
+    earlyFlags();
+    const grants = [grant({ quotaPoolId: 'pool-id', id: 'early-grant', sourceType: 'UNVERIFIED_RECEIPT_ACCESS', sourceId: 'generation-1:line' })];
+    const { service, tx } = harness(grants);
+    tx.commerceReceiptAccessEffect.findMany.mockResolvedValue([{ resourceId: 'early-grant', generationId: 'generation-1', orderLineId: 'line' }]);
+    await expect(service.consume('student-id', 'AI_CHAT', 2n, 'pool-operation-0001', now)).resolves.toMatchObject({ remaining: '1' });
+    grants[0] = grant({ quotaPoolId: 'pool-id', id: 'restored-grant', sourceType: 'UNVERIFIED_RECEIPT_ACCESS', sourceId: 'generation-2:line' });
+    tx.commerceReceiptAccessEffect.findMany.mockResolvedValue([{ resourceId: 'restored-grant', generationId: 'generation-2', orderLineId: 'line' }]);
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'pool-operation-0002', now)).resolves.toMatchObject({ remaining: '0' });
+    grants[0] = grant({ quotaPoolId: 'pool-id', id: 'paid-grant', sourceType: 'membership' });
+    delete process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED;
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'pool-operation-0003', now)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.serviceEntitlementUsage.aggregate).toHaveBeenLastCalledWith({ where: {
+      grant: { quotaPoolId: 'pool-id' }, periodStartsAt: new Date('2026-08-01T00:00:00.000Z'), periodEndsAt: new Date('2026-09-01T00:00:00.000Z'),
+    }, _sum: { quantity: true } });
+  });
+  it('preserves the original per-grant predicate for legacy nonpooled rights', async () => {
+    const { service, tx } = harness();
+    await service.consume('student-id', 'AI_CHAT', 1n, 'legacy-operation-0001', now);
+    expect(tx.serviceEntitlementUsage.aggregate).toHaveBeenCalledWith({ where: {
+      grantId: 'grant-id', periodStartsAt: new Date('2026-08-01T00:00:00.000Z'), periodEndsAt: new Date('2026-09-01T00:00:00.000Z'),
+    }, _sum: { quantity: true } });
+  });
   it('resolves boolean and unlimited grants with typed safe output', async () => {
     const booleanGrant = grant({
       id: 'boolean-grant', valueType: ServiceEntitlementValueType.boolean,
@@ -158,4 +211,20 @@ describe('ServiceEntitlementService', () => {
     ]);
     expect(outcomes.map((item) => item.status).sort()).toEqual(['fulfilled', 'rejected']);
   });
+});
+
+describe('ensureReceiptQuotaPool', () => {
+  const input = { orderLineId: 'line-id', userId: 'student-id', definitionId: 'definition-id',
+    valueType: ServiceEntitlementValueType.metered, resetPeriod: ServiceEntitlementResetPeriod.membership_term,
+    booleanValue: null, quota: 3n, startsAt: new Date('2026-08-01'), endsAt: new Date('2026-09-01') };
+  it('idempotently reuses the exact pool without mutating its snapshot', async () => {
+    const tx = { serviceEntitlementQuotaPool: { createMany: jest.fn(), findUnique: jest.fn(async () => ({ id: 'pool-id', ...input })) } };
+    await expect(ensureReceiptQuotaPool(tx as never, input)).resolves.toEqual({ id: 'pool-id' });
+    expect(tx.serviceEntitlementQuotaPool.createMany).toHaveBeenCalledWith({ data: [input], skipDuplicates: true });
+  });
+  it.each([{ quota: 4n }, { userId: 'other-user' }, { endsAt: null }, { startsAt: new Date('2026-08-02') }])(
+    'rejects an existing pool with different immutable facts', async (mismatch) => {
+      const tx = { serviceEntitlementQuotaPool: { createMany: jest.fn(), findUnique: jest.fn(async () => ({ id: 'pool-id', ...input, ...mismatch })) } };
+      await expect(ensureReceiptQuotaPool(tx as never, input)).rejects.toBeInstanceOf(ConflictException);
+    });
 });

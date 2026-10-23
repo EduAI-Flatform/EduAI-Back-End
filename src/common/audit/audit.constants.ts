@@ -1,4 +1,8 @@
 export const AuditAction = {
+  ReceiptAccessGranted: 'RECEIPT_ACCESS_GRANTED',
+  ReceiptAccessRevoked: 'RECEIPT_ACCESS_REVOKED',
+  ReceiptAccessRestored: 'RECEIPT_ACCESS_RESTORED',
+  ReceiptAccessVerified: 'RECEIPT_ACCESS_VERIFIED',
   AuthLogin: 'AUTH_LOGIN',
   SocialLoginSucceeded: 'SOCIAL_LOGIN_SUCCEEDED',
   SocialLoginFailed: 'SOCIAL_LOGIN_FAILED',

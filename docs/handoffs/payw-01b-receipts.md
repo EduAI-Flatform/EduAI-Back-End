@@ -1,4 +1,4 @@
-﻿# PAYW-01B private receipt intake (synthetic source only)
+# PAYW-01B private receipt intake (synthetic source only)
 
 The new receipt path is disabled by default and always refuses production/staging. It never creates settlement, paid status, order fulfillment or entitlements. Existing bank statements/dual financial approval, PayOS, VNPay and TMI are unchanged.
 
@@ -30,3 +30,23 @@ Run npm test -- --runInBand modules/payments/bank-transfer and npm run test:demo
 For actual local OCR: build, set NODE_ENV=test and BANK_RECEIPT_OCR_DATA_PATH to vetted local models, then node scripts/test-bank-receipt-ocr.cjs. It renders only a synthetic receipt in memory, asserts seven extracted fields, logs score/warnings, and performs no transfer/order/DB operation. It does not download models.
 
 No deployment, production migration/env edit, real image intake, money collection or GO-LIVE acceptance is implied. Dependency audit findings predate this change; no automatic major framework/toolchain upgrade was applied.
+
+## Subphase D: synthetic unverified access (source implementation)
+
+Two additional environment names (actual `.env` is untouched):
+- `BANK_RECEIPT_EARLY_ACCESS_ENABLED`: default `false`; set `true` only in an isolated development/test environment after additive migrations and explicit synthetic fixtures.
+- `BANK_RECEIPT_SYNTHETIC_SELLER_IDS`: comma-separated synthetic seller UUIDs. Every order line must belong to this allowlist; the buyer must already be in `BANK_RECEIPT_SYNTHETIC_BUYER_IDS`.
+
+A matched, unexpired receipt can create full learning access through the existing course grant/enrollment/progress boundary. Membership access creates the real term, included course grants, bounded grace grants and configured service entitlements. These writes never confirm the order, create settlement, or mark payment PAID. The separate immutable effect ledger records `UNVERIFIED_RECEIPT_ACCESS`, generation, claim and exact resource IDs. Active readers require the synthetic capability and exact active ledger provenance. A new image never restores a revoked generation.
+
+Student `GET /payments/receipts/:receiptId/access` reads the owned access state. Admin `GET /admin/commerce/receipt-claims/:receiptId/access` reads its state; `POST .../:receiptId/revoke` and `POST .../:receiptId/restore` require an active allowlisted platform administrator, `Idempotency-Key`, a reason of 8–300 characters and `expectedGeneration >= 1`. Revocation remains available with the early-grant switch off while the receipt review sandbox itself is enabled. Restore creates a new generation with original windows, rather than reactivating terminal grants. Financial bank approval routes and their two-person rules remain unchanged.
+
+Canonical settlement conversion runs in the existing fulfillment transaction after financial proof. It retires only exact receipt resources and creates normal paid resources; a concurrent Admin revocation cannot remove another source's paid access. Membership emergency course revocation includes receipt membership effects, excluding independent receipt course purchases. The current-membership API identifies pending reconciliation explicitly.
+
+### Decision: preserve consumed quota through restore and paid conversion
+
+Service quota previously belonged to a grant ID. Because revoked grants are terminal, restoring or converting to paid creates a different grant; copying the initial quota would refill consumed units. An immutable `(orderLineId, definitionId)` pool therefore binds the original snapshot and period. Each receipt generation and its eventual paid grant points to the same pool at creation. Usage remains append-only on its original grant and is aggregated across all pool grants, including revoked grants. SQL locks the pool during consumption and enforces remaining quota and exact period boundaries. Calendar resets retain their existing semantics. Legacy grants with no pool retain existing behavior. Paid pooling is independent of the early-access switch.
+
+Rejected alternatives: reopening revoked grants (breaks terminal provenance), fabricated carry-forward usage (obscures the audit trail), resetting quota on each generation (over-allocation). Production deployment requires reviewed additive migrations `20261023020000_add_receipt_access` and `20261023021000_add_receipt_quota_pools` before this source revision; disabled flags do not eliminate the schema requirement. No production migration or deployment has been performed.
+
+Known boundary: existing membership overlap/change rules remain in force; an unsupported overlapping term requires review and does not silently grant. Admin browser confirmation, responsive UI and end-to-end website evidence belong to E/F and are not established by these Backend tests.

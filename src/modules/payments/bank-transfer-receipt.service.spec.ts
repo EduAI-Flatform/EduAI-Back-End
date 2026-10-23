@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { BankReceiptService } from './bank-transfer-receipt.service';
 import { decodeReceiptImage } from './bank-transfer-receipt-image';
 jest.mock('./bank-transfer-receipt-image', () => ({ decodeReceiptImage: jest.fn() }));
@@ -37,10 +38,26 @@ describe('Private synthetic receipt intake', () => {
     const audit={record:jest.fn().mockResolvedValue({})};
     const storage={put:jest.fn().mockResolvedValue(undefined),read:jest.fn().mockResolvedValue(file.buffer),remove:jest.fn().mockResolvedValue(undefined)};
     const ocr={assess:jest.fn().mockResolvedValue({fields:{bankBin:'970422',accountNumber:'0000000000',beneficiaryName:'SANDBOX ONLY',amountMinor:'1000',transferContent:'EDUAITEST01',occurredAt:new Date(now-30_000).toISOString(),transactionId:null},confidence:95,warnings:[]})};
+    const access={grantForClaim:jest.fn().mockResolvedValue({state:'ACCESS_UNVERIFIED',generation:1,financialProof:false})};
     const config={app:{nodeEnv:'test'}};
-    return {service:new BankReceiptService(tx,config as any,audit as any,storage as any,ocr as any),tx,claims,storage,ocr,config,request,order,audit};
+    return {service:new BankReceiptService(tx,config as any,audit as any,storage as any,ocr as any,access as any),access,tx,claims,storage,ocr,config,request,order,audit};
   };
-  it('retries a structured driver serialization conflict during final assessment',async()=>{
+  it('uses a separate idempotent access ledger after matched assessment and upload replay',async()=>{
+    process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED='true';const h=harness();
+    const first=await h.service.upload(buyer,'order','early-upload-key',file);
+    const second=await h.service.upload(buyer,'order','early-upload-key',file);
+    expect(first).toMatchObject({status:'MATCHED_CLAIM',financialProof:false,access:{state:'ACCESS_UNVERIFIED'}});
+    expect(second).toMatchObject({access:{state:'ACCESS_UNVERIFIED'}});
+    expect(h.access.grantForClaim).toHaveBeenCalledTimes(2);expect(h.ocr.assess).toHaveBeenCalledTimes(1);
+    expect(h.order.status).toBe('pending_payment');delete process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED;
+  });
+  it('retains matched evidence when access requires review and does not report payment',async()=>{
+    process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED='true';const h=harness();
+    h.access.grantForClaim.mockRejectedValue(new ConflictException('RECEIPT_ACCESS_SCOPE_UNSUPPORTED'));
+    await expect(h.service.upload(buyer,'order','early-review-key',file)).resolves.toMatchObject({
+      status:'MATCHED_CLAIM',financialProof:false,access:{state:'NONE',warning:'ACCESS_REVIEW_REQUIRED'},
+    });expect(h.claims[0].status).toBe('MATCHED_CLAIM');delete process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED;
+  });  it('retries a structured driver serialization conflict during final assessment',async()=>{
     const h=harness();let calls=0;
     const conflict=Object.assign(new Error('TransactionWriteConflict'),{name:'DriverAdapterError',cause:{kind:'TransactionWriteConflict'}});
     h.tx.$transaction.mockImplementation(async(fn:any)=>{calls++;if(calls===3)throw conflict;return fn(h.tx);});

@@ -201,6 +201,9 @@ enum TmiEntitlementStatus {
 }
 
 model User {
+  receiptAccessGenerations CommerceReceiptAccessGeneration[] @relation("ReceiptAccessBuyer")
+  receiptAccessCreated CommerceReceiptAccessGeneration[] @relation("ReceiptAccessCreator")
+  receiptAccessEvents CommerceReceiptAccessEvent[] @relation("ReceiptAccessActor")
   bankReceiptClaims CommerceBankReceiptClaim[] @relation("BankReceiptBuyer")
   bankStatements CommerceBankStatementEvidence[] @relation("BankStatementRecorder")
   bankApprovals CommerceBankApproval[] @relation("BankStatementApprover")
@@ -511,6 +514,7 @@ model CommerceCartLine {
 }
 
 model CommerceOrder {
+  receiptAccessGenerations CommerceReceiptAccessGeneration[]
   bankReceiptClaims CommerceBankReceiptClaim[]
   bankTransferRequest CommerceBankTransferRequest?
   id                    String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -555,6 +559,7 @@ model CommerceOrder {
 }
 
 model CommerceOrderLine {
+  receiptAccessEffects CommerceReceiptAccessEffect[]
   id                       String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderId                  String              @map("order_id") @db.Uuid
   productId                String              @map("product_id") @db.Uuid
@@ -1051,6 +1056,8 @@ model ServiceEntitlementGrant {
   resetPeriod   ServiceEntitlementResetPeriod  @map("reset_period")
   booleanValue  Boolean?                       @map("boolean_value")
   quota         BigInt?
+  quotaPoolId   String?                       @map("quota_pool_id") @db.Uuid
+  quotaPool     ServiceEntitlementQuotaPool?   @relation(fields: [quotaPoolId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   status        ServiceEntitlementGrantStatus  @default(active)
   startsAt      DateTime                       @map("starts_at")
   endsAt        DateTime?                      @map("ends_at")
@@ -1063,6 +1070,7 @@ model ServiceEntitlementGrant {
   @@unique([userId, definitionId, sourceType, sourceId], map: "service_entitlement_grants_source_key")
   @@index([userId, status, startsAt, endsAt])
   @@index([definitionId, status])
+  @@index([quotaPoolId])
   @@map("service_entitlement_grants")
 }
 
@@ -1144,6 +1152,7 @@ model MembershipCheckoutIntent {
 }
 
 enum CourseAccessSourceType {
+  unverified_receipt_access
   course_purchase
   membership
   membership_grace
@@ -1287,6 +1296,7 @@ model CommerceBankSupportRequest {
 }
 
 model CommerceBankReceiptClaim {
+  accessGenerations CommerceReceiptAccessGeneration[]
   id String @id @db.Uuid
   requestId String @map("request_id") @db.Uuid
   orderId String @map("order_id") @db.Uuid
@@ -1314,6 +1324,79 @@ model CommerceBankReceiptClaim {
   @@index([orderId, createdAt])
   @@index([expiresAt, imageDeletedAt])
   @@map("commerce_bank_receipt_claims")
+}
+
+model CommerceReceiptAccessGeneration {
+  id String @id @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  claimId String @map("claim_id") @db.Uuid
+  buyerId String @map("buyer_id") @db.Uuid
+  createdById String @map("created_by_id") @db.Uuid
+  generation Int
+  status String @default("ACCESS_UNVERIFIED") @db.VarChar(24)
+  accessStartsAt DateTime @map("access_starts_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  closedAt DateTime? @map("closed_at")
+  settlementId String? @map("settlement_id") @db.Uuid
+  order CommerceOrder @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  claim CommerceBankReceiptClaim @relation(fields: [claimId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  buyer User @relation("ReceiptAccessBuyer", fields: [buyerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy User @relation("ReceiptAccessCreator", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  effects CommerceReceiptAccessEffect[]
+  events CommerceReceiptAccessEvent[]
+  @@unique([orderId,generation])
+  @@index([buyerId,status])
+  @@map("commerce_receipt_access_generations")
+}
+
+model CommerceReceiptAccessEffect {
+  id String @id @db.Uuid
+  generationId String @map("generation_id") @db.Uuid
+  orderLineId String @map("order_line_id") @db.Uuid
+  effectKind String @map("effect_kind") @db.VarChar(32)
+  resourceType String @map("resource_type") @db.VarChar(32)
+  resourceId String @unique @map("resource_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  generation CommerceReceiptAccessGeneration @relation(fields: [generationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orderLine CommerceOrderLine @relation(fields: [orderLineId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([generationId,effectKind])
+  @@map("commerce_receipt_access_effects")
+}
+
+model CommerceReceiptAccessEvent {
+  id String @id @db.Uuid
+  generationId String @map("generation_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  action String @db.VarChar(24)
+  operationKeyHash String @map("operation_key_hash") @db.VarChar(64)
+  requestHash String @map("request_hash") @db.VarChar(64)
+  reasonDigest String @map("reason_digest") @db.VarChar(64)
+  reason String @db.VarChar(300)
+  createdAt DateTime @default(now()) @map("created_at")
+  generation CommerceReceiptAccessGeneration @relation(fields: [generationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  actor User @relation("ReceiptAccessActor", fields: [actorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@unique([actorId,operationKeyHash])
+  @@map("commerce_receipt_access_events")
+}
+
+// Shared consumption identity survives receipt revocation/restoration and verified conversion.
+// Scalar owner/order/definition FKs are additionally enforced by the additive SQL migration.
+model ServiceEntitlementQuotaPool {
+  id           String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderLineId  String                        @map("order_line_id") @db.Uuid
+  userId       String                        @map("user_id") @db.Uuid
+  definitionId String                        @map("definition_id") @db.Uuid
+  valueType    ServiceEntitlementValueType    @map("value_type")
+  resetPeriod  ServiceEntitlementResetPeriod  @map("reset_period")
+  booleanValue Boolean?                      @map("boolean_value")
+  quota        BigInt?
+  startsAt     DateTime                      @map("starts_at")
+  endsAt       DateTime?                     @map("ends_at")
+  createdAt    DateTime                      @default(now()) @map("created_at")
+  grants       ServiceEntitlementGrant[]
+
+  @@unique([orderLineId, definitionId], map: "service_entitlement_quota_pools_line_definition_key")
+  @@map("service_entitlement_quota_pools")
 }
 
 model Role {

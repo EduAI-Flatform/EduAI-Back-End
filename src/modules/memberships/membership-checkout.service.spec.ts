@@ -88,6 +88,7 @@ function harness() {
   };
   const prisma = {
     $transaction: jest.fn((operation) => operation(tx)),
+    commerceReceiptAccessEffect: { findFirst: jest.fn().mockResolvedValue(null) },
     membershipPlanVersion: { findMany: jest.fn().mockResolvedValue([]) },
     membershipSubscription: { findFirst: jest.fn().mockResolvedValue(null) },
     membershipCheckoutIntent: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -351,4 +352,12 @@ describe('MembershipCheckoutService', () => {
     expect(tx.$queryRaw).toHaveBeenCalled();
     expect(tx.commerceOrder.create).not.toHaveBeenCalled();
   });
-});
+  it('identifies receipt membership as awaiting verification without claiming payment', async () => {
+    const { service, prisma } = harness();
+    prisma.membershipSubscription.findFirst.mockResolvedValue({id:'early-sub',sourceOrderLineId:null,
+      versionId, startsAt:now,expiresAt:new Date('2030-01-01'),version:{displayName:'Gold',plan:{id:'plan',code:'GOLD'}}} as never);
+    prisma.commerceReceiptAccessEffect.findFirst.mockResolvedValue({generation:{status:'ACCESS_UNVERIFIED',orderId:'order',generation:1}} as never);
+    await expect(service.current(learnerId)).resolves.toMatchObject({membership:{
+      source:'UNVERIFIED_RECEIPT_ACCESS',verificationStatus:'PENDING_RECONCILIATION',financialProof:false,
+    }});
+  });});

@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { AppConfigService } from '../../config/app-config.service';
+import { receiptEarlyAccessEnabled } from '../../common/security/receipt-sandbox-policy';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import {
   CourseAccessGrantStatus,
   CourseAccessSourceType,
@@ -43,7 +45,7 @@ export interface EnsureCourseAccessGrantInput {
 
 @Injectable()
 export class CourseAccessService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, @Optional() private readonly config?: AppConfigService) {}
 
   async decide(input: CourseAccessRequest): Promise<CourseAccessDecision> {
     return this.decideWithClient(input, this.prisma);
@@ -78,16 +80,37 @@ export class CourseAccessService {
     let hasGraceGrant = false;
 
     if (input.operation === 'FULL_LEARNING' && input.user && isLearner) {
-      const grant = await client.courseAccessGrant.findFirst({
+      let grant = await client.courseAccessGrant.findFirst({
         where: {
           userId: input.user.id, courseId: input.courseId,
           status: CourseAccessGrantStatus.active, startsAt: { lte: at },
+          sourceType: { in: Object.values(CourseAccessSourceType).filter(source => source !== CourseAccessSourceType.unverified_receipt_access) },
           OR: [{ endsAt: null }, { endsAt: { gt: at } }, { graceEndsAt: { gt: at } }],
         },
         orderBy: [{ endsAt: { sort: 'desc', nulls: 'first' } }, { graceEndsAt: 'desc' }, { id: 'asc' }],
         select: { id: true, sourceType: true, endsAt: true, graceEndsAt: true },
       });
-      const explicitGrace = grant?.sourceType === CourseAccessSourceType.membership_grace;
+      let receiptGrace = false;
+      if (!grant && receiptEarlyAccessEnabled(this.config?.app.nodeEnv ?? 'production', process.env, input.user.id)) {
+        const effects = await client.commerceReceiptAccessEffect.findMany({
+          where: { resourceType: 'course_access_grant', generation: { status: 'ACCESS_UNVERIFIED', buyerId: input.user.id } },
+          select: { resourceId: true, generationId: true, orderLineId: true, effectKind: true },
+        });
+        if (effects.length > 0) {
+          grant = await client.courseAccessGrant.findFirst({
+            where: { userId: input.user.id, courseId: input.courseId, sourceType: CourseAccessSourceType.unverified_receipt_access,
+              status: CourseAccessGrantStatus.active, startsAt: { lte: at },
+              OR: [{ endsAt: null }, { endsAt: { gt: at } }, { graceEndsAt: { gt: at } }],
+              AND: [{ OR: effects.map(effect => ({ id: effect.resourceId,
+                sourceId: `${effect.generationId}:${effect.orderLineId}${effect.effectKind === 'MEMBERSHIP_GRACE' ? ':grace' : ''}` })) }],
+            },
+            orderBy: [{ endsAt: { sort: 'desc', nulls: 'first' } }, { graceEndsAt: 'desc' }, { id: 'asc' }],
+            select: { id: true, sourceType: true, endsAt: true, graceEndsAt: true },
+          });
+          receiptGrace = Boolean(grant && effects.some(effect => effect.resourceId === grant!.id && effect.effectKind === 'MEMBERSHIP_GRACE'));
+        }
+      }
+      const explicitGrace = receiptGrace || grant?.sourceType === CourseAccessSourceType.membership_grace;
       hasActiveGrant = Boolean(grant && !explicitGrace && (grant.endsAt === null || grant.endsAt > at));
       hasGraceGrant = Boolean(grant && (explicitGrace || (!hasActiveGrant && grant.graceEndsAt && grant.graceEndsAt > at)));
     }

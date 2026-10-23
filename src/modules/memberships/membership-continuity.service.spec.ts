@@ -25,6 +25,7 @@ function version(id: string, courses: Array<{ id: string; graceDays: number }>) 
 function harness() {
   const tx = {
     $queryRaw: jest.fn(),
+    commerceReceiptAccessEffect: { findMany: jest.fn().mockResolvedValue([]) },
     learningProgress: { findMany: jest.fn().mockResolvedValue([{ courseId }]) },
     membershipRemovedCourseSnapshot: {
       createMany: jest.fn().mockResolvedValue({ count: 2 }),
@@ -146,7 +147,7 @@ describe('MembershipContinuityService', () => {
     })).resolves.toEqual({ revokedGrantCount: 1 });
     expect(tx.courseAccessGrant.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
-        sourceType: { in: [CourseAccessSourceType.membership, CourseAccessSourceType.membership_grace] },
+        OR: expect.arrayContaining([{ sourceType: { in: [CourseAccessSourceType.membership, CourseAccessSourceType.membership_grace] } }]),
       }),
     }));
     expect(courseAccess.revokeGrant).toHaveBeenCalledWith(expect.objectContaining({
@@ -158,4 +159,14 @@ describe('MembershipContinuityService', () => {
       metadata: expect.objectContaining({ kind: 'SECURITY', revokedGrantCount: 1 }),
     }), tx);
   });
-});
+  it('includes only membership receipt effects in emergency revocation, preserving receipt purchases', async () => {
+    const { service, tx, courseAccess } = harness();
+    tx.commerceReceiptAccessEffect.findMany.mockResolvedValue([{ resourceId: 'early-grant', generationId: 'gen', orderLineId: 'line', effectKind: 'MEMBERSHIP_COURSE' }] as never);
+    tx.courseAccessGrant.findMany.mockResolvedValue([{ id: 'early-grant', userId: learnerId, courseId,
+      sourceType: CourseAccessSourceType.unverified_receipt_access, sourceId: 'gen:line' }] as never);
+    await service.emergencyRevoke('admin-id', { learnerId, courseId, kind: 'SECURITY', reason: 'Approved security response.' });
+    expect(tx.commerceReceiptAccessEffect.findMany).toHaveBeenCalledWith(expect.objectContaining({where: expect.objectContaining({
+      effectKind: { in: ['MEMBERSHIP_COURSE', 'MEMBERSHIP_GRACE'] },
+    })}));
+    expect(courseAccess.revokeGrant).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'gen:line' }), 'MEMBERSHIP_SECURITY', tx);
+  });});

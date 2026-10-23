@@ -210,6 +210,7 @@ model CommerceCartLine {
 }
 
 model CommerceOrder {
+  receiptAccessGenerations CommerceReceiptAccessGeneration[]
   bankReceiptClaims CommerceBankReceiptClaim[]
   bankTransferRequest CommerceBankTransferRequest?
   id                    String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -254,6 +255,7 @@ model CommerceOrder {
 }
 
 model CommerceOrderLine {
+  receiptAccessEffects CommerceReceiptAccessEffect[]
   id                       String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderId                  String              @map("order_id") @db.Uuid
   productId                String              @map("product_id") @db.Uuid

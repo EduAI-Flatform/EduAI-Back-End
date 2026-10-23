@@ -1,3 +1,5 @@
+import { BankReceiptAccessService } from './bank-receipt-access.service';
+import { BankReceiptAccessController, BankReceiptAccessAdminController } from './bank-receipt-access.controller';
 import { BankReceiptCleanupScheduler } from './bank-transfer-receipt-cleanup.scheduler';
 import { BankReceiptService } from './bank-transfer-receipt.service';
 import { BankReceiptStorageService } from './bank-transfer-receipt-storage.service';
@@ -43,9 +45,9 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
 
 @Module({
   imports: [AppConfigModule, AuditModule, AuthModule, PrismaModule, NotificationsModule],
-  controllers: [BankReceiptController, BankReceiptAdminController, BankTransferController, BankTransferAdminController, PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController, PaymentRefundController],
+  controllers: [BankReceiptAccessController, BankReceiptAccessAdminController, BankReceiptController, BankReceiptAdminController, BankTransferController, BankTransferAdminController, PaymentRequestController, PaymentWebhookController, PaymentReconciliationController, PaymentLifecycleController, PaymentRefundController],
   providers: [
-    BankReceiptService, BankReceiptStorageService, BankReceiptOcrService, BankReceiptCleanupScheduler,
+    BankReceiptAccessService, BankReceiptService, BankReceiptStorageService, BankReceiptOcrService, BankReceiptCleanupScheduler,
     BankTransferService,
     PaymentRequestService,
     PaymentWebhookService,

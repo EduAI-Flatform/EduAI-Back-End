@@ -100,8 +100,16 @@ export class MembershipCheckoutService {
       }),
       this.continuity.listExpiringGrace(learnerId, now),
     ]);
+    const receiptEffect = subscription?.sourceOrderLineId === null
+      ? await this.prisma.commerceReceiptAccessEffect.findFirst({
+        where: { resourceType: 'membership_subscription', resourceId: subscription.id, effectKind: 'MEMBERSHIP_TERM',
+          generation: { buyerId: learnerId, status: 'ACCESS_UNVERIFIED' } },
+        select: { generation: { select: { status: true, orderId: true, generation: true } } },
+      }) : null;
     return {
       membership: subscription ? {
+        ...(receiptEffect ? { source: 'UNVERIFIED_RECEIPT_ACCESS', verificationStatus: 'PENDING_RECONCILIATION',
+          financialProof: false, sourceOrderId: receiptEffect.generation.orderId } : {}),
         id: subscription.id,
         plan: subscription.version.plan,
         versionId: subscription.versionId,
