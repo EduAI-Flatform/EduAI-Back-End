@@ -27,6 +27,11 @@ describe('bank payment boundary contracts', () => {
     expect((await validate(plainToInstance(ListPendingPaymentQueryDto, { page: 0, pageSize: 101 }))).length).toBeGreaterThan(0);
     expect((await validate(plainToInstance(ListPendingPaymentQueryDto, { page: 1.5, pageSize: 'invalid' }))).length).toBeGreaterThan(0);
   });
+  it('keeps QR preflight on the Admin controller and delegates to a read-only service', async () => {
+    const bank: any = { previewBankQr: jest.fn().mockResolvedValue({ previewOnly: true, acceptsPayments: false }) };
+    await expect(new BankTransferAdminController(bank).previewQr()).resolves.toEqual({ previewOnly: true, acceptsPayments: false });
+    expect(bank.previewBankQr).toHaveBeenCalledTimes(1);
+  });
   it('rejects screenshot-style evidence and generic empty approval', async () => {
     expect((await validate(plainToInstance(BankStatementDto, { screenshot: 'proof.png' }))).length).toBeGreaterThan(0);
     expect((await validate(new BankApprovalDto())).length).toBeGreaterThan(0);

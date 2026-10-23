@@ -6,7 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppConfigService } from '../../config/app-config.service';
 import { AuditService, AuditAction } from '../../common/audit/audit.service';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
-import { BANK_SANDBOX_RECEIVER, bankTransferEnabled, classifyBankEvidence, createVietQrPayload } from './bank-transfer-policy';
+import { BANK_SANDBOX_RECEIVER, bankQrPreviewReceiver, bankTransferEnabled, classifyBankEvidence, createVietQrPayload } from './bank-transfer-policy';
 import { BankApprovalDto, BankStatementDto } from './dto/bank-transfer.dto';
 import { ListPendingPaymentQueryDto, PaymentRequestResponseDto } from './dto/payment-request-response.dto';
 
@@ -16,6 +16,19 @@ export class BankTransferService {
     private readonly audit: AuditService, private readonly fulfillment: CommerceFulfillmentService) {}
 
   enabled() { return bankTransferEnabled(this.config.app.nodeEnv, process.env.BANK_TRANSFER_SANDBOX_ENABLED); }
+  async previewBankQr() {
+    const receiver = bankQrPreviewReceiver(process.env);
+    if (!receiver) throw new ServiceUnavailableException('BANK_QR_PREVIEW_DISABLED');
+    const transferContent = 'EDUAIPREVIEW';
+    const amountMinor = 1000n;
+    const payload = createVietQrPayload(receiver.bankBin, receiver.accountNumber, amountMinor, transferContent);
+    return {
+      previewOnly: true, acceptsPayments: false, bankTransferProductionEnabled: false,
+      ...receiver, amountMinor: amountMinor.toString(), currency: 'VND', transferContent,
+      qrCodeDataUrl: await QRCode.toDataURL(payload, { margin: 4, width: 480 }),
+      warning: 'CHỈ KIỂM TRA TÊN NGƯỜI NHẬN — KHÔNG CHUYỂN TIỀN. QR không xác nhận chủ tài khoản hay quyền thu tiền.',
+    };
+  }
   private assertEnabled() {
     if (!this.enabled()) throw new ServiceUnavailableException({ error: 'BANK_TRANSFER_DISABLED', message: 'Bank transfer is unavailable.' });
   }

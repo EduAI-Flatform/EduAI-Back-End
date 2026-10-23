@@ -4,6 +4,23 @@ import { BadRequestException } from '@nestjs/common';
 export const BANK_SANDBOX_RECEIVER = Object.freeze({ bankName: 'MB Bank (SANDBOX)', bankBin: '970422',
   accountNumber: '0000000000', beneficiaryName: 'EDUAI SANDBOX - KHONG CHUYEN TIEN THAT' });
 
+// Read-only Admin QR preflight. This is intentionally NOT a checkout receiver
+// or a financial enablement flag, and cannot enable bank_transfer in production.
+export function bankQrPreviewReceiver(env: NodeJS.ProcessEnv) {
+  if (env.BANK_TRANSFER_PREVIEW_ENABLED !== 'true') return null;
+  const bankName = env.BANK_TRANSFER_RECEIVER_BANK_NAME?.trim();
+  const bankBin = env.BANK_TRANSFER_RECEIVER_BANK_BIN?.trim();
+  const accountNumber = env.BANK_TRANSFER_RECEIVER_ACCOUNT_NUMBER?.trim();
+  const beneficiaryName = env.BANK_TRANSFER_RECEIVER_NAME?.trim();
+  if (!bankName || !/^[^\r\n<>]{2,80}$/.test(bankName) || !bankBin || !/^\d{6}$/.test(bankBin) ||
+      !accountNumber || !/^\d{6,19}$/.test(accountNumber) ||
+      !beneficiaryName || !/^[^\r\n<>]{5,160}$/.test(beneficiaryName) ||
+      accountNumber === BANK_SANDBOX_RECEIVER.accountNumber) {
+    throw new BadRequestException('Invalid bank QR preview receiver configuration.');
+  }
+  return Object.freeze({ bankName, bankBin, accountNumber, beneficiaryName });
+}
+
 export function bankTransferEnabled(nodeEnv: string, flag: string | undefined): boolean {
   return (nodeEnv === 'development' || nodeEnv === 'test') && flag === 'true';
 }
