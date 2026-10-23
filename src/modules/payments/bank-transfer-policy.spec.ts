@@ -1,10 +1,23 @@
-import { bankTransferEnabled, createVietQrPayload, classifyBankEvidence } from './bank-transfer-policy';
+import { bankQrPreviewReceiver, bankTransferEnabled, createVietQrPayload, classifyBankEvidence } from './bank-transfer-policy';
 
 describe('manual VietQR safety policy', () => {
   it('fails closed in production even with an enabling flag', () => {
     expect(bankTransferEnabled('production', 'true')).toBe(false);
     expect(bankTransferEnabled('development', undefined)).toBe(false);
     expect(bankTransferEnabled('test', 'true')).toBe(true);
+  });
+  it('validates isolated Admin bank preview without enabling production checkout', () => {
+    expect(bankQrPreviewReceiver({})).toBeNull();
+    const env = { BANK_TRANSFER_PREVIEW_ENABLED: 'true', BANK_TRANSFER_RECEIVER_BANK_NAME: 'Example Bank', BANK_TRANSFER_RECEIVER_BANK_BIN: '123456',
+      BANK_TRANSFER_RECEIVER_ACCOUNT_NUMBER: '1234567890', BANK_TRANSFER_RECEIVER_NAME: 'EXAMPLE TEST BENEFICIARY' };
+    expect(bankQrPreviewReceiver(env)).toEqual({ bankName: 'Example Bank', bankBin: '123456',
+      accountNumber: '1234567890', beneficiaryName: 'EXAMPLE TEST BENEFICIARY' });
+    expect(bankQrPreviewReceiver({ ...env, BANK_TRANSFER_RECEIVER_BANK_NAME: 'Vietcombank', BANK_TRANSFER_RECEIVER_BANK_BIN: '970436' })?.bankBin).toBe('970436');
+    expect(() => bankQrPreviewReceiver({ ...env, BANK_TRANSFER_RECEIVER_BANK_BIN: '97043X' })).toThrow();
+    expect(() => bankQrPreviewReceiver({ ...env, BANK_TRANSFER_RECEIVER_BANK_NAME: '' })).toThrow();
+    expect(() => bankQrPreviewReceiver({ ...env, BANK_TRANSFER_RECEIVER_ACCOUNT_NUMBER: '0000000000' })).toThrow();
+    expect(() => bankQrPreviewReceiver({ ...env, BANK_TRANSFER_RECEIVER_NAME: 'fake\nline' })).toThrow();
+    expect(bankTransferEnabled('production', 'true')).toBe(false);
   });
   it('encodes exact integer VND, bank account and unique reference', () => {
     const value = createVietQrPayload('970422', '0000000000', 125000n, 'EDUAI0123456789');

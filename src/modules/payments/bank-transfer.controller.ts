@@ -34,6 +34,9 @@ export class BankTransferController {
 @Controller('admin/commerce/bank-transfers') @UseGuards(JwtAuthGuard, RolesGuard) @Roles(RoleName.platform_admin)
 export class BankTransferAdminController {
   constructor(private readonly bank: BankTransferService) {}
+  @Get('qr-preview')
+  @RateLimit({ identity: 'user', limit: 5, name: 'bank-qr-preview', windowSeconds: 60 })
+  previewQr() { return this.bank.previewBankQr(); }
   @Get() list(@CurrentUser('id') actorId: string, @Query() query: ListPendingPaymentQueryDto) {
     return this.bank.list(actorId, query);
   }
