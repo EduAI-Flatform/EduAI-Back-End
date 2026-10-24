@@ -21,6 +21,14 @@ const EXPECTED_BANK_TRANSFER_MIGRATION =
   '20261022010000_add_manual_bank_transfer';
 const EXPECTED_BANK_TRANSFER_MIGRATION_SHA256 =
   'C26538AF0A17D8F1CEE9CE78FC974141ADF50C13E55E79356D8372D661A80244';
+// A separate, explicit owner release decision is required before applying
+// these additive receipt/access migrations to a production database.
+const REVIEWED_RECEIPT_MIGRATIONS = Object.freeze([
+  { name: '20261023010000_add_bank_receipt_claims', sha256: 'FF4C6807B7BE7A0CAF95ACDEB347BCA28024B9545EA93FE113C17BC68E740571' },
+  { name: '20261023020000_add_receipt_access', sha256: 'F6533EBC1F4D6C1CDCAD9F3A3F3D498BD84F639171BE65F00607CCB1890F85D1' },
+  { name: '20261023021000_add_receipt_quota_pools', sha256: '4A3B322C2C8A219138126326839DCD09406E7A3B2C92B65ABB2A346449646703' },
+]);
+const RECEIPT_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-receipt-migrations';
 const RECONCILIATION_FINANCIAL_KINDS = [
   'duplicate_collection',
   'late_payment',
@@ -307,6 +315,25 @@ function assertReviewedBankTransferMigrationFingerprint(rootDirectory) {
   return actualHash;
 }
 
+function assertReviewedReceiptMigrationFingerprints(rootDirectory) {
+  const hashes = {};
+  for (const migration of REVIEWED_RECEIPT_MIGRATIONS) {
+    let hash;
+    try {
+      hash = createHash('sha256')
+        .update(readFileSync(join(rootDirectory, 'prisma', 'migrations', migration.name, 'migration.sql')))
+        .digest('hex').toUpperCase();
+    } catch {
+      throw migrationPreflightFailure('MIGRATION_ARTIFACT_UNAVAILABLE');
+    }
+    if (hash !== migration.sha256) {
+      throw migrationPreflightFailure('MIGRATION_ARTIFACT_HASH_MISMATCH');
+    }
+    hashes[migration.name] = hash;
+  }
+  return hashes;
+}
+
 function localMigrationChecksums(rootDirectory, migrationNames) {
   const names = Array.isArray(migrationNames)
     ? migrationNames
@@ -334,6 +361,7 @@ function assertMigrationLedgerState({
   expectedMigrationSha256 = EXPECTED_RECONCILIATION_MIGRATION_SHA256,
   allowAlreadyApplied = false,
   allowReviewedBankTransferMigration = false,
+  allowReviewedReceiptMigrations = false,
   localMigrationNames: localNames,
   localMigrationChecksums: localChecksums,
   migrationRows,
@@ -391,10 +419,22 @@ function assertMigrationLedgerState({
     allowReviewedBankTransferMigration &&
     pendingMigrationNames.length === 1 &&
     pendingMigrationNames[0] === EXPECTED_BANK_TRANSFER_MIGRATION;
+  const reviewedReceiptNames = REVIEWED_RECEIPT_MIGRATIONS.map(({ name }) => name);
+  const isReviewedReceiptSuffix =
+    applied.has(EXPECTED_BANK_TRANSFER_MIGRATION) &&
+    pendingMigrationNames.length > 0 &&
+    pendingMigrationNames.length <= reviewedReceiptNames.length &&
+    JSON.stringify(pendingMigrationNames) ===
+      JSON.stringify(reviewedReceiptNames.slice(-pendingMigrationNames.length));
+  if (allowAlreadyApplied && targetRows.length === 1 && isReviewedReceiptSuffix &&
+      !allowReviewedReceiptMigrations) {
+    throw migrationPreflightFailure('MIGRATION_RELEASE_APPROVAL_REQUIRED');
+  }
   if (
     allowAlreadyApplied &&
     targetRows.length === 1 &&
-    (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending)
+    (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending ||
+      (allowReviewedReceiptMigrations && isReviewedReceiptSuffix))
   ) {
     if (
       targetRows[0].checksum.toUpperCase() !== expectedMigrationSha256.toUpperCase()
@@ -1647,6 +1687,7 @@ function assertReconciliationPreflightStable(before, after) {
   if (
     before.migrationHash !== after.migrationHash ||
     before.bankTransferMigrationHash !== after.bankTransferMigrationHash ||
+    JSON.stringify(before.receiptMigrationHashes) !== JSON.stringify(after.receiptMigrationHashes) ||
     before.ledger?.currentSchemaVersion !== after.ledger?.currentSchemaVersion ||
     JSON.stringify(before.ledger?.pendingMigrationNames) !==
       JSON.stringify(after.ledger?.pendingMigrationNames) ||
@@ -1932,6 +1973,7 @@ async function runMigrationPreflight({
   runtimeUrl,
   migrationUrl,
   allowAlreadyApplied = false,
+  allowReviewedReceiptMigrations = false,
 }) {
   const migrationHash = await runSafePreflightStage(
     'ARTIFACT',
@@ -1940,6 +1982,10 @@ async function runMigrationPreflight({
   const bankTransferMigrationHash = await runSafePreflightStage(
     'ARTIFACT',
     () => assertReviewedBankTransferMigrationFingerprint(rootDirectory),
+  );
+  const receiptMigrationHashes = await runSafePreflightStage(
+    'ARTIFACT',
+    () => assertReviewedReceiptMigrationFingerprints(rootDirectory),
   );
   const roles = await runSafePreflightStage(
     'ROLE_VERIFICATION',
@@ -1990,6 +2036,7 @@ async function runMigrationPreflight({
           expectedMigrationSha256: migrationHash,
           allowAlreadyApplied,
           allowReviewedBankTransferMigration: true,
+          allowReviewedReceiptMigrations,
           localMigrationNames: localNames,
           localMigrationChecksums: localChecksums,
           migrationRows: ledgerResult.rows,
@@ -2041,6 +2088,7 @@ async function runMigrationPreflight({
   return {
     migrationHash,
     bankTransferMigrationHash,
+    receiptMigrationHashes,
     roles,
     privileges,
     localMigrationNames: localNames,
@@ -2106,6 +2154,12 @@ async function runMigrationPostflight({
 }
 
 async function run() {
+  const extraArguments = process.argv.slice(2);
+  if (extraArguments.some((arg) => arg !== RECEIPT_MIGRATION_APPROVAL_ARGUMENT) ||
+      extraArguments.filter((arg) => arg === RECEIPT_MIGRATION_APPROVAL_ARGUMENT).length > 1) {
+    throw safeDatabaseFailure('MIGRATION_ARGUMENT_INVALID');
+  }
+  const allowReviewedReceiptMigrations = extraArguments.includes(RECEIPT_MIGRATION_APPROVAL_ARGUMENT);
   const rootDirectory = process.cwd();
   dotenv.config({ quiet: true });
   const runtimeDatabaseUrl = process.env.DATABASE_URL;
@@ -2121,6 +2175,7 @@ async function run() {
       runtimeUrl: runtimeDatabaseUrl,
       migrationUrl: migrationDatabaseUrl,
       allowAlreadyApplied: true,
+      allowReviewedReceiptMigrations,
     }),
   );
   const repeatPreflight = await runSafePreflightStage(
@@ -2130,6 +2185,7 @@ async function run() {
       runtimeUrl: runtimeDatabaseUrl,
       migrationUrl: migrationDatabaseUrl,
       allowAlreadyApplied: true,
+      allowReviewedReceiptMigrations,
     }),
   );
   await runSafePreflightStage(
@@ -2180,6 +2236,10 @@ async function run() {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const migrationHashBeforeApply = assertReviewedMigrationFingerprint(rootDirectory);
   if (migrationHashBeforeApply !== preflight.migrationHash) {
+    throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
+  }
+  const receiptMigrationHashesBeforeApply = assertReviewedReceiptMigrationFingerprints(rootDirectory);
+  if (JSON.stringify(receiptMigrationHashesBeforeApply) !== JSON.stringify(preflight.receiptMigrationHashes)) {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   }
   const bankMigrationHashBeforeApply = assertReviewedBankTransferMigrationFingerprint(rootDirectory);
@@ -2295,6 +2355,8 @@ module.exports = {
   assertMigrationAppliedExactlyOnce,
   assertMigrationLedgerState,
   assertReviewedBankTransferMigrationFingerprint,
+  assertReviewedReceiptMigrationFingerprints,
+  REVIEWED_RECEIPT_MIGRATIONS,
   assertReconciliationFinancialBaseline,
   assertReconciliationAppliedState,
   assertReconciliationPreflightStable,

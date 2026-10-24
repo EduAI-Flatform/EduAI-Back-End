@@ -9,6 +9,11 @@ on:
         type: boolean
         default: false
         required: true
+      authorize_receipt_schema_migrations:
+        description: 'Separate owner approval to apply exactly three reviewed receipt/access schema migrations (does not activate payments)'
+        type: boolean
+        default: false
+        required: true
 
 concurrency:
   group: eduai-backend-production
@@ -285,7 +290,13 @@ jobs:
 
           echo "Applying database migrations with isolated role..."
           deployment_stage="database-migration"
-          npm run prisma:migrate:production
+          if [ "${{ inputs.authorize_receipt_schema_migrations }}" = "true" ]; then
+            echo "receiptSchemaMigrationAuthorization: EXPLICIT_OWNER_APPROVAL"
+            npm run prisma:migrate:production -- --authorize-reviewed-receipt-migrations
+          else
+            echo "receiptSchemaMigrationAuthorization: NOT_GRANTED"
+            npm run prisma:migrate:production
+          fi
 
           echo "Verifying least-privilege runtime database role..."
           deployment_stage="runtime-role-verification"
