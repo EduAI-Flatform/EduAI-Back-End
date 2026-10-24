@@ -1,10 +1,12 @@
 const {
   EXPECTED_RECONCILIATION_MIGRATION,
   EXPECTED_BANK_TRANSFER_MIGRATION,
+  REVIEWED_RECEIPT_MIGRATIONS,
   assertMigrationLedgerState,
   assertMigrationAppliedExactlyOnce,
   assertReviewedMigrationFingerprint,
   assertReviewedBankTransferMigrationFingerprint,
+  assertReviewedReceiptMigrationFingerprints,
   assertReconciliationPreflight,
   assertReconciliationAppliedState,
   assertReconciliationFinancialBaseline,
@@ -16,11 +18,13 @@ const {
 }: {
   EXPECTED_RECONCILIATION_MIGRATION: string;
   EXPECTED_BANK_TRANSFER_MIGRATION: string;
+  REVIEWED_RECEIPT_MIGRATIONS: Array<{ name: string; sha256: string }>;
   assertMigrationLedgerState: (input: {
     expectedMigrationName?: string;
     expectedMigrationSha256?: string;
     allowAlreadyApplied?: boolean;
     allowReviewedBankTransferMigration?: boolean;
+    allowReviewedReceiptMigrations?: boolean;
     localMigrationNames: string[];
     migrationRows: Array<{
       migration_name: string;
@@ -35,6 +39,7 @@ const {
   };
   assertReviewedMigrationFingerprint: (rootDirectory: string) => string;
   assertReviewedBankTransferMigrationFingerprint: (rootDirectory: string) => string;
+  assertReviewedReceiptMigrationFingerprints: (rootDirectory: string) => Record<string, string>;
   assertMigrationAppliedExactlyOnce: (input: {
     expectedMigrationSha256?: string;
     localMigrationNames: string[];
@@ -137,6 +142,59 @@ describe('SPR25-007 production migration preflight', () => {
       allowAlreadyApplied: true,
       allowReviewedBankTransferMigration: true,
     })).toThrow('Production migration preflight failed');
+  });
+
+  it('pins all receipt/access migration artifact hashes before allowing an explicit release', () => {
+    const repositoryRoot = require('node:path').join(__dirname, '..', '..');
+    const hashes = assertReviewedReceiptMigrationFingerprints(repositoryRoot);
+    expect(Object.keys(hashes)).toEqual(REVIEWED_RECEIPT_MIGRATIONS.map(({ name }) => name));
+    for (const { name, sha256 } of REVIEWED_RECEIPT_MIGRATIONS) {
+      expect(hashes[name]).toBe(sha256);
+    }
+  });
+
+  it('requires explicit per-run release consent for the three receipt migrations', () => {
+    const recon = {
+      migration_name: EXPECTED_RECONCILIATION_MIGRATION,
+      checksum: '03803E8EEF652CE73BEC38267E274650F45665ECBEF578749E1DAABA663CF53F',
+      finished_at: new Date(), rolled_back_at: null,
+    };
+    const bank = {
+      migration_name: EXPECTED_BANK_TRANSFER_MIGRATION,
+      checksum: 'C26538AF0A17D8F1CEE9CE78FC974141ADF50C13E55E79356D8372D661A80244',
+      finished_at: new Date(), rolled_back_at: null,
+    };
+    const receiptRows = REVIEWED_RECEIPT_MIGRATIONS.map(({ name, sha256 }) => ({
+      migration_name: name, checksum: sha256, finished_at: new Date(), rolled_back_at: null,
+    }));
+    const localMigrationNames = [recon.migration_name, bank.migration_name, ...receiptRows.map((row) => row.migration_name)];
+    const localMigrationChecksums = Object.fromEntries([recon, bank, ...receiptRows].map((row) => [row.migration_name, row.checksum]));
+    const before = { localMigrationNames, localMigrationChecksums, migrationRows: [recon, bank], allowAlreadyApplied: true };
+
+    try {
+      assertMigrationLedgerState(before);
+      throw new Error('expected approval gate');
+    } catch (error) {
+      expect(createSafeMigrationPreflightDiagnostic(error).failureClass).toBe('MIGRATION_RELEASE_APPROVAL_REQUIRED');
+    }
+    expect(assertMigrationLedgerState({ ...before, allowReviewedReceiptMigrations: true })).toMatchObject({
+      pendingMigrationNames: receiptRows.map((row) => row.migration_name), targetApplied: true,
+    });
+    expect(assertMigrationLedgerState({ ...before, migrationRows: [recon, bank, receiptRows[0]], allowReviewedReceiptMigrations: true })).toMatchObject({
+      pendingMigrationNames: receiptRows.slice(1).map((row) => row.migration_name), targetApplied: true,
+    });
+    expect(() => assertMigrationLedgerState({
+      ...before, localMigrationNames: [...localMigrationNames, '20261023030000_unknown'],
+      allowReviewedReceiptMigrations: true,
+    })).toThrow('Production migration preflight failed');
+    expect(() => assertMigrationLedgerState({
+      ...before, migrationRows: [recon, { ...bank, checksum: 'c'.repeat(64) }],
+      allowReviewedReceiptMigrations: true,
+    })).toThrow('Production migration preflight failed');
+    expect(assertMigrationAppliedExactlyOnce({
+      localMigrationNames, localMigrationChecksums,
+      migrationRows: [recon, bank, ...receiptRows],
+    })).toMatchObject({ targetApplied: true });
   });
 
   it('requires both reviewed migrations to be recorded after bank schema deployment', () => {
