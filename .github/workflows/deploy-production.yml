@@ -1,7 +1,11 @@
 name: Deploy Backend Production
 
-# Production deployment is a separate owner-authorized operation.
+# Automatic source deploy is opt-in via a GitHub repository variable.
+# Manual deployment and receipt migrations remain separately owner-authorized.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       authorize_production:
@@ -78,7 +82,7 @@ jobs:
         run: npm test -- --runInBand
 
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.authorize_production == true }}
+    if: ${{ github.ref == 'refs/heads/main' && ((github.event_name == 'push' && vars.EDUAI_AUTO_CD_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.authorize_production == true)) }}
     name: Deploy to VPS
     runs-on: ubuntu-latest
     timeout-minutes: 20
