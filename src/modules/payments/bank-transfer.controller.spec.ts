@@ -18,6 +18,13 @@ describe('bank payment boundary contracts', () => {
     bank.enabled = () => true;
     expect(new BankTransferController(bank, registry).methods().methods).toEqual(['vnpay', 'bank_transfer']);
   });
+  it('prioritizes the server-enabled PayOS QR ahead of bank transfer and VNPay', () => {
+    const bank: any = { enabled: () => true };
+    const registry: any = { isEnabled: (name: string) => name === 'payos' || name === 'vnpay' };
+    expect(new BankTransferController(bank, registry).methods().methods).toEqual(['payos', 'vnpay', 'bank_transfer']);
+    registry.isEnabled = (name: string) => name === 'vnpay';
+    expect(new BankTransferController(bank, registry).methods().methods).toEqual(['vnpay', 'bank_transfer']);
+  });
   it('forwards validated review queue pagination and rejects out-of-bound sizes', async () => {
     const bank: any = { list: jest.fn().mockResolvedValue({ items: [], total: 0 }) };
     const query = plainToInstance(ListPendingPaymentQueryDto, { page: '2', pageSize: '50' });

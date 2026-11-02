@@ -12,9 +12,40 @@ model BuyerWalletLink {
   buyer              User                     @relation("BuyerWalletOwner", fields: [buyerId], references: [id], onDelete: Restrict)
   verifiedEvents     BuyerWalletVerifiedEvent[]
   reservations       BuyerWalletReservation[]
+  payosTopups         BuyerWalletPayosTopup[]
 
   @@unique([partnerCode, partnerWalletRef])
   @@map("buyer_wallet_links")
+}
+
+// PayOS verifies collection into the merchant bank account. It is NOT the
+// provider that issues stored-value GDS wallet funds. A separate verified
+// partner credit event is required before CREDITED, and the flow is OFF live.
+model BuyerWalletPayosTopup {
+  id                        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId                   String           @map("buyer_id") @db.Uuid
+  walletLinkId              String?          @map("wallet_link_id") @db.Uuid
+  requestKeyHash            String           @map("request_key_hash") @db.VarChar(64)
+  amountMinor               BigInt           @map("amount_minor")
+  currency                  String           @default("VND") @db.VarChar(3)
+  payosOrderCode            BigInt           @unique @map("payos_order_code")
+  payosPaymentLinkId        String?          @unique @map("payos_payment_link_id") @db.VarChar(128)
+  receivingAccountHash      String           @map("receiving_account_hash") @db.VarChar(64)
+  collectionReference       String?          @unique @map("collection_reference") @db.VarChar(128)
+  partnerCreditEventId      String?          @unique @map("partner_credit_event_id") @db.VarChar(160)
+  status                    String           @default("CREATED") @db.VarChar(24)
+  expiresAt                 DateTime         @map("expires_at")
+  createdAt                 DateTime         @default(now()) @map("created_at")
+  updatedAt                 DateTime         @updatedAt @map("updated_at")
+  payosVerifiedAt           DateTime?        @map("payos_verified_at")
+  creditedAt                DateTime?        @map("credited_at")
+  buyer                     User             @relation("BuyerWalletTopupOwner", fields: [buyerId], references: [id], onDelete: Restrict)
+  walletLink                BuyerWalletLink? @relation(fields: [walletLinkId], references: [id], onDelete: Restrict)
+
+  @@unique([buyerId, requestKeyHash])
+  @@index([buyerId, createdAt])
+  @@index([status, createdAt])
+  @@map("buyer_wallet_payos_topups")
 }
 
 model BuyerWalletVerifiedEvent {

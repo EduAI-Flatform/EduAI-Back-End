@@ -1,0 +1,90 @@
+// PAYW-04I/B: independent, CLOSED-LOOP prepayment sandbox proposal.
+// DO NOT migrate to production, issue live value, or connect merchant PayOS
+// until legal, owner, financial, reconciliation and concurrency gates pass.
+// The earlier BuyerWalletLink/PayosTopup models are partner-wallet mirrors,
+// not backing accounts for this internal prepayment journal.
+
+model GdsInternalWallet {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId        String                 @unique @map("buyer_id") @db.Uuid
+  status         String                 @default("ACTIVE") @db.VarChar(16)
+  availableMinor BigInt                 @default(0) @map("available_minor")
+  heldMinor      BigInt                 @default(0) @map("held_minor")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  buyer          User                   @relation("GdsInternalWalletOwner", fields: [buyerId], references: [id], onDelete: Restrict)
+  topups         GdsInternalTopup[]
+  journal        GdsInternalJournal[]
+  holds          GdsInternalHold[]
+
+  @@map("gds_internal_wallets")
+}
+
+model GdsInternalTopup {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId               String                 @map("buyer_id") @db.Uuid
+  walletId              String                 @map("wallet_id") @db.Uuid
+  requestKeyHash        String                 @map("request_key_hash") @db.VarChar(64)
+  amountMinor           BigInt                 @map("amount_minor")
+  currency              String                 @default("VND") @db.VarChar(3)
+  payosOrderCode        BigInt                 @unique @map("payos_order_code")
+  transferMemo          String                 @map("transfer_memo") @db.VarChar(9)
+  receivingAccountHash  String                 @map("receiving_account_hash") @db.VarChar(64)
+  paymentLinkId         String?                @unique @map("payment_link_id") @db.VarChar(128)
+  collectionReference   String?                @unique @map("collection_reference") @db.VarChar(160)
+  status                String                 @default("CREATED") @db.VarChar(20)
+  expiresAt             DateTime               @map("expires_at")
+  signatureVerifiedAt   DateTime?              @map("signature_verified_at")
+  providerReconciledAt  DateTime?              @map("provider_reconciled_at")
+  creditedAt            DateTime?              @map("credited_at")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  buyer                 User                   @relation("GdsInternalTopupOwner", fields: [buyerId], references: [id], onDelete: Restrict)
+  wallet                GdsInternalWallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  journal               GdsInternalJournal?
+
+  @@unique([buyerId, requestKeyHash])
+  @@index([buyerId, createdAt])
+  @@index([status, createdAt])
+  @@map("gds_internal_topups")
+}
+
+// Each immutable journal row is a balanced three-account posting:
+// buyer available + buyer held + platform clearing = zero.
+// A PostgreSQL trigger applies buyer projections atomically and rejects overdrafts.
+model GdsInternalJournal {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletId             String                 @map("wallet_id") @db.Uuid
+  eventKey             String                 @unique @map("event_key") @db.VarChar(160)
+  kind                 String                 @db.VarChar(24)
+  amountMinor          BigInt                 @map("amount_minor")
+  availableDeltaMinor  BigInt                 @map("available_delta_minor")
+  heldDeltaMinor       BigInt                 @map("held_delta_minor")
+  clearingDeltaMinor   BigInt                 @map("clearing_delta_minor")
+  topupId              String?                @unique @map("topup_id") @db.Uuid
+  collectionReference  String?                @unique @map("collection_reference") @db.VarChar(160)
+  orderRef             String?                @map("order_ref") @db.VarChar(160)
+  occurredAt           DateTime               @default(now()) @map("occurred_at")
+  wallet               GdsInternalWallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  topup                GdsInternalTopup?      @relation(fields: [topupId], references: [id], onDelete: Restrict)
+
+  @@index([walletId, occurredAt])
+  @@index([orderRef, kind])
+  @@map("gds_internal_journal")
+}
+
+// One buyer reservation per Commerce order. A separate 04C gate must
+// integrate its reference with canonical settlement and fulfillment.
+model GdsInternalHold {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletId    String             @map("wallet_id") @db.Uuid
+  orderRef    String             @unique @map("order_ref") @db.VarChar(160)
+  amountMinor BigInt             @map("amount_minor")
+  status      String             @default("RESERVED") @db.VarChar(16)
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  wallet      GdsInternalWallet  @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  @@index([walletId, status])
+  @@map("gds_internal_holds")
+}

@@ -1,5 +1,8 @@
 model User {
+  gdsInternalWallet GdsInternalWallet? @relation("GdsInternalWalletOwner")
+  gdsInternalTopups GdsInternalTopup[] @relation("GdsInternalTopupOwner")
   buyerWalletLink BuyerWalletLink? @relation("BuyerWalletOwner")
+  buyerWalletPayosTopups BuyerWalletPayosTopup[] @relation("BuyerWalletTopupOwner")
   receiptAccessGenerations CommerceReceiptAccessGeneration[] @relation("ReceiptAccessBuyer")
   receiptAccessCreated CommerceReceiptAccessGeneration[] @relation("ReceiptAccessCreator")
   receiptAccessEvents CommerceReceiptAccessEvent[] @relation("ReceiptAccessActor")

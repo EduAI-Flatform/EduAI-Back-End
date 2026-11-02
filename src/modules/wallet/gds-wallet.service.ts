@@ -1,18 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  GdsReservationStatus, GdsWalletEventKind, GdsWalletInvariantError, projectGdsWallet,
-} from './gds-wallet.domain';
 
 export type GdsWalletSummary = {
   available: boolean;
   mode: 'disabled' | 'sandbox';
-  state: 'UNAVAILABLE' | 'NOT_LINKED' | 'SUSPENDED' | 'READY_SANDBOX' | 'RECONCILIATION_REQUIRED';
+  state: 'UNAVAILABLE' | 'NOT_INITIALIZED' | 'SUSPENDED' | 'READY_SANDBOX' | 'RECONCILIATION_REQUIRED';
   /** VND as decimal strings to avoid JS BigInt serialization/precision errors. */
   balance: null | { settledMinor: string; reservedMinor: string; availableMinor: string; currency: 'VND' };
-  paymentEnabled: false; // Integration with canonical settlement is NOT present.
-  topupEnabled: false; // Partner funding confirmation is NOT present.
+  paymentEnabled: false; // Canonical Commerce settlement integration is NOT present.
+  topupEnabled: false; // No public PayOS topup API or verified webhook adapter.
 };
 
 @Injectable()
@@ -29,42 +26,23 @@ export class GdsWalletService {
         this.config.app.nodeEnv === 'production' || this.config.app.deploymentClass === 'production') {
       return disabled;
     }
-    const link = await this.prisma.buyerWalletLink.findUnique({
-      where: { buyerId }, include: { verifiedEvents: true, reservations: true },
-    });
+    // PAYW-04I changes the preferred model: this reads the isolated internal
+    // prepaid journal projection, never the earlier partner-wallet mirror.
+    const wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
     const basis = { ...disabled, mode: 'sandbox' as const };
-    if (!link) return { ...basis, state: 'NOT_LINKED' };
-    if (link.status !== 'linked') return { ...basis, state: 'SUSPENDED' };
-    try {
-      const balance = projectGdsWallet(
-        link.verifiedEvents.map((event) => ({
-          providerEventId: event.providerEventId,
-          providerTransactionId: event.providerTransactionId,
-          kind: event.kind as GdsWalletEventKind,
-          amountMinor: event.amountMinor,
-          currency: event.currency as 'VND',
-          orderId: event.orderId ?? undefined,
-        })),
-        link.reservations.map((reservation) => ({
-          orderId: reservation.orderId,
-          providerReservationId: reservation.providerReservationId,
-          amountMinor: reservation.amountMinor,
-          status: reservation.status as GdsReservationStatus,
-        })),
-      );
-      return {
-        ...basis, available: true, state: 'READY_SANDBOX',
-        balance: {
-          settledMinor: balance.settledMinor.toString(),
-          reservedMinor: balance.reservedMinor.toString(),
-          availableMinor: balance.availableMinor.toString(),
-          currency: 'VND',
-        },
-      };
-    } catch (error) {
-      if (!(error instanceof GdsWalletInvariantError)) throw error;
-      // Never display spendable funds if the mirror needs reconciliation.
+    if (!wallet) return { ...basis, state: 'NOT_INITIALIZED' };
+    if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED' };
+    if (typeof wallet.availableMinor !== 'bigint' || typeof wallet.heldMinor !== 'bigint' ||
+        wallet.availableMinor < 0n || wallet.heldMinor < 0n) {
       return { ...basis, state: 'RECONCILIATION_REQUIRED' };
     }
+    return {
+      ...basis, available: true, state: 'READY_SANDBOX',
+      balance: {
+        settledMinor: (wallet.availableMinor + wallet.heldMinor).toString(),
+        reservedMinor: wallet.heldMinor.toString(),
+        availableMinor: wallet.availableMinor.toString(), currency: 'VND',
+      },
+    };
   }
 }

@@ -7,36 +7,35 @@ const config = {
 };
 
 describe('GDS wallet learner API projection', () => {
-  const db = { buyerWalletLink: { findUnique: jest.fn() } };
+  const db = { gdsInternalWallet: { findUnique: jest.fn() }, buyerWalletLink: { findUnique: jest.fn() } };
   const service = new GdsWalletService(db as never, config as never);
-  beforeEach(() => { db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; });
+  beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; });
 
   it('never queries or exposes money in production, even with a true flag', async () => {
     config.gdsWallet.sandboxEnabled = true;
     config.app.nodeEnv = 'production';
     expect(await service.summary(buyerId)).toMatchObject({ available: false, mode: 'disabled', balance: null, paymentEnabled: false, topupEnabled: false });
-    expect(db.buyerWalletLink.findUnique).not.toHaveBeenCalled();
+    expect(db.gdsInternalWallet.findUnique).not.toHaveBeenCalled();
     config.app.nodeEnv = 'test';
     config.app.deploymentClass = 'production';
     expect((await service.summary(buyerId)).available).toBe(false);
-    expect(db.buyerWalletLink.findUnique).not.toHaveBeenCalled();
+    expect(db.gdsInternalWallet.findUnique).not.toHaveBeenCalled();
     config.app.deploymentClass = 'uat';
   });
 
-  it('defaults OFF and never invents funds without a real link', async () => {
+  it('defaults OFF and never invents funds without an initialized internal wallet', async () => {
     expect((await service.summary(buyerId)).state).toBe('UNAVAILABLE');
-    expect(db.buyerWalletLink.findUnique).not.toHaveBeenCalled();
+    expect(db.gdsInternalWallet.findUnique).not.toHaveBeenCalled();
     config.gdsWallet.sandboxEnabled = true;
-    db.buyerWalletLink.findUnique.mockResolvedValue(null);
-    expect(await service.summary(buyerId)).toMatchObject({ state: 'NOT_LINKED', balance: null, topupEnabled: false });
+    db.gdsInternalWallet.findUnique.mockResolvedValue(null);
+    expect(await service.summary(buyerId)).toMatchObject({ state: 'NOT_INITIALIZED', balance: null, topupEnabled: false });
+    expect(db.buyerWalletLink.findUnique).not.toHaveBeenCalled();
   });
 
-  it('projects immutable verified facts as strings and never enables payment', async () => {
+  it('projects internal account balances as strings and never enables payment', async () => {
     config.gdsWallet.sandboxEnabled = true;
-    db.buyerWalletLink.findUnique.mockResolvedValue({
-      status: 'linked',
-      verifiedEvents: [{ kind: 'FUNDS_CREDITED', amountMinor: 100_000n, currency: 'VND', providerEventId: 'event-1', providerTransactionId: 'tx-1' }],
-      reservations: [{ orderId: 'order-1', providerReservationId: 'reserve-1', amountMinor: 30_000n, status: 'UNKNOWN' }],
+    db.gdsInternalWallet.findUnique.mockResolvedValue({
+      status: 'ACTIVE', availableMinor: 70_000n, heldMinor: 30_000n,
     });
     expect(await service.summary(buyerId)).toMatchObject({
       available: true, mode: 'sandbox', state: 'READY_SANDBOX',
@@ -45,13 +44,16 @@ describe('GDS wallet learner API projection', () => {
     });
   });
 
-  it('fails closed when the verified mirror is inconsistent', async () => {
+  it('fails closed when the internal balance projection is inconsistent', async () => {
     config.gdsWallet.sandboxEnabled = true;
-    db.buyerWalletLink.findUnique.mockResolvedValue({
-      status: 'linked',
-      verifiedEvents: [{ kind: 'PAYMENT_CAPTURED', amountMinor: 100n, currency: 'VND', providerEventId: 'event-2', providerTransactionId: 'tx-2' }],
-      reservations: [],
-    });
+    db.gdsInternalWallet.findUnique.mockResolvedValue({ status: 'ACTIVE', availableMinor: -100n, heldMinor: 0n });
     expect(await service.summary(buyerId)).toMatchObject({ available: false, state: 'RECONCILIATION_REQUIRED', balance: null });
+  });
+
+  it('hides the internal balance of a suspended wallet', async () => {
+    config.gdsWallet.sandboxEnabled = true;
+    db.gdsInternalWallet.findUnique.mockResolvedValue({ status: 'SUSPENDED', availableMinor: 100_000n, heldMinor: 0n });
+    expect(await service.summary(buyerId)).toMatchObject({ available: false, state: 'SUSPENDED', balance: null, paymentEnabled: false, topupEnabled: false });
+    expect(db.buyerWalletLink.findUnique).not.toHaveBeenCalled();
   });
 });
