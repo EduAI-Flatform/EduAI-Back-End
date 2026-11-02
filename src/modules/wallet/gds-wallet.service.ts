@@ -9,7 +9,7 @@ export type GdsWalletSummary = {
   /** VND as decimal strings to avoid JS BigInt serialization/precision errors. */
   balance: null | { settledMinor: string; reservedMinor: string; availableMinor: string; currency: 'VND' };
   paymentEnabled: false; // Canonical Commerce settlement integration is NOT present.
-  topupEnabled: false; // No public PayOS topup API or verified webhook adapter.
+  topupEnabled: boolean; // QR preview only; never means wallet crediting.
   /** Read-only, newest-first journal entries; never a substitute for provider proof. */
   recentTransactions: Array<{
     id: string;
@@ -36,7 +36,12 @@ export class GdsWalletService {
     // PAYW-04I changes the preferred model: this reads the isolated internal
     // prepaid journal projection, never the earlier partner-wallet mirror.
     const wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
-    const basis = { ...disabled, mode: 'sandbox' as const };
+    const basis = {
+      ...disabled, mode: 'sandbox' as const,
+      topupEnabled: this.config.gdsWallet.qrPreviewEnabled &&
+        this.config.app.deploymentClass === 'uat' &&
+        /^\d{6,32}$/.test(this.config.gdsWallet.receivingAccount ?? ''),
+    };
     if (!wallet) return { ...basis, state: 'NOT_INITIALIZED' };
     if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED' };
     if (typeof wallet.availableMinor !== 'bigint' || typeof wallet.heldMinor !== 'bigint' ||

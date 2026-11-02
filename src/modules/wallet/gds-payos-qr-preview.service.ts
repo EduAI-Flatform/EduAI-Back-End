@@ -1,0 +1,95 @@
+import { createHash } from 'node:crypto';
+import { ConflictException, ForbiddenException, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import * as QRCode from 'qrcode';
+import { AppConfigService } from '../../config/app-config.service';
+import { PAYMENT_PROVIDER_REGISTRY } from '../payments/payment-provider';
+import { PaymentProviderRegistry } from '../payments/payment-provider.registry';
+import { GdsInternalTopupPreparationService } from './gds-internal-topup-preparation.service';
+import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
+
+/**
+ * Strictly UAT-only PayOS QR presentation. A payment link can collect real
+ * money even if there is no wallet crediting workflow. This endpoint MUST
+ * remain gated until finance has approved manual reconciliation/refunds.
+ * No webhook, credit, ledger, or settlement writes are performed here.
+ */
+@Injectable()
+export class GdsPayosQrPreviewService {
+  constructor(
+    private readonly config: AppConfigService,
+    private readonly preparation: GdsInternalTopupPreparationService,
+    private readonly links: GdsInternalTopupLinkService,
+    @Inject(PAYMENT_PROVIDER_REGISTRY) private readonly providers: PaymentProviderRegistry,
+  ) {}
+
+  async create(buyerId: string, amountMinor: string, idempotencyKey: string | undefined) {
+    const { app, gdsWallet, payos } = this.config;
+    if (!gdsWallet.sandboxEnabled || !gdsWallet.qrPreviewEnabled ||
+        app.nodeEnv === 'production' || app.deploymentClass !== 'uat') {
+      throw new ForbiddenException('GDS PayOS QR preview is not available');
+    }
+    // This account number is verified offline by the operator, NOT supplied
+    // from the browser or inferred from a potentially forged PayOS response.
+    const merchantAccount = gdsWallet.receivingAccount;
+    const appUrl = app.publicAppUrl;
+    if (!merchantAccount || !/^\d{6,32}$/.test(merchantAccount) ||
+        payos.environment !== 'production' || !appUrl || !/^https:\/\//.test(appUrl) ||
+        !this.config.commerce.idempotencySecret) {
+      throw new ServiceUnavailableException('GDS QR configuration is incomplete');
+    }
+    if (!/^[1-9]\d{0,8}$/.test(amountMinor) ||
+        BigInt(amountMinor) < 2_000n || BigInt(amountMinor) > 10_000_000n) {
+      throw new ConflictException('GDS_TOPUP_AMOUNT_OUT_OF_RANGE');
+    }
+    if (!idempotencyKey || !/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) {
+      throw new ConflictException('GDS_TOPUP_IDEMPOTENCY_KEY_REQUIRED');
+    }
+
+    const page = new URL('/wallet/gds', appUrl);
+    const prepared = await this.preparation.prepare({
+      buyerId,
+      amountMinor: BigInt(amountMinor),
+      idempotencyKey,
+      receivingAccountHash: createHash('sha256').update(merchantAccount).digest('hex'),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1_000),
+      urls: { returnUrl: page.toString(), cancelUrl: page.toString() },
+    });
+    if (!prepared.payosRequest) {
+      // Never create a second payment link under an already-accepted intent.
+      throw new ConflictException('GDS_TOPUP_ALREADY_CREATED');
+    }
+    const request = prepared.payosRequest;
+    const provider = this.providers.requireEnabled('payos');
+    const created = await provider.createPaymentRequest({
+      paymentAttemptIdentity: prepared.intent.id,
+      providerOrderReference: String(request.orderCode),
+      localOrderReference: request.orderCode,
+      amountMinor: BigInt(request.amount),
+      currency: 'VND',
+      description: request.description,
+      returnUrls: { success: request.returnUrl, cancel: request.cancelUrl },
+      expiresAt: new Date(request.expiredAt * 1000),
+    });
+    // The persisted receiving-account hash, amount, order code and checkout
+    // host must all match BEFORE a QR is returned to the learner.
+    const link = await this.links.attachCreatedLink(prepared.intent.id, created);
+    if (!link.qrPayload) {
+      throw new ServiceUnavailableException('PayOS did not return a bank QR');
+    }
+    const qrCodeDataUrl = await QRCode.toDataURL(link.qrPayload, {
+      errorCorrectionLevel: 'M', margin: 1, width: 320,
+    });
+    return {
+      topupId: prepared.intent.id,
+      amountMinor: request.amount.toString(),
+      currency: 'VND' as const,
+      transferMemo: request.description,
+      receivingAccount: merchantAccount,
+      checkoutUrl: link.checkoutUrl,
+      qrCodeDataUrl,
+      expiresAt: new Date(request.expiredAt * 1000).toISOString(),
+      status: 'AWAITING_TRANSFER' as const,
+      gdsCredited: false as const,
+    };
+  }
+}

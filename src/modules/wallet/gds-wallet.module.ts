@@ -8,10 +8,12 @@ import { GdsInternalJournalService } from './gds-internal-journal.service';
 import { GdsInternalSpendingService } from './gds-internal-spending.service';
 import { GdsInternalTopupPreparationService } from './gds-internal-topup-preparation.service';
 import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
+import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
+import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
-  imports: [AppConfigModule, AuthModule, PrismaModule],
+  imports: [AppConfigModule, AuthModule, PrismaModule, PaymentsModule],
   controllers: [GdsWalletController],
-  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService],
+  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService, GdsPayosQrPreviewService],
 })
 export class GdsWalletModule {}

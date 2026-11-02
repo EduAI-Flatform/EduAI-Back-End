@@ -67,6 +67,8 @@ export interface ValidatedEnv {
   COMMERCE_IDEMPOTENCY_SECRET?: string;
   PAYMENT_DEFAULT_PROVIDER: PaymentDefaultProvider;
   GDS_WALLET_SANDBOX_ENABLED: boolean;
+  GDS_PAYOS_QR_PREVIEW_ENABLED: boolean;
+  GDS_PAYOS_RECEIVING_ACCOUNT?: string;
   PAYOS_ENVIRONMENT: PayosEnvironment;
   PAYOS_CLIENT_ID?: string;
   PAYOS_API_KEY?: string;
@@ -293,6 +295,8 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     COMMERCE_IDEMPOTENCY_SECRET: optionalString(config.COMMERCE_IDEMPOTENCY_SECRET),
     PAYMENT_DEFAULT_PROVIDER: paymentDefaultProvider,
     GDS_WALLET_SANDBOX_ENABLED: parseBoolean(config.GDS_WALLET_SANDBOX_ENABLED, false, 'GDS_WALLET_SANDBOX_ENABLED'),
+    GDS_PAYOS_QR_PREVIEW_ENABLED: parseBoolean(config.GDS_PAYOS_QR_PREVIEW_ENABLED, false, 'GDS_PAYOS_QR_PREVIEW_ENABLED'),
+    GDS_PAYOS_RECEIVING_ACCOUNT: optionalString(config.GDS_PAYOS_RECEIVING_ACCOUNT),
     PAYOS_ENVIRONMENT: payosEnvironment,
     PAYOS_CLIENT_ID: optionalString(config.PAYOS_CLIENT_ID),
     PAYOS_API_KEY: optionalString(config.PAYOS_API_KEY),
