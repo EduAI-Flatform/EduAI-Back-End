@@ -63,6 +63,23 @@ jobs:
       - name: Bounded Sandbox evidence safety tests
         run: node --test scripts/vnpay-sandbox-evidence.test.cjs
 
+      - name: GDS sandbox signed PayOS inbox, journal and checkout regression
+        run: >-
+          npm test -- --runInBand
+          modules/wallet/gds-payos-inbox.service.spec.ts
+          modules/wallet/gds-payos-reconciliation.spec.ts
+          modules/wallet/gds-internal-journal.service.spec.ts
+          modules/wallet/gds-internal-topup-preparation.service.spec.ts
+          modules/wallet/gds-internal-topup-link.service.spec.ts
+          modules/wallet/gds-payos-qr-preview.service.spec.ts
+          modules/wallet/gds-internal-checkout.service.spec.ts
+
+      - name: GDS sandbox PostgreSQL inbox and checkout invariants
+        run: >-
+          npm run test:demo-data -- --runInBand
+          gds-payos-inbox-migration.spec.ts
+          gds-wallet-capture-migration.spec.ts
+
       - name: Commerce lifecycle PostgreSQL regression
         run: >-
           npm run test:demo-data -- --runInBand
