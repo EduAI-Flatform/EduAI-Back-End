@@ -1,4 +1,5 @@
 model User {
+  buyerWalletLink BuyerWalletLink? @relation("BuyerWalletOwner")
   receiptAccessGenerations CommerceReceiptAccessGeneration[] @relation("ReceiptAccessBuyer")
   receiptAccessCreated CommerceReceiptAccessGeneration[] @relation("ReceiptAccessCreator")
   receiptAccessEvents CommerceReceiptAccessEvent[] @relation("ReceiptAccessActor")

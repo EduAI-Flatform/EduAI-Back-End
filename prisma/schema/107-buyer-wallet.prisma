@@ -1,0 +1,52 @@
+// PAYW-04: shadow records ONLY. The licensed wallet partner owns actual funds.
+// Do not use these records to issue money or confirm Commerce settlements.
+
+model BuyerWalletLink {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId            String                   @unique @map("buyer_id") @db.Uuid
+  partnerCode        String                   @map("partner_code") @db.VarChar(48)
+  partnerWalletRef   String                   @map("partner_wallet_ref") @db.VarChar(160)
+  status             String                   @default("linked") @db.VarChar(24)
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
+  buyer              User                     @relation("BuyerWalletOwner", fields: [buyerId], references: [id], onDelete: Restrict)
+  verifiedEvents     BuyerWalletVerifiedEvent[]
+  reservations       BuyerWalletReservation[]
+
+  @@unique([partnerCode, partnerWalletRef])
+  @@map("buyer_wallet_links")
+}
+
+model BuyerWalletVerifiedEvent {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletLinkId          String          @map("wallet_link_id") @db.Uuid
+  // Adapter namespaces IDs by partner; each authenticated fact is globally unique.
+  providerEventId       String          @unique @map("provider_event_id") @db.VarChar(160)
+  providerTransactionId String          @unique @map("provider_transaction_id") @db.VarChar(160)
+  kind                  String          @db.VarChar(32)
+  amountMinor           BigInt          @map("amount_minor")
+  currency              String          @default("VND") @db.VarChar(3)
+  orderId               String?         @map("order_id") @db.Uuid
+  occurredAt            DateTime        @map("occurred_at")
+  receivedAt            DateTime        @default(now()) @map("received_at")
+  walletLink            BuyerWalletLink @relation(fields: [walletLinkId], references: [id], onDelete: Restrict)
+
+  @@index([walletLinkId, occurredAt])
+  @@map("buyer_wallet_verified_events")
+}
+
+model BuyerWalletReservation {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletLinkId          String          @map("wallet_link_id") @db.Uuid
+  orderId               String          @unique @map("order_id") @db.Uuid
+  providerReservationId String          @unique @map("provider_reservation_id") @db.VarChar(160)
+  amountMinor           BigInt          @map("amount_minor")
+  status                String          @default("RESERVED") @db.VarChar(16)
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @updatedAt @map("updated_at")
+  walletLink            BuyerWalletLink @relation(fields: [walletLinkId], references: [id], onDelete: Restrict)
+  order                 CommerceOrder   @relation("BuyerWalletOrderReservation", fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([walletLinkId, status])
+  @@map("buyer_wallet_reservations")
+}

@@ -66,6 +66,10 @@ export class AppConfigService {
     return this.getConfigValue('payment');
   }
 
+  get gdsWallet(): BackendConfig['gdsWallet'] {
+    return this.getConfigValue('gdsWallet');
+  }
+
   get payos(): BackendConfig['payos'] {
     return this.getConfigValue('payos');
   }

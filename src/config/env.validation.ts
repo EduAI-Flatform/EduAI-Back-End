@@ -66,6 +66,7 @@ export interface ValidatedEnv {
   MONITORING_ENDPOINT?: string;
   COMMERCE_IDEMPOTENCY_SECRET?: string;
   PAYMENT_DEFAULT_PROVIDER: PaymentDefaultProvider;
+  GDS_WALLET_SANDBOX_ENABLED: boolean;
   PAYOS_ENVIRONMENT: PayosEnvironment;
   PAYOS_CLIENT_ID?: string;
   PAYOS_API_KEY?: string;
@@ -291,6 +292,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     MONITORING_ENDPOINT: optionalUrl(config.MONITORING_ENDPOINT, 'MONITORING_ENDPOINT'),
     COMMERCE_IDEMPOTENCY_SECRET: optionalString(config.COMMERCE_IDEMPOTENCY_SECRET),
     PAYMENT_DEFAULT_PROVIDER: paymentDefaultProvider,
+    GDS_WALLET_SANDBOX_ENABLED: parseBoolean(config.GDS_WALLET_SANDBOX_ENABLED, false, 'GDS_WALLET_SANDBOX_ENABLED'),
     PAYOS_ENVIRONMENT: payosEnvironment,
     PAYOS_CLIENT_ID: optionalString(config.PAYOS_CLIENT_ID),
     PAYOS_API_KEY: optionalString(config.PAYOS_API_KEY),

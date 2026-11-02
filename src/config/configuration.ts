@@ -91,6 +91,9 @@ export interface BackendConfig {
   payment: {
     defaultProvider: ValidatedEnv['PAYMENT_DEFAULT_PROVIDER'];
   };
+  gdsWallet: {
+    sandboxEnabled: boolean;
+  };
   payos: {
     environment: ValidatedEnv['PAYOS_ENVIRONMENT'];
     clientId?: string;
@@ -208,6 +211,9 @@ export default function configuration(): BackendConfig {
     },
     payment: {
       defaultProvider: env.PAYMENT_DEFAULT_PROVIDER,
+    },
+    gdsWallet: {
+      sandboxEnabled: env.GDS_WALLET_SANDBOX_ENABLED && env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS !== 'production',
     },
     payos: {
       environment: env.PAYOS_ENVIRONMENT,

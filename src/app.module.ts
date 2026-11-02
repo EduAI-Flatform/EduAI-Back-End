@@ -34,6 +34,7 @@ import { CommerceModule } from './modules/commerce/commerce.module';
 import { MembershipsModule } from './modules/memberships/memberships.module';
 import { AccessModule } from './modules/access/access.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { GdsWalletModule } from './modules/wallet/gds-wallet.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
     CommerceModule,
     MembershipsModule,
     PaymentsModule,
+    GdsWalletModule,
     VouchersModule,
     ScholarshipsModule,
     TmiModule,

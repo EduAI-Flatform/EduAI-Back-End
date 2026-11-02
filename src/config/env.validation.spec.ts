@@ -9,6 +9,7 @@ describe('validateEnv', () => {
 
   it('keeps PayOS disabled by default without requiring provider secrets', () => {
     expect(validateEnv(paymentBase)).toMatchObject({
+      GDS_WALLET_SANDBOX_ENABLED: false,
       PAYOS_API_BASE_URL: 'https://api-merchant.payos.vn',
       PAYOS_ENVIRONMENT: 'disabled',
       PAYOS_TIMEOUT_MS: 10000,
@@ -18,6 +19,11 @@ describe('validateEnv', () => {
       VNPAY_VERSION: '2.1.0',
       VNPAY_TIMEOUT_MS: 10000,
     });
+  });
+
+  it('validates the wallet sandbox switch independently of payment provider flags', () => {
+    expect(validateEnv({ ...paymentBase, GDS_WALLET_SANDBOX_ENABLED: 'true' }).GDS_WALLET_SANDBOX_ENABLED).toBe(true);
+    expect(() => validateEnv({ ...paymentBase, GDS_WALLET_SANDBOX_ENABLED: 'perhaps' })).toThrow('GDS_WALLET_SANDBOX_ENABLED');
   });
 
   it('allows disabled VNPay configuration without secrets', () => {
