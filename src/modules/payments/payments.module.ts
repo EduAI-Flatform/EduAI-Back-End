@@ -121,6 +121,6 @@ const PAYOS_CLIENT = Symbol('PAYOS_CLIENT');
         registry.get('payos'),
     },
   ],
-  exports: [PAYMENT_PROVIDER, PAYMENT_PROVIDER_REGISTRY],
+  exports: [PAYMENT_PROVIDER, PAYMENT_PROVIDER_REGISTRY, CommerceFulfillmentService],
 })
 export class PaymentsModule {}

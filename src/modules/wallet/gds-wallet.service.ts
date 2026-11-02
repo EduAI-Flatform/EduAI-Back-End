@@ -8,7 +8,7 @@ export type GdsWalletSummary = {
   state: 'UNAVAILABLE' | 'NOT_INITIALIZED' | 'SUSPENDED' | 'READY_SANDBOX' | 'RECONCILIATION_REQUIRED';
   /** VND as decimal strings to avoid JS BigInt serialization/precision errors. */
   balance: null | { settledMinor: string; reservedMinor: string; availableMinor: string; currency: 'VND' };
-  paymentEnabled: false; // Canonical Commerce settlement integration is NOT present.
+  paymentEnabled: boolean; // UAT-only GDS capture endpoint; never production.
   topupEnabled: boolean; // QR preview only; never means wallet crediting.
   /** Read-only, newest-first journal entries; never a substitute for provider proof. */
   recentTransactions: Array<{
@@ -38,7 +38,7 @@ export class GdsWalletService {
     const wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
     const basis = {
       ...disabled, mode: 'sandbox' as const,
-      topupEnabled: this.config.gdsWallet.qrPreviewEnabled &&
+      topupEnabled: this.config.gdsWallet.qrPreviewEnabled === true &&
         this.config.app.deploymentClass === 'uat' &&
         /^\d{6,32}$/.test(this.config.gdsWallet.receivingAccount ?? ''),
     };
@@ -61,6 +61,8 @@ export class GdsWalletService {
     }
     return {
       ...basis, available: true, state: 'READY_SANDBOX',
+      paymentEnabled: this.config.gdsWallet.checkoutEnabled === true &&
+        this.config.app.deploymentClass === 'uat',
       balance: {
         settledMinor: (wallet.availableMinor + wallet.heldMinor).toString(),
         reservedMinor: wallet.heldMinor.toString(),

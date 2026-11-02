@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { RateLimit } from '../../common/security/rate-limit.decorator';
@@ -9,6 +9,7 @@ import { Roles } from '../auth/roles.decorator';
 import { GdsWalletService } from './gds-wallet.service';
 import { GdsCreateTopupDto } from './dto/gds-create-topup.dto';
 import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
+import { GdsInternalCheckoutService } from './gds-internal-checkout.service';
 
 @ApiTags('GDS Wallet (sandbox only)')
 @ApiBearerAuth()
@@ -16,7 +17,11 @@ import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(RoleName.student)
 export class GdsWalletController {
-  constructor(private readonly wallet: GdsWalletService, private readonly qr: GdsPayosQrPreviewService) {}
+  constructor(
+    private readonly wallet: GdsWalletService,
+    private readonly qr: GdsPayosQrPreviewService,
+    private readonly checkout: GdsInternalCheckoutService,
+  ) {}
 
   @Get()
   @RateLimit({ identity: 'user', limit: 30, name: 'gds-wallet-summary', windowSeconds: 60 })
@@ -32,5 +37,15 @@ export class GdsWalletController {
     @Body() input: GdsCreateTopupDto,
   ) {
     return this.qr.create(buyerId, input.amountMinor, idempotencyKey);
+  }
+
+  /** One order = one idempotency identity. UAT only; no browser payment proof. */
+  @Post('orders/:orderId/pay')
+  @RateLimit({ identity: 'user', limit: 5, name: 'gds-wallet-checkout', windowSeconds: 60 })
+  payOrder(
+    @CurrentUser('id') buyerId: string,
+    @Param('orderId', new ParseUUIDPipe({ version: '4' })) orderId: string,
+  ) {
+    return this.checkout.payOrder(buyerId, orderId);
   }
 }

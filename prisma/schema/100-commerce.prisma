@@ -72,6 +72,7 @@ enum CommercePaymentStatus {
 enum CommerceSettlementKind {
   provider_collection
   no_payment_required
+  wallet_capture
 
   @@map("commerce_settlement_kind")
 }

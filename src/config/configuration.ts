@@ -93,6 +93,7 @@ export interface BackendConfig {
   };
   gdsWallet: {
     sandboxEnabled: boolean;
+    checkoutEnabled: boolean;
     qrPreviewEnabled: boolean;
     receivingAccount?: string;
   };
@@ -216,6 +217,8 @@ export default function configuration(): BackendConfig {
     },
     gdsWallet: {
       sandboxEnabled: env.GDS_WALLET_SANDBOX_ENABLED && env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS !== 'production',
+      checkoutEnabled: env.GDS_WALLET_CHECKOUT_ENABLED && env.GDS_WALLET_SANDBOX_ENABLED &&
+        env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS === 'uat',
       qrPreviewEnabled: env.GDS_PAYOS_QR_PREVIEW_ENABLED && env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS === 'uat',
       receivingAccount: env.GDS_PAYOS_RECEIVING_ACCOUNT,
     },

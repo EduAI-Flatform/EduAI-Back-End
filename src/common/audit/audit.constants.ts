@@ -43,6 +43,7 @@ export const AuditAction = {
   PaymentRefundRecorded: 'PAYMENT_REFUND_RECORDED',
   PaymentRefundRejected: 'PAYMENT_REFUND_REJECTED',
   PaymentNotRequiredConfirmed: 'PAYMENT_NOT_REQUIRED_CONFIRMED',
+  GdsWalletCaptured: 'GDS_WALLET_CAPTURED',
   PaymentWebhookSettled: 'PAYMENT_WEBHOOK_SETTLED',
   PaymentWebhookReceivingAccountVariance: 'PAYMENT_WEBHOOK_RECEIVING_ACCOUNT_VARIANCE',
   PaymentWebhookReconciliationRequired: 'PAYMENT_WEBHOOK_RECONCILIATION_REQUIRED',

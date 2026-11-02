@@ -3,13 +3,13 @@ import { GdsWalletService } from './gds-wallet.service';
 const buyerId = 'test-buyer';
 const config = {
   app: { nodeEnv: 'test', deploymentClass: 'uat' },
-  gdsWallet: { sandboxEnabled: false },
+  gdsWallet: { sandboxEnabled: false, checkoutEnabled: false },
 };
 
 describe('GDS wallet learner API projection', () => {
   const db = { gdsInternalWallet: { findUnique: jest.fn() }, gdsInternalJournal: { findMany: jest.fn() }, buyerWalletLink: { findUnique: jest.fn() } };
   const service = new GdsWalletService(db as never, config as never);
-  beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.gdsInternalJournal.findMany.mockReset().mockResolvedValue([]); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; });
+  beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.gdsInternalJournal.findMany.mockReset().mockResolvedValue([]); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; config.gdsWallet.checkoutEnabled = false; });
 
   it('never queries or exposes money in production, even with a true flag', async () => {
     config.gdsWallet.sandboxEnabled = true;
@@ -50,6 +50,18 @@ describe('GDS wallet learner API projection', () => {
       where: { walletId: 'wallet-1' }, take: 20,
       select: { id: true, kind: true, amountMinor: true, occurredAt: true },
     }));
+  });
+
+  it('reports GDS checkout ready only for an active UAT wallet with the separate checkout flag', async () => {
+    config.gdsWallet.sandboxEnabled = true;
+    config.gdsWallet.checkoutEnabled = true;
+    db.gdsInternalWallet.findUnique.mockResolvedValue({
+      id: 'wallet-1', status: 'ACTIVE', availableMinor: 100_000n, heldMinor: 0n,
+    });
+    expect(await service.summary(buyerId)).toMatchObject({ paymentEnabled: true, state: 'READY_SANDBOX' });
+    config.app.deploymentClass = 'production';
+    expect(await service.summary(buyerId)).toMatchObject({ paymentEnabled: false, available: false });
+    config.app.deploymentClass = 'uat';
   });
 
   it('returns only bounded journal history, without exposing bank or buyer identities', async () => {
