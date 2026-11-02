@@ -42,6 +42,7 @@ import { PaymentProviderRegistry } from './payment-provider.registry';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { bankTransferEnabled } from './bank-transfer-policy';
 import { BankTransferService } from './bank-transfer.service';
+import { lockGdsPayosOrderNamespace } from '../wallet/gds-payos-order-namespace';
 
 const CURRENCY = 'VND';
 const IDEMPOTENCY_OPERATION = 'payment.create-request';
@@ -342,13 +343,28 @@ export class PaymentRequestService {
 
     this.assertProviderEnabled(defaultProvider);
     const localRequestIdentity = randomUUID();
+    const providerOrderCode = this.orderCode(localRequestIdentity);
+    if (defaultProvider === 'payos' && this.config.gdsWallet?.sandboxEnabled &&
+        this.config.app.nodeEnv !== 'production' && this.config.app.deploymentClass !== 'production') {
+      // In the sandbox only, coordinate with the future GDS topup intent
+      // allocator. The order lock alone protects payment methods, not PayOS
+      // order-code identity across two different tables.
+      await lockGdsPayosOrderNamespace(tx);
+      const gdsClaim = await tx.gdsInternalTopup.findUnique({
+        where: { payosOrderCode: providerOrderCode }, select: { id: true },
+      });
+      const legacyClaim = await tx.buyerWalletPayosTopup.findFirst({
+        where: { payosOrderCode: providerOrderCode }, select: { id: true },
+      });
+      if (gdsClaim || legacyClaim) throw new ConflictException('PAYOS_ORDER_IDENTITY_COLLISION');
+    }
     const providerExpiresAt = this.paymentExpiry(order, now);
     const attempt = await tx.commercePaymentAttempt.create({
       data: {
         orderId,
         provider: defaultProvider,
         localRequestIdentity,
-        providerOrderCode: this.orderCode(localRequestIdentity),
+        providerOrderCode,
         providerExpiresAt,
         providerRequestStartedAt: now,
         amountMinor: order.payableAmountMinor,

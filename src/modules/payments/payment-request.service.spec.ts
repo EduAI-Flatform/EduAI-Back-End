@@ -101,6 +101,8 @@ function harness(options: {
       update: jest.fn().mockResolvedValue(pendingAttempt),
     },
     gdsInternalHold: { findUnique: jest.fn().mockResolvedValue(null) },
+    gdsInternalTopup: { findUnique: jest.fn().mockResolvedValue(null) },
+    buyerWalletPayosTopup: { findFirst: jest.fn().mockResolvedValue(null) },
     commerceLifecycleEvent: { create: jest.fn().mockResolvedValue({}) },
     commerceSettlement: { create: jest.fn().mockResolvedValue({ id: 'settlement-id' }) },
   };
@@ -195,6 +197,26 @@ describe('PaymentRequestService', () => {
     expect(tx.gdsInternalHold.findUnique).toHaveBeenCalledWith({
       where: { orderRef: orderId }, select: { id: true },
     });
+  });
+
+  it('serializes sandbox PayOS order identity allocation with the GDS topup namespace', async () => {
+    const { service, tx } = harness({ gdsSandboxEnabled: true });
+    await service.create('student-id', orderId, 'payos-shared-identity');
+    expect(tx.gdsInternalTopup.findUnique).toHaveBeenCalledWith({
+      where: { payosOrderCode: expect.any(BigInt) }, select: { id: true },
+    });
+    expect(tx.buyerWalletPayosTopup.findFirst).toHaveBeenCalled();
+    // Prepare order lock, shared PayOS namespace lock, provider-completion lock.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
+  });
+
+  it('refuses a historically GDS-claimed PayOS code instead of creating a Commerce attempt', async () => {
+    const { service, tx, provider } = harness({ gdsSandboxEnabled: true });
+    tx.gdsInternalTopup.findUnique.mockResolvedValue({ id: 'gds-claimed-code' });
+    await expect(service.create('student-id', orderId, 'payos-colliding-identity'))
+      .rejects.toThrow('PAYOS_ORDER_IDENTITY_COLLISION');
+    expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
+    expect(provider.createPaymentRequest).not.toHaveBeenCalled();
   });
 
   it('passes the persisted attempt timestamp for matching PAY and QueryDR requests', async () => {
