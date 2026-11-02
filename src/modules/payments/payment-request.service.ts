@@ -317,6 +317,15 @@ export class PaymentRequestService {
       });
     }
 
+    // The learner wallet is OFF on production. In an explicitly enabled
+    // sandbox, the same order row lock serializes provider selection against
+    // GDS reserveForUnpaidCommerceOrder, enforcing a single instrument.
+    if (this.config.gdsWallet?.sandboxEnabled &&
+        this.config.app.nodeEnv !== 'production' && this.config.app.deploymentClass !== 'production') {
+      const gdsHold = await tx.gdsInternalHold.findUnique({ where: { orderRef: orderId }, select: { id: true } });
+      if (gdsHold) throw new ConflictException('PAYMENT_METHOD_ALREADY_SELECTED');
+    }
+
     const openAttempt = await tx.commercePaymentAttempt.findFirst({
       where: {
         orderId,

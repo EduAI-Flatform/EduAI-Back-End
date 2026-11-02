@@ -60,6 +60,7 @@ function harness(options: {
   existingAttempt?: ReturnType<typeof attempt> | null;
   returnUrl?: string;
   cancelUrl?: string;
+  gdsSandboxEnabled?: boolean;
 } = {}) {
   const payableAmountMinor = options.payableAmountMinor ?? 125000n;
   const initialOrder = order({
@@ -99,6 +100,7 @@ function harness(options: {
       create: jest.fn().mockResolvedValue(createdAttempt),
       update: jest.fn().mockResolvedValue(pendingAttempt),
     },
+    gdsInternalHold: { findUnique: jest.fn().mockResolvedValue(null) },
     commerceLifecycleEvent: { create: jest.fn().mockResolvedValue({}) },
     commerceSettlement: { create: jest.fn().mockResolvedValue({ id: 'settlement-id' }) },
   };
@@ -139,6 +141,8 @@ function harness(options: {
     dispatchPending: jest.fn().mockResolvedValue(undefined),
   };
   const config = {
+    app: { nodeEnv: 'test', deploymentClass: 'uat' },
+    gdsWallet: { sandboxEnabled: options.gdsSandboxEnabled ?? false },
     commerce: { idempotencySecret: 's'.repeat(32) },
     payment: { defaultProvider: 'payos' },
     payos: {
@@ -181,6 +185,18 @@ function harness(options: {
 }
 
 describe('PaymentRequestService', () => {
+  it('refuses PayOS on an order with a GDS sandbox hold before creating any provider attempt', async () => {
+    const { service, tx, provider } = harness({ gdsSandboxEnabled: true });
+    tx.gdsInternalHold.findUnique.mockResolvedValue({ id: 'gds-existing-hold' });
+    await expect(service.create('student-id', orderId, 'blocked-wallet-held-order'))
+      .rejects.toThrow('PAYMENT_METHOD_ALREADY_SELECTED');
+    expect(tx.commercePaymentAttempt.create).not.toHaveBeenCalled();
+    expect(provider.createPaymentRequest).not.toHaveBeenCalled();
+    expect(tx.gdsInternalHold.findUnique).toHaveBeenCalledWith({
+      where: { orderRef: orderId }, select: { id: true },
+    });
+  });
+
   it('passes the persisted attempt timestamp for matching PAY and QueryDR requests', async () => {
     const { service, provider, createdAttempt } = harness();
     await service.create('student-id', orderId, 'payment-timestamp-key');

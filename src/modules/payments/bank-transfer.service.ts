@@ -56,6 +56,11 @@ export class BankTransferService {
       if (existing) return;
       if (order.status !== 'pending_payment' || order.currency !== 'VND' || order.payableAmountMinor <= 0n ||
           order.payableAmountMinor > BigInt(Number.MAX_SAFE_INTEGER)) throw new ConflictException('ORDER_NOT_PAYABLE');
+      if (this.config.gdsWallet?.sandboxEnabled &&
+          this.config.app.nodeEnv !== 'production' && this.config.app.deploymentClass !== 'production') {
+        const gdsHold = await tx.gdsInternalHold.findUnique({ where: { orderRef: orderId }, select: { id: true } });
+        if (gdsHold) throw new ConflictException('PAYMENT_METHOD_ALREADY_SELECTED');
+      }
       const open = await tx.commercePaymentAttempt.findFirst({ where: { orderId, status: { in: ['created', 'pending'] } } });
       if (open) throw new ConflictException('PAYMENT_METHOD_ALREADY_SELECTED');
       const now = new Date();

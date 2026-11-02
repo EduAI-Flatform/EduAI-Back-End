@@ -53,6 +53,22 @@ describe('manual bank statement authorization and settlement', () => {
     await expect(service.approve(reviewer, 'evidence', 'unique-key-1', h.input)).rejects.toThrow('Bank transfer is unavailable');
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
+  it('refuses a second bank-transfer instrument when the sandbox GDS wallet already reserved the order', async () => {
+    const h = harness();
+    h.order.currency = 'VND';
+    h.tx.commerceOrder.findFirst = jest.fn().mockResolvedValue(h.order);
+    h.tx.commerceBankTransferRequest.findUnique = jest.fn().mockResolvedValue(null);
+    h.tx.gdsInternalHold = { findUnique: jest.fn().mockResolvedValue({ id: 'gds-hold' }) };
+    const service = new BankTransferService(h.prisma, {
+      app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true },
+    } as never, h.audit, h.fulfillment);
+    await expect(service.create('learner', 'order', 'bank-held-order-key'))
+      .rejects.toThrow('PAYMENT_METHOD_ALREADY_SELECTED');
+    expect(h.tx.gdsInternalHold.findUnique).toHaveBeenCalledWith({
+      where: { orderRef: 'order' }, select: { id: true },
+    });
+    expect(h.tx.commercePaymentEvent.create).not.toHaveBeenCalled();
+  });
   it('pages older review requests with deterministic ordering after operator authorization', async () => {
     const h = harness();
     h.prisma.commerceBankTransferRequest = { count: jest.fn().mockResolvedValue(41),
