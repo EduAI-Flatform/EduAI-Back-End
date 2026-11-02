@@ -15,11 +15,9 @@ export type GdsInternalBalance = {
 };
 
 /**
- * Source-only internal service-prepayment ledger integration.
- * Not exported through an HTTP controller or integrated with Commerce.
- * The upstream PayOS verifier/reconciler must independently authenticate the
- * settlement before invoking this method. No browser, screenshot or QR result
- * is an authorized caller. All production paths are permanently OFF here.
+ * Internal service-prepayment ledger integration; the signed-inbox worker
+ * calls it only after independently querying PayOS. No browser, screenshot
+ * or QR result is an authorized caller. Production paths remain hard OFF.
  */
 @Injectable()
 export class GdsInternalJournalService {
@@ -34,15 +32,41 @@ export class GdsInternalJournalService {
   }
 
   /**
-   * Once the source intent has already reached PAYOS_VERIFIED through a future
-   * trusted adapter, insert one balanced journal posting and update the wallet
+   * Once the signed PayOS inbox reconciler reaches PAYOS_VERIFIED, insert one
+   * balanced journal posting and update the wallet
    * projection atomically. No fee is subtracted from credited VND.
    */
   async creditVerifiedTopup(intent: GdsPayosTopupIntent, settlement: GdsInternalPayosSettlement): Promise<GdsInternalBalance> {
     this.requireSandbox();
-    const credit = prepareGdsInternalTopupCredit(intent, settlement);
+    // Reject synthetic/invalid evidence before even starting a DB transaction.
+    prepareGdsInternalTopupCredit(intent, settlement);
+    const execute = () => this.prisma.$transaction(async (tx) =>
+      this.creditVerifiedTopupInTransaction(tx, intent, settlement),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 10_000 });
 
-    const execute = () => this.prisma.$transaction(async (tx) => {
+    // PostgreSQL serializable retries and the event-key uniqueness index make
+    // concurrent duplicate callbacks safe. Conflicting facts fail closed.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try { return await execute(); }
+      catch (error) {
+        if (isPrismaCode(error, 'P2034') && attempt < 2) continue;
+        if (isPrismaCode(error, 'P2002')) {
+          if (attempt < 2) continue;
+          throw new GdsWalletInvariantError('GDS_INTERNAL_TOPUP_UNIQUE_COLLISION');
+        }
+        throw error;
+      }
+    }
+    throw new GdsWalletInvariantError('GDS_INTERNAL_TOPUP_RETRY_EXHAUSTED');
+  }
+
+  /** Caller owns the Serializable transaction, including the inbox outcome. */
+  async creditVerifiedTopupInTransaction(
+    tx: Prisma.TransactionClient, intent: GdsPayosTopupIntent,
+    settlement: GdsInternalPayosSettlement,
+  ): Promise<GdsInternalBalance> {
+      this.requireSandbox();
+      const credit = prepareGdsInternalTopupCredit(intent, settlement);
       const topup = await tx.gdsInternalTopup.findUnique({ where: { id: intent.id } });
       if (!topup || topup.buyerId !== credit.buyerId || topup.walletId === '' ||
           topup.amountMinor !== credit.amountMinor || topup.currency !== credit.currency ||
@@ -122,24 +146,6 @@ export class GdsInternalJournalService {
         availableMinor: current.availableMinor.toString(),
         heldMinor: current.heldMinor.toString(), currency: 'VND' as const,
       };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 10_000 });
-
-    // PostgreSQL serializable retries and the event-key uniqueness index make
-    // concurrent duplicate callbacks safe. Conflicting facts fail closed.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try { return await execute(); }
-      catch (error) {
-        if (isPrismaCode(error, 'P2034') && attempt < 2) continue;
-        if (isPrismaCode(error, 'P2002')) {
-          // A concurrent identical insert may have committed; reconcile it
-          // through the same checked path, never blindly return success.
-          if (attempt < 2) continue;
-          throw new GdsWalletInvariantError('GDS_INTERNAL_TOPUP_UNIQUE_COLLISION');
-        }
-        throw error;
-      }
-    }
-    throw new GdsWalletInvariantError('GDS_INTERNAL_TOPUP_RETRY_EXHAUSTED');
   }
 }
 

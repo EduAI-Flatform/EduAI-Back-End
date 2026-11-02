@@ -5,7 +5,7 @@ const walletId = '22222222-2222-4222-8222-222222222222';
 const input: PrepareGdsTopup = {
   buyerId, amountMinor: 100_000n, idempotencyKey: 'gds-topup-20261102',
   receivingAccountHash: 'a'.repeat(64),
-  expiresAt: new Date('2026-11-02T12:15:00Z'),
+  expiresAt: new Date(Date.now() + 3_600_000),
   urls: {
     returnUrl: 'https://eduai.giaoducso.org.vn/wallet/gds?result=returned',
     cancelUrl: 'https://eduai.giaoducso.org.vn/wallet/gds?result=cancelled',
@@ -89,7 +89,7 @@ describe('GDS PayOS internal topup intent preparation (not a QR or money-write e
     const retry = await service.prepare(input);
     expect(retry.intent.payosOrderCode).toBe(first.intent.payosOrderCode);
     expect(tx.gdsInternalTopup.create).toHaveBeenCalledTimes(1);
-    const refreshedExpiry = await service.prepare({ ...input, expiresAt: new Date('2026-11-02T12:30:00Z') });
+    const refreshedExpiry = await service.prepare({ ...input, expiresAt: new Date(input.expiresAt.getTime() + 15 * 60_000) });
     expect(refreshedExpiry.payosRequest?.expiredAt).toBe(first.payosRequest?.expiredAt);
     await expect(service.prepare({ ...input, amountMinor: 100_001n }))
       .rejects.toThrow('GDS_TOPUP_IDEMPOTENCY_CONFLICT');

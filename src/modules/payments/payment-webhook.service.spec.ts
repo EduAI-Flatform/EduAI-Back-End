@@ -147,17 +147,37 @@ function harness() {
     fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
     dispatchPending: jest.fn().mockResolvedValue(undefined),
   };
+  const config = { commerce: { idempotencySecret: TEST_SECRET } };
   const service = new PaymentWebhookService(
     prisma as unknown as PrismaService,
     audit as unknown as AuditService,
-    { commerce: { idempotencySecret: TEST_SECRET } } as never,
+    config as never,
     provider as unknown as PaymentProvider,
     fulfillment as never,
   );
-  return { audit, fulfillment, prisma, provider, service, tx };
+  return { audit, config, fulfillment, prisma, provider, service, tx };
 }
 
 describe('PaymentWebhookService', () => {
+  it('routes a GDS callback only AFTER SDK signature verification and never into Commerce', async () => {
+    const { audit, config, fulfillment, prisma, provider, tx } = harness();
+    const inbox = { ingestSignedIfWallet: jest.fn().mockResolvedValue('RECEIVED') };
+    const router = new PaymentWebhookService(
+      prisma as unknown as PrismaService, audit as unknown as AuditService,
+      config as never, provider as unknown as PaymentProvider, fulfillment as never, inbox as never,
+    );
+    expect(await router.ingest({ data: {}, signature: 'signed' }))
+      .toEqual({ accepted: true, result: 'GDS_TOPUP_RECEIVED' });
+    expect(inbox.ingestSignedIfWallet).toHaveBeenCalledWith(verified);
+    expect(tx.commercePaymentAttempt.findUnique).not.toHaveBeenCalled();
+    expect(fulfillment.fulfillConfirmedPayment).not.toHaveBeenCalled();
+
+    inbox.ingestSignedIfWallet.mockClear();
+    provider.verifyWebhook.mockRejectedValueOnce(new PaymentProviderError('invalid_signature', false));
+    await expect(router.ingest({ data: {}, signature: 'bad' })).rejects.toMatchObject({ status: 401 });
+    expect(inbox.ingestSignedIfWallet).not.toHaveBeenCalled();
+  });
+
   it('verifies the signature before any database lookup', async () => {
     const { prisma, provider, service } = harness();
     provider.verifyWebhook.mockRejectedValue(

@@ -6,6 +6,7 @@ import {
   HttpException,
   Inject,
   Injectable,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -36,6 +37,7 @@ import {
 } from './payment-provider';
 import { CommerceFulfillmentService } from './commerce-fulfillment.service';
 import { PaymentRecoveryError } from './payment-recovery-error';
+import { GdsPayosInboxService } from '../wallet/gds-payos-inbox.service';
 
 const attemptInclude = {
   order: {
@@ -104,6 +106,7 @@ export class PaymentWebhookService {
     private readonly config: AppConfigService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     private readonly fulfillment: CommerceFulfillmentService,
+    @Optional() private readonly gdsInbox?: GdsPayosInboxService,
   ) {}
 
   async ingest(body: unknown): Promise<PaymentWebhookResponseDto> {
@@ -120,6 +123,15 @@ export class PaymentWebhookService {
       });
     }
     try {
+      // One merchant webhook URL serves Commerce and UAT GDS. Routing occurs
+      // only AFTER PayOS SDK signature verification. Production skips GDS
+      // completely, including any access to its not-yet-migrated tables.
+      const gdsResult = await this.gdsInbox?.ingestSignedIfWallet(verified);
+      if (gdsResult) {
+        return { accepted: true, result: gdsResult === 'RECEIVED'
+          ? 'GDS_TOPUP_RECEIVED' : gdsResult === 'REVIEW'
+            ? 'GDS_TOPUP_REVIEW' : 'GDS_TOPUP_DUPLICATE' };
+      }
       return await this.ingestVerified(verified);
     } catch (error) {
       throw this.toHttpError(error);

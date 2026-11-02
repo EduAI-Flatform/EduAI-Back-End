@@ -1533,11 +1533,39 @@ model GdsInternalTopup {
   buyer                 User                   @relation("GdsInternalTopupOwner", fields: [buyerId], references: [id], onDelete: Restrict)
   wallet                GdsInternalWallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
   journal               GdsInternalJournal?
+  payosInbox            GdsInternalPayosInbox[]
 
   @@unique([buyerId, requestKeyHash])
   @@index([buyerId, createdAt])
   @@index([status, createdAt])
   @@map("gds_internal_topups")
+}
+
+// Signed PayOS facts are immutable. Only the processing status/retry metadata
+// changes; a replay cannot rewrite the bank identity or the topup owner.
+model GdsInternalPayosInbox {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  topupId               String            @map("topup_id") @db.Uuid
+  providerEventIdentity String            @unique @map("provider_event_identity") @db.VarChar(160)
+  payosOrderCode        BigInt            @map("payos_order_code")
+  paymentLinkId         String            @map("payment_link_id") @db.VarChar(128)
+  amountMinor           BigInt            @map("amount_minor")
+  currency              String            @db.VarChar(3)
+  receivingAccount      String            @map("receiving_account") @db.VarChar(32)
+  receivingAccountHash  String            @map("receiving_account_hash") @db.VarChar(64)
+  occurredAt            DateTime          @map("occurred_at")
+  signatureVerifiedAt   DateTime          @map("signature_verified_at")
+  status                String            @default("RECEIVED") @db.VarChar(16)
+  attemptCount          Int               @default(0) @map("attempt_count")
+  nextAttemptAt         DateTime          @default(now()) @map("next_attempt_at")
+  reviewReason          String?           @map("review_reason") @db.VarChar(128)
+  processedAt           DateTime?         @map("processed_at")
+  receivedAt            DateTime          @default(now()) @map("received_at")
+  topup                 GdsInternalTopup  @relation(fields: [topupId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([topupId, receivedAt])
+  @@map("gds_internal_payos_inbox")
 }
 
 // Each immutable journal row is a balanced three-account posting:
