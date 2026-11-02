@@ -7,10 +7,11 @@ import { GdsWalletService } from './gds-wallet.service';
 import { GdsInternalJournalService } from './gds-internal-journal.service';
 import { GdsInternalSpendingService } from './gds-internal-spending.service';
 import { GdsInternalTopupPreparationService } from './gds-internal-topup-preparation.service';
+import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
 
 @Module({
   imports: [AppConfigModule, AuthModule, PrismaModule],
   controllers: [GdsWalletController],
-  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService],
+  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService],
 })
 export class GdsWalletModule {}
