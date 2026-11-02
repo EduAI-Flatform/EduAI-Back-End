@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import {
-  CommerceActorKind, CommerceLifecycleEntityType, CommerceOrderStatus,
+  CommerceActorKind, CommerceFulfillmentStatus, CommerceLifecycleEntityType, CommerceOrderStatus,
   CommerceSettlementDisposition, CommerceSettlementKind, Prisma,
 } from '../../../generated/prisma/client';
 import { AuditAction } from '../../common/audit/audit.constants';
@@ -47,7 +47,8 @@ export class GdsInternalCheckoutService {
     const action = () => this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${orderId}::uuid FOR UPDATE`);
       const order = await tx.commerceOrder.findUnique({ where: { id: orderId },
-        select: { id: true, buyerId: true, status: true, currency: true, payableAmountMinor: true, confirmedSettlementId: true },
+        select: { id: true, buyerId: true, status: true, fulfillmentStatus: true,
+          currency: true, payableAmountMinor: true, confirmedSettlementId: true },
       });
       if (!order || order.buyerId !== buyerId) throw new GdsWalletInvariantError('GDS_CAPTURE_OWNER_MISMATCH');
 
@@ -62,6 +63,10 @@ export class GdsInternalCheckoutService {
         const owningWallet = hold ? await tx.gdsInternalWallet.findUnique({ where: { id: hold.walletId } }) : null;
         if (!settlement || settlement.kind !== CommerceSettlementKind.wallet_capture ||
             settlement.orderId !== orderId || settlement.provider !== 'gds' ||
+            settlement.disposition !== CommerceSettlementDisposition.internal ||
+            settlement.currency !== 'VND' || settlement.paymentAttemptId !== null ||
+            settlement.paymentEventId !== null ||
+            order.fulfillmentStatus !== CommerceFulfillmentStatus.fulfilled ||
             settlement.amountMinor !== order.payableAmountMinor ||
             settlement.providerSettlementReference !== `gds:order:${orderId}` ||
             !hold || hold.status !== 'CAPTURED' || hold.amountMinor !== order.payableAmountMinor ||

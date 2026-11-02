@@ -24,6 +24,7 @@ function setup(options: { existingHold?: boolean; confirmed?: boolean; amount?: 
     commerceOrder: {
       findUnique: jest.fn().mockResolvedValue({
         id: orderId, buyerId, status: options.confirmed ? 'confirmed' : 'pending_payment',
+        fulfillmentStatus: options.confirmed ? 'fulfilled' : 'not_started',
         confirmedSettlementId: options.confirmed ? settlementId : null,
         payableAmountMinor: amount, currency: 'VND',
       }),
@@ -34,6 +35,7 @@ function setup(options: { existingHold?: boolean; confirmed?: boolean; amount?: 
       count: jest.fn().mockResolvedValue(0),
       findUnique: jest.fn().mockResolvedValue({
         id: settlementId, orderId, kind: 'wallet_capture', provider: 'gds',
+        disposition: 'internal', currency: 'VND', paymentAttemptId: null, paymentEventId: null,
         providerSettlementReference: `gds:order:${orderId}`, amountMinor: amount,
       }),
       create: jest.fn().mockResolvedValue({ id: settlementId }),
@@ -121,6 +123,16 @@ describe('PAYW-04C internal-only Commerce capture orchestration', () => {
     expect(tx.gdsInternalJournal.create).not.toHaveBeenCalled();
     expect(tx.commerceSettlement.create).not.toHaveBeenCalled();
     expect(fulfillment.fulfillConfirmedOrder).not.toHaveBeenCalled();
+  });
+
+  it('refuses an apparently confirmed replay when entitlement fulfillment is incomplete', async () => {
+    const { service, tx, fulfillment } = setup({ confirmed: true });
+    tx.commerceOrder.findUnique.mockResolvedValueOnce({
+      id: orderId, buyerId, status: 'confirmed', fulfillmentStatus: 'failed',
+      confirmedSettlementId: settlementId, payableAmountMinor: 100_000n, currency: 'VND',
+    });
+    await expect(service.payOrder(buyerId, orderId)).rejects.toThrow('GDS_CAPTURE_REPLAY_UNVERIFIED');
+    expect(fulfillment.dispatchPending).not.toHaveBeenCalled();
   });
 
   it('refuses to pay an order that has a PayOS or other provider attempt', async () => {
