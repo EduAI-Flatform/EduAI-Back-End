@@ -33,6 +33,57 @@ describe('validateEnv', () => {
       .toThrow('GDS_WALLET_CHECKOUT_ENABLED');
   });
 
+  it('uses a single GDS_WALLET switch with precedence over legacy toggles', () => {
+    const enabled = validateEnv({
+      ...paymentBase, DEPLOYMENT_CLASS: 'uat', JWT_REFRESH_SECRET: 'r'.repeat(48),
+      GDS_WALLET: 'true', GDS_WALLET_SANDBOX_ENABLED: 'false',
+      GDS_PAYOS_QR_PREVIEW_ENABLED: 'false', GDS_WALLET_CHECKOUT_ENABLED: 'false',
+    });
+    expect(enabled).toMatchObject({
+      GDS_WALLET: true, GDS_WALLET_SANDBOX_ENABLED: true,
+      GDS_PAYOS_QR_PREVIEW_ENABLED: true, GDS_WALLET_CHECKOUT_ENABLED: true,
+    });
+    const disabled = validateEnv({
+      ...paymentBase, GDS_WALLET: 'false', GDS_WALLET_SANDBOX_ENABLED: 'true',
+    });
+    expect(disabled.GDS_WALLET_SANDBOX_ENABLED).toBe(false);
+    expect(() => validateEnv({ ...paymentBase, GDS_WALLET: 'yes' })).toThrow('GDS_WALLET');
+    expect(() => validateEnv({ ...paymentBase, DEPLOYMENT_CLASS: 'uat', GDS_WALLET: 'true' }))
+      .toThrow('JWT_REFRESH_SECRET of at least 32 characters');
+  });
+
+  it('derives one stable UAT-only commerce secret without changing an existing explicit secret', () => {
+    const uat = { ...paymentBase, NODE_ENV: 'development', DEPLOYMENT_CLASS: 'uat',
+      GDS_WALLET: 'true', JWT_REFRESH_SECRET: 'r'.repeat(48) };
+    const generated = validateEnv(uat).COMMERCE_IDEMPOTENCY_SECRET;
+    expect(generated).toMatch(/^[a-f0-9]{64}$/);
+    expect(validateEnv(uat).COMMERCE_IDEMPOTENCY_SECRET).toBe(generated);
+    expect(validateEnv({ ...uat, JWT_REFRESH_SECRET: 'z'.repeat(48) }).COMMERCE_IDEMPOTENCY_SECRET)
+      .not.toBe(generated);
+    expect(validateEnv({ ...uat, COMMERCE_IDEMPOTENCY_SECRET: 'x'.repeat(32) }).COMMERCE_IDEMPOTENCY_SECRET)
+      .toBe('x'.repeat(32));
+  });
+
+  it('starts the simplified Render UAT combination without a separate commerce secret', () => {
+    const env = validateEnv({
+      ...paymentBase,
+      NODE_ENV: 'development', DEPLOYMENT_CLASS: 'uat',
+      JWT_REFRESH_SECRET: 'render-uat-refresh-secret-never-rotate'.padEnd(48, '!'),
+      GDS_WALLET: 'true', PAYOS_ENVIRONMENT: 'production',
+      PAYOS_CLIENT_ID: 'personal-client', PAYOS_API_KEY: 'personal-key',
+      PAYOS_CHECKSUM_KEY: 'personal-checksum',
+      PAYOS_RETURN_URL: 'https://eduai-uat.vercel.app/wallet/gds',
+      PAYOS_CANCEL_URL: 'https://eduai-uat.vercel.app/wallet/gds',
+      PAYOS_WEBHOOK_URL: 'https://eduai-back-end.onrender.com/api/v1/payments/webhooks/payos',
+    });
+    expect(env).toMatchObject({
+      NODE_ENV: 'development', DEPLOYMENT_CLASS: 'uat', GDS_WALLET: true,
+      PAYOS_ENVIRONMENT: 'production', GDS_WALLET_SANDBOX_ENABLED: true,
+      GDS_WALLET_CHECKOUT_ENABLED: true, GDS_PAYOS_QR_PREVIEW_ENABLED: true,
+    });
+    expect(env.COMMERCE_IDEMPOTENCY_SECRET).toHaveLength(64);
+  });
+
   it('allows disabled VNPay configuration without secrets', () => {
     expect(
       validateEnv({
@@ -278,28 +329,22 @@ describe('validateEnv', () => {
     });
   });
 
-  it('requires complete production-only PayOS configuration when activated', () => {
+  it('requires complete PayOS credentials without binding provider mode to Node mode', () => {
     expect(() =>
       validateEnv({ ...paymentBase, PAYOS_ENVIRONMENT: 'production' }),
     ).toThrow('PAYOS production configuration requires');
 
-    expect(() =>
-      validateEnv({
-        ...paymentBase,
-        NODE_ENV: 'development',
-        DEPLOYMENT_CLASS: 'production',
-        PAYOS_ENVIRONMENT: 'production',
-        PAYOS_CLIENT_ID: 'client',
-        PAYOS_API_KEY: 'api-key',
-        PAYOS_CHECKSUM_KEY: 'checksum-key',
-        PAYOS_RETURN_URL: 'https://app.example/payments/return',
-        PAYOS_CANCEL_URL: 'https://app.example/payments/cancel',
-        PAYOS_WEBHOOK_URL: 'https://api.example/api/v1/payments/webhooks/payos',
-      }),
-    ).toThrow('PAYOS_ENVIRONMENT=production requires NODE_ENV=production or explicit development UAT');
+    expect(validateEnv({
+      ...paymentBase, NODE_ENV: 'development', DEPLOYMENT_CLASS: 'production',
+      PAYOS_ENVIRONMENT: 'production', PAYOS_CLIENT_ID: 'client',
+      PAYOS_API_KEY: 'api-key', PAYOS_CHECKSUM_KEY: 'checksum-key',
+      PAYOS_RETURN_URL: 'https://app.example/payments/return',
+      PAYOS_CANCEL_URL: 'https://app.example/payments/cancel',
+      PAYOS_WEBHOOK_URL: 'https://api.example/api/v1/payments/webhooks/payos',
+    }).PAYOS_ENVIRONMENT).toBe('production');
   });
 
-  it('allows a separate personal PayOS channel ONLY in a development UAT deployment', () => {
+  it('allows personal PayOS in development while preserving HTTPS callback validation', () => {
     const personalUat = {
       ...paymentBase,
       NODE_ENV: 'development',
@@ -315,10 +360,10 @@ describe('validateEnv', () => {
     expect(validateEnv(personalUat)).toMatchObject({
       NODE_ENV: 'development', DEPLOYMENT_CLASS: 'uat', PAYOS_ENVIRONMENT: 'production',
     });
-    expect(() => validateEnv({ ...personalUat, DEPLOYMENT_CLASS: 'production' }))
-      .toThrow('requires NODE_ENV=production or explicit development UAT');
-    expect(() => validateEnv({ ...personalUat, NODE_ENV: 'test' }))
-      .toThrow('requires NODE_ENV=production or explicit development UAT');
+    expect(validateEnv({ ...personalUat, DEPLOYMENT_CLASS: 'production' }).PAYOS_ENVIRONMENT)
+      .toBe('production');
+    expect(validateEnv({ ...personalUat, NODE_ENV: 'test' }).PAYOS_ENVIRONMENT)
+      .toBe('production');
     expect(() => validateEnv({ ...personalUat, PAYOS_RETURN_URL: 'http://unsafe.example' }))
       .toThrow('PAYOS_RETURN_URL must use https');
   });

@@ -1,3 +1,5 @@
+import { createHmac } from 'node:crypto';
+
 export type NodeEnvironment = 'development' | 'test' | 'production';
 export type DeploymentClass = 'uat' | 'production';
 export type AiProviderName = 'gemini' | 'openai' | 'mock';
@@ -66,6 +68,7 @@ export interface ValidatedEnv {
   MONITORING_ENDPOINT?: string;
   COMMERCE_IDEMPOTENCY_SECRET?: string;
   PAYMENT_DEFAULT_PROVIDER: PaymentDefaultProvider;
+  GDS_WALLET: boolean;
   GDS_WALLET_SANDBOX_ENABLED: boolean;
   GDS_WALLET_CHECKOUT_ENABLED: boolean;
   GDS_PAYOS_QR_PREVIEW_ENABLED: boolean;
@@ -187,6 +190,22 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   );
   const payosEnvironment = parsePayosEnvironment(config.PAYOS_ENVIRONMENT);
   const vnpayEnvironment = parseVnpayEnvironment(config.VNPAY_ENVIRONMENT);
+  const singleWalletFlag = optionalString(config.GDS_WALLET);
+  // The single switch takes precedence; legacy flags remain compatible with
+  // existing deployed environments until their configuration is migrated.
+  const gdsWalletEnabled = singleWalletFlag === undefined
+    ? undefined
+    : parseBoolean(singleWalletFlag, false, 'GDS_WALLET');
+  const refreshSecret = optionalString(config.JWT_REFRESH_SECRET);
+  const explicitCommerceSecret = optionalString(config.COMMERCE_IDEMPOTENCY_SECRET);
+  // UAT only: a stable, domain-separated key avoids another credential field.
+  // In production, keep the original independent key: historical HMAC IDs
+  // cannot be re-keyed merely by changing environment configuration.
+  const commerceSecret = explicitCommerceSecret ?? (
+    nodeEnv !== 'production' && deploymentClass === 'uat' && refreshSecret && refreshSecret.length >= 32
+      ? createHmac('sha256', refreshSecret).update('eduai:uat:commerce-idempotency:v1').digest('hex')
+      : undefined
+  );
   const resendApiKey = optionalString(config.RESEND_API_KEY);
   const emailFrom = optionalString(config.EMAIL_FROM);
   const aiApiKey = optionalString(config.AI_API_KEY);
@@ -208,10 +227,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
       config.JWT_ACCESS_SECRET,
       'JWT_ACCESS_SECRET',
     ),
-    JWT_REFRESH_SECRET: requiredString(
-      config.JWT_REFRESH_SECRET,
-      'JWT_REFRESH_SECRET',
-    ),
+    JWT_REFRESH_SECRET: requiredString(config.JWT_REFRESH_SECRET, 'JWT_REFRESH_SECRET'),
     FIREBASE_PROJECT_ID: firebaseProjectId,
     FIREBASE_CLIENT_EMAIL: firebaseClientEmail,
     FIREBASE_PRIVATE_KEY: firebasePrivateKey,
@@ -293,11 +309,12 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     RESEND_API_KEY: resendApiKey,
     MONITORING_ENABLED: parseBoolean(config.MONITORING_ENABLED, false, 'MONITORING_ENABLED'),
     MONITORING_ENDPOINT: optionalUrl(config.MONITORING_ENDPOINT, 'MONITORING_ENDPOINT'),
-    COMMERCE_IDEMPOTENCY_SECRET: optionalString(config.COMMERCE_IDEMPOTENCY_SECRET),
+    COMMERCE_IDEMPOTENCY_SECRET: commerceSecret,
     PAYMENT_DEFAULT_PROVIDER: paymentDefaultProvider,
-    GDS_WALLET_SANDBOX_ENABLED: parseBoolean(config.GDS_WALLET_SANDBOX_ENABLED, false, 'GDS_WALLET_SANDBOX_ENABLED'),
-    GDS_WALLET_CHECKOUT_ENABLED: parseBoolean(config.GDS_WALLET_CHECKOUT_ENABLED, false, 'GDS_WALLET_CHECKOUT_ENABLED'),
-    GDS_PAYOS_QR_PREVIEW_ENABLED: parseBoolean(config.GDS_PAYOS_QR_PREVIEW_ENABLED, false, 'GDS_PAYOS_QR_PREVIEW_ENABLED'),
+    GDS_WALLET: gdsWalletEnabled ?? false,
+    GDS_WALLET_SANDBOX_ENABLED: gdsWalletEnabled ?? parseBoolean(config.GDS_WALLET_SANDBOX_ENABLED, false, 'GDS_WALLET_SANDBOX_ENABLED'),
+    GDS_WALLET_CHECKOUT_ENABLED: gdsWalletEnabled ?? parseBoolean(config.GDS_WALLET_CHECKOUT_ENABLED, false, 'GDS_WALLET_CHECKOUT_ENABLED'),
+    GDS_PAYOS_QR_PREVIEW_ENABLED: gdsWalletEnabled ?? parseBoolean(config.GDS_PAYOS_QR_PREVIEW_ENABLED, false, 'GDS_PAYOS_QR_PREVIEW_ENABLED'),
     GDS_PAYOS_RECEIVING_ACCOUNT: optionalString(config.GDS_PAYOS_RECEIVING_ACCOUNT),
     PAYOS_ENVIRONMENT: payosEnvironment,
     PAYOS_CLIENT_ID: optionalString(config.PAYOS_CLIENT_ID),
@@ -366,6 +383,11 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     );
   }
 
+  if (validated.GDS_WALLET && validated.DEPLOYMENT_CLASS === 'uat' &&
+      !validated.COMMERCE_IDEMPOTENCY_SECRET) {
+    throw new Error('GDS_WALLET=true requires a stable JWT_REFRESH_SECRET of at least 32 characters in UAT');
+  }
+
   if (validated.PAYOS_ENVIRONMENT === 'production') {
     const requiredPayosVariables: Array<keyof ValidatedEnv> = [
       'PAYOS_CLIENT_ID',
@@ -382,14 +404,8 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
         `PAYOS production configuration requires ${missing.join(', ')}`,
       );
     }
-    // PayOS exposes a real merchant API, not a synthetic sandbox API.
-    // An explicitly classified DEV/UAT runtime may use a separately owned
-    // test merchant channel; wallet features still hard-reject NODE_ENV
-    // production and DEPLOYMENT_CLASS production regardless of flags.
-    if (validated.NODE_ENV !== 'production' &&
-        !(validated.NODE_ENV === 'development' && validated.DEPLOYMENT_CLASS === 'uat')) {
-      throw new Error('PAYOS_ENVIRONMENT=production requires NODE_ENV=production or explicit development UAT');
-    }
+    // PayOS provider mode is independent of the Node runtime mode. The
+    // official API can receive real money even on a development instance.
     if (validated.PAYOS_API_BASE_URL !== OFFICIAL_PAYOS_API_BASE_URL) {
       throw new Error(
         `PAYOS_API_BASE_URL must be ${OFFICIAL_PAYOS_API_BASE_URL}`,
