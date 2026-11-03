@@ -141,13 +141,13 @@ WITH protected(name) AS (VALUES ('gds_internal_wallets'),('gds_internal_holds'),
  FROM protected
 )
 SELECT COALESCE(capabilities.protected,false)
- AND NOT has_column_privilege(current_user,'public.gds_internal_wallets','available_minor','INSERT')
- AND NOT has_column_privilege(current_user,'public.gds_internal_wallets','held_minor','INSERT')
  AND NOT has_table_privilege(current_user,'public.gds_internal_holds','INSERT')
  AND NOT has_schema_privilege(current_user,'public','CREATE')
  AND EXISTS(SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.gds_internal_apply_journal()') AND prosecdef
    AND proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp'] AND NOT pg_has_role(current_user,proowner,'MEMBER'))
  AND NOT has_function_privilege(current_user,'public.gds_internal_apply_journal()','EXECUTE')
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.gds_internal_wallets'::regclass
+   AND tgfoid=to_regprocedure('public.gds_internal_wallet_zero_start()') AND tgenabled='O')
  AS "gdsRuntimeLeastPrivilegeReady"
 FROM capabilities
 `;

@@ -44,7 +44,7 @@ function buildRuntimeGdsPrivilegeStatement(runtimeUrl) {
   const statements = [
     'REVOKE ALL PRIVILEGES ON TABLE ' + all + ' FROM ' + role + ', PUBLIC',
     'GRANT SELECT ON TABLE ' + all + ' TO ' + role,
-    'GRANT INSERT (id, buyer_id, created_at, updated_at) ON TABLE public.gds_internal_wallets TO ' + role,
+    'GRANT INSERT ON TABLE public.gds_internal_wallets TO ' + role,
     'GRANT INSERT ON TABLE public.gds_internal_topups, public.gds_internal_journal, public.gds_internal_payos_inbox, public.gds_internal_payos_reconciliations TO ' + role,
     'REVOKE EXECUTE ON FUNCTION public.gds_internal_apply_journal() FROM ' + role + ', PUBLIC',
   ];

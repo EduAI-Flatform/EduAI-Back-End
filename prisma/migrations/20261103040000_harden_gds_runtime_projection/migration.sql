@@ -42,3 +42,18 @@ END;
 $$ LANGUAGE plpgsql;
 
 REVOKE ALL ON FUNCTION public.gds_internal_apply_journal() FROM PUBLIC;
+
+-- Prisma explicitly includes scalar defaults. Permit zero-valued inserts, never opening credit.
+CREATE FUNCTION public.gds_internal_wallet_zero_start() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF (NEW.available_minor <> 0 OR NEW.held_minor <> 0) AND
+     NOT pg_has_role(current_user, (SELECT relowner FROM pg_class WHERE oid=TG_RELID), 'USAGE') THEN
+    RAISE EXCEPTION 'Runtime wallets must start at zero';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.gds_internal_wallet_zero_start() FROM PUBLIC;
+CREATE TRIGGER gds_internal_wallet_zero_start BEFORE INSERT ON public.gds_internal_wallets
+FOR EACH ROW EXECUTE FUNCTION public.gds_internal_wallet_zero_start();
