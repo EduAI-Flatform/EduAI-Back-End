@@ -18,6 +18,7 @@ describe('PAYW-04E signed inbox → independent PayOS lookup → exactly-once GD
   let wallet: Row;
   let entries: Row[];
   let inbox: Row[];
+  let proofs: Row[];
   let config: Row;
   let tx: Row;
   let prisma: Row;
@@ -44,7 +45,7 @@ describe('PAYW-04E signed inbox → independent PayOS lookup → exactly-once GD
       expiresAt: new Date(Date.now() + 3600_000),
     };
     wallet = { id: walletId, buyerId, status: 'ACTIVE', availableMinor: 0n, heldMinor: 0n };
-    entries = []; inbox = [];
+    entries = []; inbox = []; proofs = [];
     config = { app: { nodeEnv: 'test', deploymentClass: 'uat' },
       gdsWallet: { sandboxEnabled: true } };
     const getInbox = async ({ where }: Row) => inbox.find((row) =>
@@ -83,6 +84,14 @@ describe('PAYW-04E signed inbox → independent PayOS lookup → exactly-once GD
           Object.assign(row, data);
           if (data.attemptCount?.increment) row.attemptCount += data.attemptCount.increment;
           return { count: 1 };
+        }),
+      },
+      gdsInternalPayosReconciliation: {
+        findUnique: jest.fn(async ({ where }: Row) => proofs.find((proof) =>
+          where.inboxId ? proof.inboxId === where.inboxId : proof.topupId === where.topupId) ?? null),
+        create: jest.fn(async ({ data }: Row) => {
+          const proof = { id: `proof-${proofs.length + 1}`, createdAt: new Date(), ...data };
+          proofs.push(proof); return proof;
         }),
       },
       gdsInternalWallet: {
@@ -177,10 +186,9 @@ describe('PAYW-04E signed inbox → independent PayOS lookup → exactly-once GD
     expect(wallet.availableMinor).toBe(amount);
   });
 
-  it('quarantines wrong amounts, receiving accounts, cancelled and conflicting orders', async () => {
+  it('quarantines wrong amounts, cancelled and conflicting orders', async () => {
     const variants = [
       { ...event, amountMinor: amount - 1n, providerEventIdentity: 'wrong-amount', providerSettlementReference: 'wrong-amount' },
-      { ...event, receivingAccount: '222222222222', providerEventIdentity: 'wrong-account', providerSettlementReference: 'wrong-account' },
       { ...event, providerPaymentIdentity: 'other-link', providerEventIdentity: 'wrong-link', providerSettlementReference: 'wrong-link' },
     ];
     for (const candidate of variants) {
@@ -191,6 +199,111 @@ describe('PAYW-04E signed inbox → independent PayOS lookup → exactly-once GD
     topup.status = 'CANCELLED';
     expect(await service.ingestSignedIfWallet({ ...event,
       providerEventIdentity: 'cancelled', providerSettlementReference: 'cancelled' })).toBe('REVIEW');
+  });
+
+  it('keeps the QR recipient immutable and binds a distinct physical recipient only after independent reconciliation', async () => {
+    const qrHash = createHash('sha256').update('VIRTUAL-GDS-ORDER-1').digest('hex');
+    topup.receivingAccountHash = qrHash;
+    const queried = await provider.reconcilePaymentRequest();
+    provider.reconcilePaymentRequest.mockResolvedValue({ ...queried, receivingAccount: null });
+
+    expect(await service.ingestSignedIfWallet(event)).toBe('RECEIVED');
+    expect(wallet.availableMinor).toBe(0n);
+    expect(topup.settlementReceivingAccountHash).toBeUndefined();
+    expect(proofs).toHaveLength(0);
+
+    expect(await service.processOne(inbox[0].id)).toBe('PROCESSED');
+    expect(topup).toMatchObject({ receivingAccountHash: qrHash, settlementReceivingAccountHash: hash });
+    expect(proofs).toHaveLength(1);
+    expect(proofs[0]).toMatchObject({
+      inboxId: inbox[0].id, topupId, providerEventIdentity: event.providerEventIdentity,
+      payosOrderCode: orderCode, paymentLinkId: event.providerPaymentIdentity,
+      amountMinor: amount, currency: 'VND', qrReceivingAccountHash: qrHash,
+      settlementReceivingAccountHash: hash, occurredAt: event.occurredAt,
+    });
+    expect(proofs[0].signatureVerifiedAt).toEqual(inbox[0].signatureVerifiedAt);
+    expect(proofs[0].providerReconciledAt).toBeInstanceOf(Date);
+    expect(wallet.availableMinor).toBe(amount);
+    expect(entries).toHaveLength(1);
+  });
+
+  it('recovers an old reviewed recipient mismatch using a separate proof without rewriting the signed inbox', async () => {
+    await service.ingestSignedIfWallet(event);
+    const qrHash = createHash('sha256').update('VIRTUAL-GDS-ORDER-1').digest('hex');
+    topup.receivingAccountHash = qrHash;
+    inbox[0].status = 'REVIEW';
+    inbox[0].reviewReason = 'SIGNED_IDENTITY_OR_TERMINAL_CONFLICT';
+    const originalInbox = { ...inbox[0] };
+    const queried = await provider.reconcilePaymentRequest();
+    provider.reconcilePaymentRequest.mockResolvedValue({ ...queried, receivingAccount: null });
+    const recovery = service as unknown as { processReviewed(id: string): Promise<string> };
+
+    expect(await service.processOne(inbox[0].id)).toBe('DEFERRED');
+    expect(entries).toHaveLength(0);
+    expect(await recovery.processReviewed(inbox[0].id)).toBe('PROCESSED');
+    expect(inbox[0]).toEqual(originalInbox);
+    expect(proofs).toHaveLength(1);
+    expect(proofs[0]).toMatchObject({ inboxId: inbox[0].id, qrReceivingAccountHash: qrHash,
+      settlementReceivingAccountHash: hash });
+    expect(wallet.availableMinor).toBe(amount);
+    expect(entries).toHaveLength(1);
+
+    await recovery.processReviewed(inbox[0].id);
+    expect(inbox[0]).toEqual(originalInbox);
+    expect(proofs).toHaveLength(1);
+    expect(entries).toHaveLength(1);
+    expect(wallet.availableMinor).toBe(amount);
+  });
+
+  it.each(['CANCELLED', 'REVIEW'])(
+    'does not reopen a reviewed inbox when its topup is %s', async (status) => {
+      await service.ingestSignedIfWallet(event);
+      inbox[0].status = 'REVIEW';
+      inbox[0].reviewReason = 'SIGNED_IDENTITY_OR_TERMINAL_CONFLICT';
+      topup.status = status;
+      const recovery = service as unknown as { processReviewed(id: string): Promise<string> };
+
+      await recovery.processReviewed(inbox[0].id).catch(() => undefined);
+      expect(wallet.availableMinor).toBe(0n);
+      expect(entries).toHaveLength(0);
+      expect(proofs).toHaveLength(0);
+      expect(inbox[0].status).toBe('REVIEW');
+    },
+  );
+
+  it('does not credit or record a resolution proof for a physical recipient contradicting an existing binding', async () => {
+    topup.settlementReceivingAccountHash = createHash('sha256').update('999999999999').digest('hex');
+    await service.ingestSignedIfWallet(event);
+    await service.processOne(inbox[0].id);
+    expect(topup.settlementReceivingAccountHash).not.toBe(hash);
+    expect(wallet.availableMinor).toBe(0n);
+    expect(entries).toHaveLength(0);
+    expect(proofs).toHaveLength(0);
+  });
+
+  it('does not recover an unrelated review reason through the recipient-mismatch recovery entry point', async () => {
+    await service.ingestSignedIfWallet(event);
+    inbox[0].status = 'REVIEW';
+    inbox[0].reviewReason = 'GDS_PAYOS_RECONCILIATION_RETRY_EXHAUSTED';
+    const originalInbox = { ...inbox[0] };
+    const recovery = service as unknown as { processReviewed(id: string): Promise<string> };
+
+    await recovery.processReviewed(inbox[0].id).catch(() => undefined);
+    expect(inbox[0]).toEqual(originalInbox);
+    expect(proofs).toHaveLength(0);
+    expect(entries).toHaveLength(0);
+    expect(wallet.availableMinor).toBe(0n);
+  });
+
+  it('cannot post a wallet credit when the mandatory reconciliation proof fails to persist', async () => {
+    await service.ingestSignedIfWallet(event);
+    tx.gdsInternalPayosReconciliation.create.mockRejectedValueOnce(new Error('proof persistence unavailable'));
+
+    await service.processOne(inbox[0].id);
+    expect(tx.gdsInternalPayosReconciliation.create).toHaveBeenCalledTimes(1);
+    expect(proofs).toHaveLength(0);
+    expect(entries).toHaveLength(0);
+    expect(wallet.availableMinor).toBe(0n);
   });
 
   it('never credits an underpaid or multiple-transfer PayOS status', async () => {

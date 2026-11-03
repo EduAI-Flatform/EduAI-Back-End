@@ -378,6 +378,26 @@ describe('PayosPaymentProvider', () => {
     tampered = true;
     await expect(provider.createPaymentRequest(input)).rejects.toMatchObject({ code: 'invalid_signature' });
   });
+  it('preserves virtual recipient evidence separately from the physical receiver', async () => {
+    const { client, provider } = setup();
+    client.webhooks.verify.mockResolvedValue({
+      accountNumber: 'physical-account', virtualAccountNumber: 'VIRTUAL-ORDER-1',
+      amount: 125000, code: '00', currency: 'VND', orderCode: 123,
+      paymentLinkId: 'payment-link-id', reference: 'bank-ref', transactionDateTime: '2026-11-03 14:00:00',
+    });
+    await expect(provider.verifyWebhook({ body: { data: {}, signature: 'test' }, headers: {} }))
+      .resolves.toMatchObject({ receivingAccount: 'physical-account', virtualReceivingAccount: 'VIRTUAL-ORDER-1' });
+    client.paymentRequests.get.mockResolvedValue({ ...validStatus, accountNumber: undefined,
+      transactions: [{ reference: 'bank-ref', amount: 125000, accountNumber: 'physical-account',
+        virtualAccountNumber: 'VIRTUAL-ORDER-1', transactionDateTime: '2026-11-03 14:00:00' }],
+    });
+    const status = await provider.reconcilePaymentRequest('payment-link-id');
+    expect(status.receivingAccount).toBeNull();
+    expect(status.transactions[0]).toMatchObject({
+      receivingAccount: 'physical-account', virtualReceivingAccount: 'VIRTUAL-ORDER-1',
+    });
+  });
+
   it('does not log credentials, raw provider errors, or webhook input', async () => {
     const { client, provider } = setup();
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation();

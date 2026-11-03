@@ -52,3 +52,49 @@ existing account hashes and payment links must be retained.
 References: https://payos.vn/docs/api/ and
 https://payos.vn/docs/cau-hoi-thuong-gap/; installed SDK sources under
 `node_modules/@payos/node/lib/resources/v2/payment-requests/`.
+
+## Signed settlement reconciliation (2026-11-03)
+
+PayOS can return a QR virtual account on create and a different physical
+receiving account in its signed webhook and authenticated GET transaction.
+These are distinct provider facts. The QR account hash remains immutable.
+The physical account hash is bound once, per immutable link, only after the
+signed webhook and an independent SDK-signature-verified GET agree on exact
+link/order, VND amount, full payment, one bank reference, receiver and timestamp.
+Any explicit signed virtual account must still match the original QR hash.
+This applies AntiFake's transaction/link identity model while retaining EduAI's
+stronger signature, per-transfer, lifetime and cross-ledger checks.
+
+Migration `20261103020000_add_gds_payos_settlement_reconciliation` adds the
+physical binding and append-only reconciliation evidence, and permits bounded
+alphanumeric signed account identifiers. Apply it only to the isolated UAT DB
+before starting this source revision. It does not rewrite existing balances,
+QR hashes or signed inbox records. Database guards require matching evidence
+before a signed-inbox topup can become verified/credited. Application writes
+proof, binds the receiver, and posts the balanced unique journal atomically.
+
+The UAT worker and open-QR UI now poll every three seconds. Failed provider
+queries remain pending/retry; mismatches remain REVIEW. No browser redirect or
+screenshot authorizes credit.
+
+Historical REVIEW due to `SIGNED_IDENTITY_OR_TERMINAL_CONFLICT` is recovered
+explicitly with `processReviewed`; the original REVIEW row is retained. A new
+proof resolves it and shares the original event/topup credit identity. Unrelated
+review reasons, cancelled intents, split/overpaid transfers and recipient changes
+cannot use this path.
+
+After build and migration, this bounded operator command defaults to dry-run:
+
+```sh
+node scripts/reconcile-gds-reviewed-topups.cjs --uat --memo <MEMO_A> --memo <MEMO_B> --expected-amount 10000 --max-total 20000
+```
+
+Only after every scoped lookup passes, rerun with `--apply`. The script requires
+a non-production local Node environment, exact applied migration checksum, at
+most two exact intents belonging to one buyer, expected amount and total cap.
+It uses the configured isolated UAT database and merchant credentials; the
+`--uat` argument explicitly classifies this bounded operator run. It does not
+edit environment files or change running service flags. Every apply re-queries
+PayOS and calls the normal guarded service; there is no balance-update SQL.
+A replay verifies existing proof/journal and performs no write. Logs contain
+only aggregate statuses and amounts; never accounts, QR, credentials or refs.

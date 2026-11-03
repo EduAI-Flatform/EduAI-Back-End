@@ -30,6 +30,7 @@ model GdsInternalTopup {
   payosOrderCode        BigInt                 @unique @map("payos_order_code")
   transferMemo          String                 @map("transfer_memo") @db.VarChar(9)
   receivingAccountHash  String                 @map("receiving_account_hash") @db.VarChar(64)
+  settlementReceivingAccountHash String?       @map("settlement_receiving_account_hash") @db.VarChar(64)
   paymentLinkId         String?                @unique @map("payment_link_id") @db.VarChar(128)
   collectionReference   String?                @unique @map("collection_reference") @db.VarChar(160)
   status                String                 @default("CREATED") @db.VarChar(20)
@@ -43,6 +44,7 @@ model GdsInternalTopup {
   wallet                GdsInternalWallet      @relation(fields: [walletId], references: [id], onDelete: Restrict)
   journal               GdsInternalJournal?
   payosInbox            GdsInternalPayosInbox[]
+  reconciliation        GdsInternalPayosReconciliation?
 
   @@unique([buyerId, requestKeyHash])
   @@index([buyerId, createdAt])
@@ -60,7 +62,8 @@ model GdsInternalPayosInbox {
   paymentLinkId         String            @map("payment_link_id") @db.VarChar(128)
   amountMinor           BigInt            @map("amount_minor")
   currency              String            @db.VarChar(3)
-  receivingAccount      String            @map("receiving_account") @db.VarChar(32)
+  receivingAccount      String            @map("receiving_account") @db.VarChar(128)
+  virtualReceivingAccountHash String?     @map("virtual_receiving_account_hash") @db.VarChar(64)
   receivingAccountHash  String            @map("receiving_account_hash") @db.VarChar(64)
   occurredAt            DateTime          @map("occurred_at")
   signatureVerifiedAt   DateTime          @map("signature_verified_at")
@@ -71,10 +74,34 @@ model GdsInternalPayosInbox {
   processedAt           DateTime?         @map("processed_at")
   receivedAt            DateTime          @default(now()) @map("received_at")
   topup                 GdsInternalTopup  @relation(fields: [topupId], references: [id], onDelete: Restrict)
+  reconciliation        GdsInternalPayosReconciliation?
 
   @@index([status, nextAttemptAt])
   @@index([topupId, receivedAt])
   @@map("gds_internal_payos_inbox")
+}
+
+// Append-only proof joins immutable QR identity to provider-confirmed settlement.
+// Existing REVIEW inbox records remain unchanged when reconciled by this proof.
+model GdsInternalPayosReconciliation {
+  id                           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  topupId                      String @unique @map("topup_id") @db.Uuid
+  inboxId                      String @unique @map("inbox_id") @db.Uuid
+  providerEventIdentity        String @unique @map("provider_event_identity") @db.VarChar(160)
+  payosOrderCode               BigInt @map("payos_order_code")
+  paymentLinkId                String @map("payment_link_id") @db.VarChar(128)
+  amountMinor                  BigInt @map("amount_minor")
+  currency                     String @db.VarChar(3)
+  qrReceivingAccountHash       String @map("qr_receiving_account_hash") @db.VarChar(64)
+  settlementReceivingAccountHash String @map("settlement_receiving_account_hash") @db.VarChar(64)
+  occurredAt                   DateTime @map("occurred_at")
+  signatureVerifiedAt          DateTime @map("signature_verified_at")
+  providerReconciledAt         DateTime @map("provider_reconciled_at")
+  createdAt                    DateTime @default(now()) @map("created_at")
+  topup                        GdsInternalTopup @relation(fields: [topupId], references: [id], onDelete: Restrict)
+  inbox                        GdsInternalPayosInbox @relation(fields: [inboxId], references: [id], onDelete: Restrict)
+
+  @@map("gds_internal_payos_reconciliations")
 }
 
 // Each immutable journal row is a balanced three-account posting:

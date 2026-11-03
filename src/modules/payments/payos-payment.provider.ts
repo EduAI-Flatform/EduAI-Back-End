@@ -251,6 +251,7 @@ function requireTransactions(value: unknown): PaymentRequestStatus['transactions
       reference: requireString(item.reference, 128),
       amountMinor: BigInt(requireNonNegativeInteger(item.amount)),
       receivingAccount: requireString(item.accountNumber, 128),
+      ...normalizeVirtualAccount(item.virtualAccountNumber),
       occurredAt: requireProviderDate(item.transactionDateTime),
     };
   });
@@ -273,7 +274,14 @@ function normalizeWebhook(value: unknown): VerifiedPaymentWebhook {
     providerCode,
     responseCode: providerCode,
     receivingAccount: requireString(item.accountNumber, 128),
+    ...normalizeVirtualAccount(item.virtualAccountNumber),
   };
+}
+
+function normalizeVirtualAccount(value: unknown): { virtualReceivingAccount?: string } {
+  if (value === undefined || value === null || value === "") return {};
+  if (!isPayosAccount(value)) throw new PaymentProviderError("malformed_response", false);
+  return { virtualReceivingAccount: value };
 }
 
 function mapProviderError(error: unknown): PaymentProviderError {

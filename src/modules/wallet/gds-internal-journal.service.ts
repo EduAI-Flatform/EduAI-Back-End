@@ -72,6 +72,8 @@ export class GdsInternalJournalService {
           topup.amountMinor !== credit.amountMinor || topup.currency !== credit.currency ||
           topup.payosOrderCode !== intent.payosOrderCode ||
           topup.receivingAccountHash !== intent.receivingAccountHash ||
+          (intent.settlementReceivingAccountHash != null &&
+            topup.settlementReceivingAccountHash !== intent.settlementReceivingAccountHash) ||
           topup.paymentLinkId !== intent.paymentLinkId ||
           topup.collectionReference !== credit.collectionReference ||
           !topup.signatureVerifiedAt || !topup.providerReconciledAt ||
