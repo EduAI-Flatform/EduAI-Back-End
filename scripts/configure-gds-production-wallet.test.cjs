@@ -30,3 +30,10 @@ test('cannot activate on the UAT database fingerprint', () => {
  const fingerprint=createHash('sha256').update('production.example:5432/eduai').digest('hex');
  assert.throws(()=>configureGdsProductionWallet(base,{...options,uatFingerprint:fingerprint}));
 });
+
+
+test('explicit activation retires legacy VPS UAT classification without changing keys or NODE_ENV',()=>{
+ const legacy=base.replace('DEPLOYMENT_CLASS=production','DEPLOYMENT_CLASS=uat')+'PAYMENT_DEFAULT_PROVIDER=vnpay\nVNPAY_ENVIRONMENT=sandbox\n';
+ const active=dotenv.parse(configureGdsProductionWallet(legacy,options));
+ assert.equal(active.NODE_ENV,'production');assert.equal(active.DEPLOYMENT_CLASS,'production');assert.equal(active.PAYMENT_DEFAULT_PROVIDER,'payos');assert.equal(active.PAYOS_API_KEY,'api-secret');
+});
