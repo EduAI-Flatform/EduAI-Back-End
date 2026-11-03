@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { CreatedPaymentRequest } from '../payments/payment-provider';
 import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
+import { GDS_UNBOUND_RECEIVING_ACCOUNT_HASH } from './gds-payos-topup.domain';
 
 const topupId = '11111111-1111-4111-8111-111111111111';
 const buyerId = '22222222-2222-4222-8222-222222222222';
@@ -64,6 +65,22 @@ describe('GDS authenticated SDK link attachment (source-only, no public QR)', ()
       where: { id: topupId },
       data: { status: 'PENDING_PAYOS', paymentLinkId: 'payos-link-id' },
     });
+  });
+
+  it('binds the PayOS API beneficiary for an unbound intent exactly once alongside the link', async () => {
+    tx.gdsInternalTopup.findUnique.mockResolvedValue({ ...stored(), receivingAccountHash: GDS_UNBOUND_RECEIVING_ACCOUNT_HASH });
+    await service.attachCreatedLink(topupId, link);
+    expect(tx.gdsInternalTopup.update).toHaveBeenCalledWith({
+      where: { id: topupId },
+      data: { status: 'PENDING_PAYOS', paymentLinkId: link.providerPaymentIdentity, receivingAccountHash: receivingHash },
+    });
+  });
+
+  it('rejects an attempt to change a previously linked PayOS beneficiary', async () => {
+    tx.gdsInternalTopup.findUnique.mockResolvedValue({ ...stored(), status: 'PENDING_PAYOS', paymentLinkId: link.providerPaymentIdentity });
+    await expect(service.attachCreatedLink(topupId, { ...link, receivingAccount: '9876543210' }))
+      .rejects.toThrow('WALLET_TOPUP_PAYOS_MISMATCH');
+    expect(tx.gdsInternalTopup.update).not.toHaveBeenCalled();
   });
 
   it('is idempotent for the identical already-attached link', async () => {

@@ -1,0 +1,65 @@
+name: GDS migration replay (production baseline to head)
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+jobs:
+  production-baseline-to-head:
+    name: Replay 65 production migrations then 8 GDS migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: eduai_migration_replay
+          POSTGRES_USER: eduai_migration_replay
+          POSTGRES_PASSWORD: ci-replay-disposable-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eduai_migration_replay -d eduai_migration_replay"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://eduai_migration_replay:ci-replay-disposable-only@127.0.0.1:5432/eduai_migration_replay
+      JWT_ACCESS_SECRET: ci-replay-access-only
+      JWT_REFRESH_SECRET: ci-replay-refresh-only
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev
+      - name: Replay the current 65-migration production baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gds-pending"
+          shopt -s nullglob
+          pending=(prisma/migrations/20261102* prisma/migrations/20261103*)
+          test "${#pending[@]}" -eq 8
+          for migration in "${pending[@]}"; do
+            mv "$migration" "$RUNNER_TEMP/gds-pending/"
+          done
+          baseline_count=$(find prisma/migrations -mindepth 1 -maxdepth 1 -type d | wc -l)
+          test "$baseline_count" -eq 65
+          npm run prisma:migrate:deploy
+          npx prisma migrate status
+      - name: Upgrade the same database through all 8 new migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv "$RUNNER_TEMP/gds-pending"/* prisma/migrations/
+          npm run prisma:migrate:deploy
+          npx prisma migrate status
+      - name: Regression-test advisory transaction mutex using actual Prisma 7 and PostgreSQL
+        run: |
+          npm run build
+          node scripts/test-gds-order-namespace-prisma.cjs

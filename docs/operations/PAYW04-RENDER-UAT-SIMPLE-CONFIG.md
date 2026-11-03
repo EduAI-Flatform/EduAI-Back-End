@@ -28,7 +28,6 @@ PAYOS_ENVIRONMENT=production
 PAYOS_CLIENT_ID=<PERSONAL_CHANNEL_ID>
 PAYOS_API_KEY=<PERSONAL_API_KEY>
 PAYOS_CHECKSUM_KEY=<PERSONAL_CHECKSUM_KEY>
-GDS_PAYOS_RECEIVING_ACCOUNT=<PERSONAL_CHANNEL_RECEIVING_ACCOUNT>
 DATABASE_URL=<NEON_TEST_DATABASE_URL>
 JWT_ACCESS_SECRET=<UAT_ONLY_SECRET>
 JWT_REFRESH_SECRET=<UAT_ONLY_STABLE_SECRET_AT_LEAST_32_CHARACTERS>
@@ -45,6 +44,23 @@ PAYOS_WEBHOOK_URL=https://eduai-back-end.onrender.com/api/v1/payments/webhooks/p
   work when `GDS_WALLET` is absent; the new switch takes precedence when present.
 - `PAYOS_ENVIRONMENT=production` is the official real PayOS API and is
   independent of `NODE_ENV`. **Personal PayOS QR can receive real funds** on UAT.
+- No `GDS_PAYOS_RECEIVING_ACCOUNT` is required. PayOS returns its actual
+  `accountNumber` with the payment link. The backend binds its SHA-256 hash
+  once, then checks signed webhooks and reconciled transfers against it.
+- The account binding belongs to **one PayOS payment attempt**, not all orders
+  or the merchant forever. A new topup request with a fresh idempotency key
+  reserves a fresh order code/link and may legitimately bind another account.
+  A repeated key refers to its existing attempt and must not issue a second
+  link; the current UAT endpoint returns a conflict for an already issued QR.
+  It never silently changes the beneficiary. If the recipient changes *within the
+  same link*, the signed event enters manual REVIEW without automatic credit.
+- AntiFake likewise creates the PayOS link using its PayOS channel credentials
+  and identifies a wallet topup by the returned payment link and amount; the
+  per-link beneficiary hash is an additional EduAI reconciliation safeguard.
+- This binding change adds a non-destructive database migration
+  `20261103010000_bind_gds_payos_receiving_account`. Apply it to Neon **TEST**
+  before deploying this backend code; the existing production schema and
+  runtime remain untouched.
 - `NODE_ENV=development` is appropriate for an isolated UAT instance, not the
   public production backend. The runtime has development CORS defaults, returns
   more descriptive internal errors, and uses local rate limits when Redis is

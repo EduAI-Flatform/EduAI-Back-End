@@ -1,10 +1,10 @@
 import { GdsInternalTopupPreparationService, PrepareGdsTopup } from './gds-internal-topup-preparation.service';
+import { GDS_UNBOUND_RECEIVING_ACCOUNT_HASH } from './gds-payos-topup.domain';
 
 const buyerId = '11111111-1111-4111-8111-111111111111';
 const walletId = '22222222-2222-4222-8222-222222222222';
 const input: PrepareGdsTopup = {
   buyerId, amountMinor: 100_000n, idempotencyKey: 'gds-topup-20261102',
-  receivingAccountHash: 'a'.repeat(64),
   expiresAt: new Date(Date.now() + 3_600_000),
   urls: {
     returnUrl: 'https://eduai.giaoducso.org.vn/wallet/gds?result=returned',
@@ -53,7 +53,6 @@ describe('GDS PayOS internal topup intent preparation (not a QR or money-write e
     ['non-integer VND', { amountMinor: 0n }],
     ['negative amount', { amountMinor: -1n }],
     ['unsafe amount', { amountMinor: BigInt(Number.MAX_SAFE_INTEGER) + 1n }],
-    ['unsafe receiving account', { receivingAccountHash: 'not a hash' }],
     ['short idempotency', { idempotencyKey: 'short' }],
   ])('rejects %s before touching the DB', async (_label, patch) => {
     await expect(service.prepare({ ...input, ...patch })).rejects.toThrow('GDS_TOPUP_PREPARATION_INVALID_INPUT');
@@ -75,7 +74,7 @@ describe('GDS PayOS internal topup intent preparation (not a QR or money-write e
     expect(tx.gdsInternalTopup.create).toHaveBeenCalledWith({ data: expect.objectContaining({
       walletId, buyerId, requestKeyHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       amountMinor: 100_000n, currency: 'VND', transferMemo: payosRequest?.description,
-      payosOrderCode: intent.payosOrderCode, receivingAccountHash: input.receivingAccountHash,
+      payosOrderCode: intent.payosOrderCode, receivingAccountHash: GDS_UNBOUND_RECEIVING_ACCOUNT_HASH,
     }) });
   });
 
@@ -99,6 +98,7 @@ describe('GDS PayOS internal topup intent preparation (not a QR or money-write e
   it('never generates a second PayOS SDK request for an already pending link', async () => {
     tx.gdsInternalTopup.findUnique.mockResolvedValue({
       ...input, id: 'existing-intent', currency: 'VND',
+      receivingAccountHash: 'a'.repeat(64),
       payosOrderCode: 90_001n, status: 'PENDING_PAYOS', paymentLinkId: 'existing-link',
       collectionReference: null,
     });

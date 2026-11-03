@@ -1,5 +1,8 @@
 import { GdsWalletInvariantError, GdsWalletVerifiedEvent } from './gds-wallet.domain';
 
+/** No beneficiary is known until the authenticated PayOS create response. */
+export const GDS_UNBOUND_RECEIVING_ACCOUNT_HASH = '0'.repeat(64);
+
 /** PayOS is a collection gateway, not the issuer of customer wallet value. */
 export type GdsPayosTopupStatus =
   | 'CREATED'

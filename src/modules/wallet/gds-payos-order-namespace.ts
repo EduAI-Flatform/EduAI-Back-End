@@ -10,5 +10,10 @@ import { Prisma } from '../../../generated/prisma/client';
  * because the GDS schema/feature is absent there.
  */
 export async function lockGdsPayosOrderNamespace(tx: Prisma.TransactionClient): Promise<void> {
-  await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(474453, 404)`);
+  // pg_advisory_xact_lock returns PostgreSQL void, which Prisma 7 cannot
+  // deserialize through $queryRaw. The volatile FROM function still acquires
+  // the transaction-scoped mutex, while the result is a supported integer.
+  await tx.$queryRaw<{ acquired: number }[]>(
+    Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(474453, 404)`,
+  );
 }
