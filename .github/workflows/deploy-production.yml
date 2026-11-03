@@ -298,12 +298,12 @@ jobs:
           deployment_stage="vnpay-sandbox-uat-classification"
           node scripts/configure-vnpay-sandbox-uat.cjs
 
+          deployment_stage="wallet-production-configuration"
+          node scripts/configure-gds-production-wallet.cjs --topup "$GDS_TOPUP_ACTION" --checkout "$GDS_CHECKOUT_ACTION" --uat-fingerprint "$GDS_UAT_DATABASE_FINGERPRINT"
+
           echo "Installing dependencies..."
           deployment_stage="dependency-installation"
           npm ci
-
-          deployment_stage="wallet-production-configuration"
-          node scripts/configure-gds-production-wallet.cjs --topup "$GDS_TOPUP_ACTION" --checkout "$GDS_CHECKOUT_ACTION" --uat-fingerprint "$GDS_UAT_DATABASE_FINGERPRINT"
 
           echo "Verifying permanent Commerce configuration..."
           deployment_stage="commerce-configuration"

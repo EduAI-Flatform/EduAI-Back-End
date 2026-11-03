@@ -37,3 +37,10 @@ test('wallet production admission changes require explicit enum inputs and prese
   assert.match(workflow, /preserve\|enable\|disable/);
   assert.match(workflow, /configure-gds-production-wallet.cjs --topup/);
 });
+
+
+test('wallet configuration is repaired before npm ci triggers Prisma postinstall',()=>{
+ const deploy=workflow.slice(workflow.indexOf('      - name: Deploy backend'));
+ assert.ok(deploy.indexOf('node scripts/configure-gds-production-wallet.cjs')<deploy.indexOf('          npm ci'));
+ assert.ok(deploy.indexOf('          npm ci')>=0);
+});
