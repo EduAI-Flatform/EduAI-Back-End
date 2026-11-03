@@ -170,4 +170,17 @@ describe('PAYW-04C internal-only Commerce capture orchestration', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     }
   });
+  it('retries the Prisma 7 raw-query serialization conflict before exact capture', async () => {
+    const {service,prisma}=setup();
+    prisma.$transaction.mockRejectedValueOnce(Object.assign(new Error('serialization conflict'),{code:'P2010',meta:{driverAdapterError:{cause:{originalCode:'40001',kind:'TransactionWriteConflict'}}}}));
+    await expect(service.payOrder(buyerId,orderId)).resolves.toMatchObject({status:'CONFIRMED'});
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+  it('never retries other raw-query database errors', async () => {
+    const {service,prisma}=setup();const error=Object.assign(new Error('invariant rejected'),{code:'P2010',meta:{driverAdapterError:{cause:{originalCode:'23514',kind:'postgres'}}}});
+    prisma.$transaction.mockRejectedValueOnce(error);
+    await expect(service.payOrder(buyerId,orderId)).rejects.toBe(error);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
 });
