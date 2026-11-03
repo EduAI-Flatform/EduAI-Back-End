@@ -68,6 +68,7 @@ jobs:
       - name: GDS sandbox signed PayOS inbox, journal and checkout regression
         run: >-
           npm test -- --runInBand
+          modules/wallet/gds-wallet-topup-status.service.spec.ts
           modules/wallet/gds-payos-inbox.service.spec.ts
           modules/wallet/gds-payos-reconciliation.spec.ts
           modules/wallet/gds-internal-journal.service.spec.ts

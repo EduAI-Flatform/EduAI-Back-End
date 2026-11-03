@@ -98,3 +98,17 @@ edit environment files or change running service flags. Every apply re-queries
 PayOS and calls the normal guarded service; there is no balance-update SQL.
 A replay verifies existing proof/journal and performs no write. Logs contain
 only aggregate statuses and amounts; never accounts, QR, credentials or refs.
+
+
+## Payment completion popup (dev/UAT)
+
+The wallet starts with an empty amount and explicit presets. Creating a QR opens
+an accessible dialog; closing it does not cancel or create another intent.
+GET /wallet/gds?topupId=<UUID> returns only the authenticated buyer's intent
+status, without bank details. CREDITED requires persisted reconciliation evidence
+and the matching TOPUP_CREDIT journal, never a balance increase alone.
+The UI matches intent ID, VND amount and credit evidence before removing the QR,
+stopping polling and showing wallet/course/membership navigation. Expiry hides
+the QR but keeps following delayed settlement until the user leaves that intent.
+Errors and review states do not assert credit. No schema or merchant changes.
+Regression verification uses mocked APIs and creates no real payment.

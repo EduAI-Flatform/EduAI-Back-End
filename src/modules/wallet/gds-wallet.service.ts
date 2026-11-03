@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -10,6 +10,14 @@ export type GdsWalletSummary = {
   balance: null | { settledMinor: string; reservedMinor: string; availableMinor: string; currency: 'VND' };
   paymentEnabled: boolean; // UAT-only GDS capture endpoint; never production.
   topupEnabled: boolean; // QR preview only; never means wallet crediting.
+  activeTopup: null | {
+    topupId: string;
+    amountMinor: string;
+    currency: 'VND';
+    status: 'AWAITING_TRANSFER' | 'RECONCILING' | 'CREDITED' | 'REVIEW' | 'EXPIRED' | 'CANCELLED';
+    gdsCredited: boolean;
+    creditedAt: string | null;
+  };
   /** Read-only, newest-first journal entries; never a substitute for provider proof. */
   recentTransactions: Array<{
     id: string;
@@ -23,21 +31,27 @@ export type GdsWalletSummary = {
 export class GdsWalletService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
 
-  async summary(buyerId: string): Promise<GdsWalletSummary> {
+  async summary(buyerId: string, topupId?: string): Promise<GdsWalletSummary> {
     const disabled: GdsWalletSummary = {
       available: false, mode: 'disabled', state: 'UNAVAILABLE', balance: null,
-      paymentEnabled: false, topupEnabled: false, recentTransactions: [],
+      paymentEnabled: false, topupEnabled: false, recentTransactions: [], activeTopup: null,
     };
     // A feature flag can NEVER make this wallet accessible on production.
     if (!this.config.gdsWallet.sandboxEnabled ||
         this.config.app.nodeEnv === 'production' || this.config.app.deploymentClass === 'production') {
       return disabled;
     }
+    if (topupId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(topupId)) {
+      throw new BadRequestException('Invalid topup ID');
+    }
+    // Read completion before the balance. A completed intent must never be
+    // returned alongside a balance read before its atomic journal posting.
+    const activeTopup = topupId ? await this.topupStatus(buyerId, topupId) : null;
     // PAYW-04I changes the preferred model: this reads the isolated internal
     // prepaid journal projection, never the earlier partner-wallet mirror.
     const wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
     const basis = {
-      ...disabled, mode: 'sandbox' as const,
+      ...disabled, mode: 'sandbox' as const, activeTopup,
       topupEnabled: this.config.gdsWallet.qrPreviewEnabled === true &&
         this.config.app.deploymentClass === 'uat' &&
         this.config.payos.environment === 'production' &&
@@ -78,4 +92,47 @@ export class GdsWalletService {
       })),
     };
   }
+
+  private async topupStatus(buyerId: string, topupId: string): Promise<GdsWalletSummary['activeTopup']> {
+    const topup = await this.prisma.gdsInternalTopup.findFirst({
+      where: { id: topupId, buyerId },
+      select: {
+        id: true, amountMinor: true, currency: true, status: true, expiresAt: true,
+        creditedAt: true, collectionReference: true, signatureVerifiedAt: true, providerReconciledAt: true,
+        journal: { select: { kind: true, amountMinor: true, collectionReference: true } },
+        payosInbox: { select: { status: true } },
+      },
+    });
+    if (!topup || topup.currency !== 'VND' || typeof topup.amountMinor !== 'bigint' || topup.amountMinor <= 0n) return null;
+    const result = {
+      topupId: topup.id, amountMinor: topup.amountMinor.toString(), currency: 'VND' as const,
+      gdsCredited: false, creditedAt: null,
+    };
+    if (topup.status === 'CREDITED') {
+      const hasCreditEvidence = validDate(topup.creditedAt) &&
+        validDate(topup.signatureVerifiedAt) && validDate(topup.providerReconciledAt) &&
+        topup.providerReconciledAt >= topup.signatureVerifiedAt &&
+        Boolean(topup.collectionReference) && topup.journal?.kind === 'TOPUP_CREDIT' &&
+        topup.journal.amountMinor === topup.amountMinor &&
+        topup.journal.collectionReference === topup.collectionReference;
+      return hasCreditEvidence
+        ? { ...result, status: 'CREDITED', gdsCredited: true, creditedAt: topup.creditedAt!.toISOString() }
+        : { ...result, status: 'REVIEW' };
+    }
+    if (topup.status === 'CANCELLED') return { ...result, status: 'CANCELLED' };
+    if (topup.status === 'REVIEW' || topup.payosInbox.some((entry) => entry.status === 'REVIEW')) {
+      return { ...result, status: 'REVIEW' };
+    }
+    if (topup.status === 'PAYOS_VERIFIED' || topup.payosInbox.some((entry) => entry.status === 'RECEIVED')) {
+      return { ...result, status: 'RECONCILING' };
+    }
+    if (!validDate(topup.expiresAt)) return { ...result, status: 'REVIEW' };
+    if (topup.expiresAt <= new Date()) return { ...result, status: 'EXPIRED' };
+    return { ...result, status: topup.status === 'CREATED' || topup.status === 'PENDING_PAYOS'
+      ? 'AWAITING_TRANSFER' : 'REVIEW' };
+  }
+}
+
+function validDate(value: unknown): value is Date {
+  return value instanceof Date && Number.isFinite(value.getTime());
 }

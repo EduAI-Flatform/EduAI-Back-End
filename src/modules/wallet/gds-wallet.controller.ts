@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { RateLimit } from '../../common/security/rate-limit.decorator';
@@ -25,8 +25,11 @@ export class GdsWalletController {
 
   @Get()
   @RateLimit({ identity: 'user', limit: 30, name: 'gds-wallet-summary', windowSeconds: 60 })
-  summary(@CurrentUser('id') buyerId: string) {
-    return this.wallet.summary(buyerId);
+  summary(
+    @CurrentUser('id') buyerId: string,
+    @Query('topupId', new ParseUUIDPipe({ version: '4', optional: true })) topupId?: string,
+  ) {
+    return this.wallet.summary(buyerId, topupId);
   }
 
   @Post('topups/payos')
