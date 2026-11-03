@@ -4,7 +4,7 @@ import { Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatedPaymentRequest } from '../payments/payment-provider';
-import { attachGdsPayosLink, GdsPayosTopupIntent } from './gds-payos-topup.domain';
+import { attachGdsPayosLink, GDS_UNBOUND_RECEIVING_ACCOUNT_HASH, GdsPayosTopupIntent } from './gds-payos-topup.domain';
 import { GdsWalletInvariantError } from './gds-wallet.domain';
 import { lockGdsPayosOrderNamespace } from './gds-payos-order-namespace';
 
@@ -55,7 +55,14 @@ export class GdsInternalTopupLinkService {
           created.amountMinor !== row.amountMinor || created.currency !== 'VND') {
         throw new GdsWalletInvariantError('GDS_TOPUP_PAYOS_LINK_MISMATCH');
       }
-      const next = attachGdsPayosLink(intent, {
+      // Bind only when the intent is still CREATED and its bank identity is
+      // explicitly unbound. Older intents with a preconfigured hash must
+      // continue to match that original immutable beneficiary.
+      const firstBinding = intent.status === 'CREATED' &&
+        intent.receivingAccountHash === GDS_UNBOUND_RECEIVING_ACCOUNT_HASH;
+      const next = attachGdsPayosLink(firstBinding
+        ? { ...intent, receivingAccountHash }
+        : intent, {
         orderCode: row.payosOrderCode, amountMinor: row.amountMinor,
         currency: 'VND', paymentLinkId: created.providerPaymentIdentity,
         checkoutUrl: created.checkoutUrl, receivingAccountHash,
@@ -75,7 +82,10 @@ export class GdsInternalTopupLinkService {
       if (commerce || legacy) throw new GdsWalletInvariantError('GDS_TOPUP_CROSS_LEDGER_LINK_COLLISION');
       if (next.status === 'PENDING_PAYOS' && intent.status === 'CREATED') {
         await tx.gdsInternalTopup.update({
-          where: { id: row.id }, data: { status: 'PENDING_PAYOS', paymentLinkId: next.paymentLinkId },
+          where: { id: row.id }, data: {
+            status: 'PENDING_PAYOS', paymentLinkId: next.paymentLinkId,
+            ...(firstBinding ? { receivingAccountHash } : {}),
+          },
         });
       }
       return { paymentLinkId: next.paymentLinkId as string,

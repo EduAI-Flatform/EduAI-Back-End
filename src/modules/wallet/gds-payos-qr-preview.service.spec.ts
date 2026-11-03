@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
 
 const buyerId = '11111111-1111-4111-8111-111111111111';
@@ -6,7 +5,7 @@ const topupId = '22222222-2222-4222-8222-222222222222';
 const account = '1234567890';
 const config = {
   app: { nodeEnv: 'test', deploymentClass: 'uat', publicAppUrl: 'https://uat.example.org' },
-  gdsWallet: { sandboxEnabled: true, qrPreviewEnabled: true, receivingAccount: account },
+  gdsWallet: { sandboxEnabled: true, qrPreviewEnabled: true },
   payos: { environment: 'production' },
   commerce: { idempotencySecret: 'test-idempotency-secret' },
 };
@@ -20,7 +19,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   config.app.nodeEnv = 'test'; config.app.deploymentClass = 'uat';
   config.gdsWallet.sandboxEnabled = true; config.gdsWallet.qrPreviewEnabled = true;
-  config.gdsWallet.receivingAccount = account;
   config.payos.environment = 'production';
   prep.prepare.mockResolvedValue({
     intent: { id: topupId, status: 'CREATED' },
@@ -43,11 +41,10 @@ beforeEach(() => {
 });
 
 describe('GDS UAT PayOS QR creation, without funding', () => {
-  it('creates a real SDK request using the reserved exact VND, memo and verified recipient account', async () => {
+  it('creates a real SDK request using the reserved exact VND, memo and PayOS-provided recipient account', async () => {
     const output = await service.create(buyerId, '250000', 'idempotency-unit-123');
     expect(prep.prepare).toHaveBeenCalledWith(expect.objectContaining({
       buyerId, amountMinor: 250000n, idempotencyKey: 'idempotency-unit-123',
-      receivingAccountHash: createHash('sha256').update(account).digest('hex'),
       urls: { returnUrl: 'https://uat.example.org/wallet/gds', cancelUrl: 'https://uat.example.org/wallet/gds' },
     }));
     expect(providers.requireEnabled).toHaveBeenCalledWith('payos');
@@ -85,10 +82,10 @@ describe('GDS UAT PayOS QR creation, without funding', () => {
     expect(prep.prepare).not.toHaveBeenCalled();
   });
 
-  it('refuses unknown/invalid receiving account before creating a payment link', async () => {
-    config.gdsWallet.receivingAccount = 'wrong-account';
-    await expect(service.create(buyerId, '250000', 'idempotency-unit-123')).rejects.toThrow();
-    expect(prep.prepare).not.toHaveBeenCalled();
+  it('does not require a separately configured merchant account number', async () => {
+    const result = await service.create(buyerId, '250000', 'idempotency-unit-123');
+    expect(result.receivingAccount).toBe(account);
+    expect(prep.prepare.mock.calls[0][0]).not.toHaveProperty('receivingAccountHash');
   });
 
   it('does not call PayOS again for an already-created intent', async () => {

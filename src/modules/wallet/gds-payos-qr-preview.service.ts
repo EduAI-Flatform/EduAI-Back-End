@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { ConflictException, ForbiddenException, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import { AppConfigService } from '../../config/app-config.service';
@@ -28,12 +27,8 @@ export class GdsPayosQrPreviewService {
         app.nodeEnv === 'production' || app.deploymentClass !== 'uat') {
       throw new ForbiddenException('GDS PayOS QR preview is not available');
     }
-    // This account number is verified offline by the operator, NOT supplied
-    // from the browser or inferred from a potentially forged PayOS response.
-    const merchantAccount = gdsWallet.receivingAccount;
     const appUrl = app.publicAppUrl;
-    if (!merchantAccount || !/^\d{6,32}$/.test(merchantAccount) ||
-        payos.environment !== 'production' || !appUrl || !/^https:\/\//.test(appUrl) ||
+    if (payos.environment !== 'production' || !appUrl || !/^https:\/\//.test(appUrl) ||
         !this.config.commerce.idempotencySecret) {
       throw new ServiceUnavailableException('GDS QR configuration is incomplete');
     }
@@ -50,7 +45,6 @@ export class GdsPayosQrPreviewService {
       buyerId,
       amountMinor: BigInt(amountMinor),
       idempotencyKey,
-      receivingAccountHash: createHash('sha256').update(merchantAccount).digest('hex'),
       expiresAt: new Date(Date.now() + 15 * 60 * 1_000),
       urls: { returnUrl: page.toString(), cancelUrl: page.toString() },
     });
@@ -70,8 +64,9 @@ export class GdsPayosQrPreviewService {
       returnUrls: { success: request.returnUrl, cancel: request.cancelUrl },
       expiresAt: new Date(request.expiredAt * 1000),
     });
-    // The persisted receiving-account hash, amount, order code and checkout
-    // host must all match BEFORE a QR is returned to the learner.
+    // PayOS's authenticated create response is the source of its receiving
+    // bank account. The link transaction binds that hash once, before a QR
+    // can be shown; later signed callbacks/reconciliation must match it.
     const link = await this.links.attachCreatedLink(prepared.intent.id, created);
     if (!link.qrPayload) {
       throw new ServiceUnavailableException('PayOS did not return a bank QR');
@@ -84,7 +79,7 @@ export class GdsPayosQrPreviewService {
       amountMinor: request.amount.toString(),
       currency: 'VND' as const,
       transferMemo: request.description,
-      receivingAccount: merchantAccount,
+      receivingAccount: created.receivingAccount,
       checkoutUrl: link.checkoutUrl,
       qrCodeDataUrl,
       expiresAt: new Date(request.expiredAt * 1000).toISOString(),

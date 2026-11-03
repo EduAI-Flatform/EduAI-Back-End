@@ -95,7 +95,6 @@ export interface BackendConfig {
     sandboxEnabled: boolean;
     checkoutEnabled: boolean;
     qrPreviewEnabled: boolean;
-    receivingAccount?: string;
   };
   payos: {
     environment: ValidatedEnv['PAYOS_ENVIRONMENT'];
@@ -220,7 +219,6 @@ export default function configuration(): BackendConfig {
       checkoutEnabled: env.GDS_WALLET_CHECKOUT_ENABLED && env.GDS_WALLET_SANDBOX_ENABLED &&
         env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS === 'uat',
       qrPreviewEnabled: env.GDS_PAYOS_QR_PREVIEW_ENABLED && env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS === 'uat',
-      receivingAccount: env.GDS_PAYOS_RECEIVING_ACCOUNT,
     },
     payos: {
       environment: env.PAYOS_ENVIRONMENT,
