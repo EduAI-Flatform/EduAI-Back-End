@@ -7,7 +7,7 @@ import { allocateMinor, monthlyRevenueShares, refundTargets, splitRevenue } from
 import { membershipEffectiveAt } from './revenue-membership.rules';
 
 interface Participant { courseId: string; sellerId: string; weight: number; amountMinor: string }
-const lock = (tx: Prisma.TransactionClient) => tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+const lock = (tx: Prisma.TransactionClient) => tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
 const snapshotInclude = { periods: { include: { entries: true } } } satisfies Prisma.RevenueOrderSnapshotInclude;
 const paymentInclude = { confirmedSettlement: { include: { paymentAttempt: true, paymentEvent: true } }, membershipCheckoutIntent: { include: { durationOption: true } } } satisfies Prisma.CommerceOrderInclude;
 type PaymentOrder = Prisma.CommerceOrderGetPayload<{ include: typeof paymentInclude }>;

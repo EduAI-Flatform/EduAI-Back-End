@@ -153,7 +153,7 @@ export class RevenueMembershipService {
 
   /** Run before checkout takes user/version locks; the caller owns the transaction. */
   async synchronizeCheckout(tx: Prisma.TransactionClient): Promise<void> {
-    await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+    await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
     const due = await tx.revenuePlanPolicy.findMany({ where: { status: 'scheduled', effectiveAt: { lte: new Date() } }, orderBy: [{ effectiveAt: 'asc' }, { id: 'asc' }] });
     for (const policy of due) await this.activate(tx, policy);
     await this.refreshActive(tx, 'checkout_catalog');
@@ -298,7 +298,7 @@ export class RevenueMembershipService {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         return await this.prisma.$transaction(async tx => {
-          await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+          await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
           return operation(tx);
         }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30000 });
       } catch (error) {

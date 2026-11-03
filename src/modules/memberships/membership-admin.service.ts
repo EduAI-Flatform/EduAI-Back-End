@@ -168,7 +168,7 @@ export class MembershipAdminService {
     input: ConfigureMembershipPlanEntitlementDto,
   ) {
     return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
       const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
       if (!version) throw new NotFoundException('Membership plan version not found.');
@@ -220,7 +220,7 @@ export class MembershipAdminService {
     input: ConfigureMembershipIncludedCourseDto,
   ) {
     return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
       const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
       if (!version) throw new NotFoundException('Membership plan version not found.');
@@ -326,7 +326,7 @@ export class MembershipAdminService {
   ) {
     const normalized = this.normalizeVersion(input);
     return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plans WHERE id = ${planId}::uuid FOR UPDATE`);
       await this.assertUnmanagedPlan(tx, planId);
       const plan = await tx.membershipPlan.findUnique({ where: { id: planId } });
@@ -370,7 +370,7 @@ export class MembershipAdminService {
 
   archivePlan(actorId: string, planId: string) {
     return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plans WHERE id = ${planId}::uuid FOR UPDATE`);
       const current = await tx.membershipPlan.findUnique({ where: { id: planId } });
       if (!current) throw new NotFoundException('Membership plan not found.');
@@ -402,7 +402,7 @@ export class MembershipAdminService {
     transition: 'publish' | 'archive',
   ) {
     return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
+      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
       const current = await tx.membershipPlanVersion.findUnique({
         where: { id: versionId },

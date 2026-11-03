@@ -8,7 +8,7 @@ on:
 
 jobs:
   production-baseline-to-head:
-    name: Replay 65 production migrations then 10 GDS migrations
+    name: Replay 65 production migrations then 11 GDS/revenue migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -44,7 +44,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gds-pending"
           shopt -s nullglob
           pending=(prisma/migrations/20261102* prisma/migrations/20261103*)
-          test "${#pending[@]}" -eq 10
+          test "${#pending[@]}" -eq 11
           for migration in "${pending[@]}"; do
             mv "$migration" "$RUNNER_TEMP/gds-pending/"
           done
@@ -52,7 +52,7 @@ jobs:
           test "$baseline_count" -eq 65
           npm run prisma:migrate:deploy
           npx prisma migrate status
-      - name: Upgrade the same database through all 10 new migrations
+      - name: Upgrade the same database through all 11 new migrations
         shell: bash
         run: |
           set -euo pipefail
@@ -63,6 +63,7 @@ jobs:
         run: |
           npm run build
           node scripts/test-gds-order-namespace-prisma.cjs
+          node scripts/test-revenue-lock-prisma.cjs
       - name: Verify immutable PayOS settlement reconciliation guards
         run: node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config prisma/jest.config.cjs --runInBand prisma/gds-payos-settlement-migration.spec.ts
 

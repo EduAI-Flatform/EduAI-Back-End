@@ -28,6 +28,20 @@ const REVIEWED_RECEIPT_MIGRATIONS = Object.freeze([
   { name: '20261023020000_add_receipt_access', sha256: 'F6533EBC1F4D6C1CDCAD9F3A3F3D498BD84F639171BE65F00607CCB1890F85D1' },
   { name: '20261023021000_add_receipt_quota_pools', sha256: '4A3B322C2C8A219138126326839DCD09406E7A3B2C92B65ABB2A346449646703' },
 ]);
+// Reviewed GDS/revenue release. Future migrations remain blocked unless separately reviewed.
+const REVIEWED_REVENUE_MIGRATIONS = Object.freeze([
+  { name: '20261102010000_add_buyer_wallet_mirror', sha256: '3B1A272D58E148AD7390042C1FCF023AEC21AD6F5342B89DD5DC42BC83B8C092' },
+  { name: '20261102020000_add_gds_payos_topup_intents', sha256: 'C0EC3A2EF1DDA6DF30684F3D5FF5460AB654303AB887D71BB134A4394F8A8E11' },
+  { name: '20261102030000_add_gds_internal_prepaid_journal', sha256: '8CCBAC555D062A1DBE3A70397D9DF0634F9DD9338A82B6588B4EFBE149C00F3E' },
+  { name: '20261102050000_add_gds_wallet_capture_settlement_enum', sha256: 'CB993C89E775EC565BB3BCF02E2DE2F597A4F70C09CF2055EABA51266913D7A1' },
+  { name: '20261102060000_add_gds_wallet_capture_settlement_proof', sha256: '28CFA1801955AC6A4D1C787F4DA972F69AC71FC780B5760A17F50CDDB3BCB177' },
+  { name: '20261102070000_require_verified_gds_capture_for_order', sha256: '7A79D01F85FBFE7B82AAAB315BA6F1A4A96B13D391AB4653695298754A61917B' },
+  { name: '20261102080000_add_gds_payos_inbox', sha256: 'CF995915C08DE78687D9441B6110E2E7D4C8FB07E038E714F94B9B092F69F58C' },
+  { name: '20261103000000_revenue_sharing', sha256: '92C48E76702FEEDD6AE24E345DF975A24551A3B82C188AD2286AE9BE87E2383A' },
+  { name: '20261103010000_bind_gds_payos_receiving_account', sha256: '46B5F6BEB1A2B0457E119B5168C3E1F8308F0F034B1E1F4E81C6A064A3DE58FD' },
+  { name: '20261103020000_add_gds_payos_settlement_reconciliation', sha256: '36449CD854238D8BC353664C4FE522685221E7422A463CD80BE331EE86B62590' },
+  { name: '20261103030000_validate_gds_wallet_capture_settlement', sha256: 'E561F4212A165633B88B9EA8F7EC4495A8F2D3BCB74E7B06CB5FD8EB8431F0E0' },
+]);
 const RECEIPT_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-receipt-migrations';
 const RECONCILIATION_FINANCIAL_KINDS = [
   'duplicate_collection',
@@ -316,8 +330,16 @@ function assertReviewedBankTransferMigrationFingerprint(rootDirectory) {
 }
 
 function assertReviewedReceiptMigrationFingerprints(rootDirectory) {
+  return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_RECEIPT_MIGRATIONS);
+}
+
+function assertReviewedRevenueMigrationFingerprints(rootDirectory) {
+  return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_REVENUE_MIGRATIONS);
+}
+
+function assertReviewedMigrationFingerprints(rootDirectory, migrations) {
   const hashes = {};
-  for (const migration of REVIEWED_RECEIPT_MIGRATIONS) {
+  for (const migration of migrations) {
     let hash;
     try {
       hash = createHash('sha256')
@@ -426,6 +448,13 @@ function assertMigrationLedgerState({
     pendingMigrationNames.length <= reviewedReceiptNames.length &&
     JSON.stringify(pendingMigrationNames) ===
       JSON.stringify(reviewedReceiptNames.slice(-pendingMigrationNames.length));
+  const reviewedRelease = new Map(REVIEWED_REVENUE_MIGRATIONS.map(x => [x.name, x.sha256]));
+  const onlyReviewedRevenuePending =
+    REVIEWED_RECEIPT_MIGRATIONS.every(x => applied.has(x.name)) &&
+    applied.has(EXPECTED_BANK_TRANSFER_MIGRATION) &&
+    pendingMigrationNames.length > 0 &&
+    pendingMigrationNames.every(name => reviewedRelease.has(name) &&
+      localChecksums?.[name]?.toUpperCase() === reviewedRelease.get(name));
   if (allowAlreadyApplied && targetRows.length === 1 && isReviewedReceiptSuffix &&
       !allowReviewedReceiptMigrations) {
     throw migrationPreflightFailure('MIGRATION_RELEASE_APPROVAL_REQUIRED');
@@ -433,7 +462,7 @@ function assertMigrationLedgerState({
   if (
     allowAlreadyApplied &&
     targetRows.length === 1 &&
-    (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending ||
+    (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending || onlyReviewedRevenuePending ||
       (allowReviewedReceiptMigrations && isReviewedReceiptSuffix))
   ) {
     if (
@@ -1987,6 +2016,10 @@ async function runMigrationPreflight({
     'ARTIFACT',
     () => assertReviewedReceiptMigrationFingerprints(rootDirectory),
   );
+  const revenueMigrationHashes = await runSafePreflightStage(
+    'ARTIFACT',
+    () => assertReviewedRevenueMigrationFingerprints(rootDirectory),
+  );
   const roles = await runSafePreflightStage(
     'ROLE_VERIFICATION',
     () => verifyDatabaseRoleSeparationAtServer(runtimeUrl, migrationUrl),
@@ -2089,6 +2122,7 @@ async function runMigrationPreflight({
     migrationHash,
     bankTransferMigrationHash,
     receiptMigrationHashes,
+    revenueMigrationHashes,
     roles,
     privileges,
     localMigrationNames: localNames,
@@ -2242,6 +2276,10 @@ async function run() {
   if (JSON.stringify(receiptMigrationHashesBeforeApply) !== JSON.stringify(preflight.receiptMigrationHashes)) {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   }
+  const revenueMigrationHashesBeforeApply = assertReviewedRevenueMigrationFingerprints(rootDirectory);
+  if (JSON.stringify(revenueMigrationHashesBeforeApply) !== JSON.stringify(preflight.revenueMigrationHashes)) {
+    throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
+  }
   const bankMigrationHashBeforeApply = assertReviewedBankTransferMigrationFingerprint(rootDirectory);
   if (bankMigrationHashBeforeApply !== preflight.bankTransferMigrationHash) {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
@@ -2311,15 +2349,9 @@ async function run() {
     `runtimeFinancialGuardPrivilegesBlocked: ${runtimeFinancialGuard.runtimeFinancialGuardPrivilegesBlocked}`,
   );
 
-  if (preflight.ledger.targetApplied) {
-    console.log('runtimeMembershipPrivilegesGrant: SKIPPED_ALREADY_APPLIED');
-  } else {
-    await grantRuntimeMembershipPrivileges(
-      migrationDatabaseUrl,
-      runtimeDatabaseUrl,
-    );
-    console.log('runtimeMembershipPrivilegesGranted: true');
-  }
+  // Grants are idempotent and must include tables added after the legacy target.
+  await grantRuntimeMembershipPrivileges(migrationDatabaseUrl, runtimeDatabaseUrl);
+  console.log('runtimeMembershipPrivilegesGranted: true');
 }
 
 if (require.main === module) {
@@ -2340,6 +2372,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  REVIEWED_REVENUE_MIGRATIONS,
+  assertReviewedRevenueMigrationFingerprints,
   EXPECTED_RECONCILIATION_MIGRATION,
   EXPECTED_RECONCILIATION_MIGRATION_SHA256,
   EXPECTED_BANK_TRANSFER_MIGRATION,
