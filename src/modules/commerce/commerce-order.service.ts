@@ -1,5 +1,7 @@
+import { RevenueFinanceService } from '../revenue-sharing/revenue-finance.service';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import {
+  Optional,
   BadRequestException,
   ConflictException,
   Injectable,
@@ -72,6 +74,7 @@ export class CommerceOrderService {
     private readonly vouchersService: VouchersService,
     private readonly auditService: AuditService,
     private readonly courseAccess: CourseAccessService,
+    @Optional() private readonly revenue?: RevenueFinanceService,
   ) {}
 
   createOrder(
@@ -116,6 +119,7 @@ export class CommerceOrderService {
     selectedCourseIds: string[] | null,
     applications: Array<{ courseId: string; code: string }>,
   ): Promise<OrderResponseDto> {
+    await this.revenue?.lockCheckout(tx);
     const existing = await tx.commerceIdempotencyRecord.findUnique({
       where: {
         actorId_operation_keyHashVersion_keyHash: {
@@ -287,6 +291,8 @@ export class CommerceOrderService {
         });
       }
     }
+
+    await this.revenue?.captureOrder(tx, orderId);
 
     const unselectedLines = cart.lines.filter((line) => !selectedLines.some((selected) => selected.id === line.id));
     if (unselectedLines.length > 0) {

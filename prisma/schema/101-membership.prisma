@@ -90,6 +90,7 @@ model MembershipPlanVersion {
   archivedBy                  User?                       @relation("MembershipVersionArchiver", fields: [archivedById], references: [id], onDelete: Restrict)
   durationOptions             MembershipDurationOption[]
   serviceEntitlements         MembershipPlanEntitlement[]
+  revenuePolicyId             String?                     @map("revenue_policy_id") @db.Uuid
   includedCourses             MembershipPlanIncludedCourse[]
   subscriptions               MembershipSubscription[]
   checkoutIntents             MembershipCheckoutIntent[]
@@ -106,6 +107,7 @@ model MembershipPlanIncludedCourse {
   versionId     String                 @map("version_id") @db.Uuid
   courseId      String                 @map("course_id") @db.Uuid
   graceDays     Int                    @default(0) @map("grace_days")
+  revenueWeight Int                    @default(1) @map("revenue_weight")
   createdById   String                 @map("created_by_id") @db.Uuid
   createdAt     DateTime               @default(now()) @map("created_at")
   version       MembershipPlanVersion  @relation(fields: [versionId], references: [id], onDelete: Restrict)

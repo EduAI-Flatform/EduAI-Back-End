@@ -1,6 +1,9 @@
 const { Client } = require('pg');
 
 const MEMBERSHIP_RUNTIME_TABLES = Object.freeze([
+  'revenue_participations',
+  'revenue_plan_policies',
+  'revenue_retail_policies',
   'commerce_fulfillment_effects',
   'commerce_notification_outbox',
   'course_access_grants',
@@ -15,6 +18,13 @@ const MEMBERSHIP_RUNTIME_TABLES = Object.freeze([
   'service_entitlement_definitions',
   'service_entitlement_grants',
   'service_entitlement_usage',
+]);
+const REVENUE_APPEND_ONLY_TABLES = Object.freeze([
+  'revenue_terms',
+  'revenue_participation_events',
+  'revenue_order_snapshots',
+  'revenue_earning_periods',
+  'revenue_ledger_entries',
 ]);
 const LEGACY_RECONCILIATION_MARKER_TABLE =
   'commerce_reconciliation_legacy_acknowledgements';
@@ -46,6 +56,15 @@ function buildRuntimePrivilegeStatement(runtimeUrl) {
   return `GRANT SELECT, INSERT, UPDATE ON TABLE ${tables} TO ${role}`;
 }
 
+function buildRuntimeRevenuePrivilegeStatement(runtimeUrl) {
+  const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
+  const tables = REVENUE_APPEND_ONLY_TABLES.map(
+    (table) => quoteIdentifier('public') + '.' + quoteIdentifier(table),
+  ).join(', ');
+  return 'GRANT SELECT, INSERT ON TABLE ' + tables + ' TO ' + role +
+    '; REVOKE UPDATE, DELETE ON TABLE ' + tables + ' FROM ' + role;
+}
+
 function buildRuntimeLegacyMarkerRevokeStatement(runtimeUrl) {
   const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
   const table = `${quoteIdentifier('public')}.${quoteIdentifier(
@@ -71,6 +90,7 @@ async function grantRuntimeMembershipPrivileges(
     await client.query('BEGIN');
     transactionOpen = true;
     await client.query(buildRuntimePrivilegeStatement(runtimeUrl));
+    await client.query(buildRuntimeRevenuePrivilegeStatement(runtimeUrl));
     await client.query('COMMIT');
     transactionOpen = false;
   } catch {
@@ -110,6 +130,8 @@ async function revokeRuntimeLegacyMarkerPrivileges(
 
 module.exports = {
   MEMBERSHIP_RUNTIME_TABLES,
+  REVENUE_APPEND_ONLY_TABLES,
+  buildRuntimeRevenuePrivilegeStatement,
   LEGACY_RECONCILIATION_MARKER_TABLE,
   buildRuntimePrivilegeStatement,
   buildRuntimeLegacyMarkerRevokeStatement,

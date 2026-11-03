@@ -138,7 +138,7 @@ describe('production runtime database role verifier', () => {
     const probe = `
       const { PGlite } = require('@electric-sql/pglite');
       const { RUNTIME_ROLE_QUERY, assessRuntimeRole } = require(${JSON.stringify(verifierPath)});
-      const { MEMBERSHIP_RUNTIME_TABLES } = require(${JSON.stringify(privilegesPath)});
+      const { MEMBERSHIP_RUNTIME_TABLES, REVENUE_APPEND_ONLY_TABLES } = require(${JSON.stringify(privilegesPath)});
       (async () => {
         const database = new PGlite();
         try {
@@ -151,6 +151,10 @@ describe('production runtime database role verifier', () => {
           for (const table of MEMBERSHIP_RUNTIME_TABLES) {
             await database.exec(\`CREATE TABLE public."\${table}" (id integer PRIMARY KEY)\`);
             await database.exec(\`GRANT SELECT, INSERT, UPDATE ON public."\${table}" TO verifier_runtime\`);
+          }
+          for (const table of REVENUE_APPEND_ONLY_TABLES) {
+            await database.exec(\`CREATE TABLE public."\${table}" (id integer PRIMARY KEY)\`);
+            await database.exec(\`GRANT SELECT, INSERT ON public."\${table}" TO verifier_runtime\`);
           }
           await database.exec('SET ROLE verifier_runtime');
           const safeResult = await database.query(RUNTIME_ROLE_QUERY);

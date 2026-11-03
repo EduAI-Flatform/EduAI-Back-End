@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const { Client } = require('pg');
 const {
   MEMBERSHIP_RUNTIME_TABLES,
+  REVENUE_APPEND_ONLY_TABLES,
 } = require('./membership-runtime-privileges.cjs');
 
 const RUNTIME_ENV_FILE = '.env';
@@ -28,9 +29,10 @@ const ASSESSMENT_KEYS = [
   'runtimeRoleLeastPrivilegeReady',
 ];
 
-const membershipTableValues = MEMBERSHIP_RUNTIME_TABLES.map(
-  (table) => `('${table}')`,
-).join(', ');
+const membershipTableValues = [
+  ...MEMBERSHIP_RUNTIME_TABLES.map((table) => `('${table}', true)`),
+  ...REVENUE_APPEND_ONLY_TABLES.map((table) => `('${table}', false)`),
+].join(', ');
 
 const RUNTIME_ROLE_QUERY = `
 WITH runtime_role AS (
@@ -45,7 +47,7 @@ WITH runtime_role AS (
   WHERE namespace.nspname = 'public'
     AND relation.relkind IN ('r', 'p')
     AND left(relation.relname, 9) = 'commerce_'
-), membership_tables(relation_name) AS (
+), membership_tables(relation_name, requires_update) AS (
   VALUES ${membershipTableValues}
 ), membership_capabilities AS (
   SELECT
@@ -55,7 +57,9 @@ WITH runtime_role AS (
       to_regclass('public.' || relation_name) IS NOT NULL
       AND has_table_privilege(current_user, 'public.' || relation_name, 'SELECT')
       AND has_table_privilege(current_user, 'public.' || relation_name, 'INSERT')
-      AND has_table_privilege(current_user, 'public.' || relation_name, 'UPDATE')
+      AND (CASE WHEN requires_update THEN has_table_privilege(current_user, 'public.' || relation_name, 'UPDATE')
+        ELSE NOT has_table_privilege(current_user, 'public.' || relation_name, 'UPDATE')
+          AND NOT has_table_privilege(current_user, 'public.' || relation_name, 'DELETE') END)
     ), false) AS runtime_role_can_use_membership_tables
   FROM membership_tables
 ), capabilities AS (

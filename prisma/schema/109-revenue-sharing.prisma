@@ -1,0 +1,109 @@
+model RevenueTerms {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title String @db.VarChar(200)
+  body String
+  createdById String @map("created_by_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("revenue_terms")
+}
+
+model RevenueParticipation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId String @unique @map("course_id") @db.Uuid
+  sellerId String @map("seller_id") @db.Uuid
+  termsId String @map("terms_id") @db.Uuid
+  acceptedAt DateTime @default(now()) @map("accepted_at")
+  leftAt DateTime? @map("left_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@index([sellerId, leftAt])
+  @@map("revenue_participations")
+}
+
+model RevenueParticipationEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId String @map("course_id") @db.Uuid
+  sellerId String @map("seller_id") @db.Uuid
+  termsId String @map("terms_id") @db.Uuid
+  action String @db.VarChar(30)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([courseId, createdAt])
+  @@map("revenue_participation_events")
+}
+
+model RevenuePlanPolicy {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId String @map("plan_id") @db.Uuid
+  sourceVersionId String @map("source_version_id") @db.Uuid
+  termsId String @map("terms_id") @db.Uuid
+  platformFeeBps Int @map("platform_fee_bps")
+  rules Json
+  overrides Json
+  status String @default("scheduled") @db.VarChar(20)
+  noticeMode String @map("notice_mode") @db.VarChar(20)
+  noticeDays Int? @map("notice_days")
+  effectiveAt DateTime @map("effective_at")
+  actorId String @map("actor_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  activatedVersionId String? @map("activated_version_id") @db.Uuid
+  @@index([status, effectiveAt])
+  @@index([planId, createdAt])
+  @@map("revenue_plan_policies")
+}
+
+model RevenueRetailPolicy {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platformFeeBps Int @map("platform_fee_bps")
+  status String @default("scheduled") @db.VarChar(20)
+  noticeMode String @map("notice_mode") @db.VarChar(20)
+  noticeDays Int? @map("notice_days")
+  effectiveAt DateTime @map("effective_at")
+  actorId String @map("actor_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([status, effectiveAt])
+  @@map("revenue_retail_policies")
+}
+
+model RevenueOrderSnapshot {
+  id String @id @map("order_line_id") @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  productType String @map("product_type") @db.VarChar(20)
+  policyId String @map("policy_id") @db.Uuid
+  platformFeeBps Int @map("platform_fee_bps")
+  basisAmountMinor BigInt @map("basis_amount_minor")
+  platformAmountMinor BigInt @map("platform_amount_minor")
+  sellerAmountMinor BigInt @map("seller_amount_minor")
+  participants Json
+  createdAt DateTime @default(now()) @map("created_at")
+  periods RevenueEarningPeriod[]
+  @@index([orderId])
+  @@map("revenue_order_snapshots")
+}
+
+model RevenueEarningPeriod {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  snapshotId String @map("snapshot_id") @db.Uuid
+  sellerId String @map("seller_id") @db.Uuid
+  courseId String @map("course_id") @db.Uuid
+  periodIndex Int @map("period_index")
+  dueAt DateTime @map("due_at")
+  amountMinor BigInt @map("amount_minor")
+  snapshot RevenueOrderSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  entries RevenueLedgerEntry[]
+  @@unique([snapshotId, courseId, periodIndex])
+  @@index([sellerId, dueAt])
+  @@index([dueAt])
+  @@map("revenue_earning_periods")
+}
+
+model RevenueLedgerEntry {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  periodId String @map("period_id") @db.Uuid
+  sourceKey String @unique @map("source_key") @db.VarChar(200)
+  sourceRefundId String? @map("source_refund_id") @db.Uuid
+  kind String @db.VarChar(30)
+  amountMinor BigInt @map("amount_minor")
+  createdAt DateTime @default(now()) @map("created_at")
+  period RevenueEarningPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  @@index([periodId, createdAt])
+  @@map("revenue_ledger_entries")
+}

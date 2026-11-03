@@ -1,3 +1,6 @@
+import { RevenueFinanceService } from '../revenue-sharing/revenue-finance.service';
+import { RevenueMembershipService } from '../revenue-sharing/revenue-membership.service';
+import { Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
@@ -28,6 +31,8 @@ export class MembershipCheckoutService {
     private readonly audit: AuditService,
     private readonly commerceProducts: CommerceProductService,
     private readonly continuity: MembershipContinuityService,
+    @Optional() private readonly revenue?: RevenueFinanceService,
+    @Optional() private readonly revenueMembership?: RevenueMembershipService,
   ) {}
 
   async catalog(learnerId: string) {
@@ -57,9 +62,16 @@ export class MembershipCheckoutService {
         include: { version: { include: { includedCourses: { include: { course: { select: { id: true, title: true, slug: true } } } } } } },
       }),
     ]);
-    const latestVersions = versions.filter((version, index) =>
+    const candidates = versions.filter((version, index) =>
       versions.findIndex((candidate) => candidate.planId === version.planId) === index,
     );
+    // Choose the latest first: an unavailable managed catalogue must never expose an older version.
+    const available = await Promise.all(candidates.map(async version => {
+      if (!version.revenuePolicyId || version.includedCourses.length > 0) return true;
+      const policy = await this.prisma.revenuePlanPolicy.findUnique({ where: { id: version.revenuePolicyId }, select: { platformFeeBps: true } });
+      return policy?.platformFeeBps === 10000;
+    }));
+    const latestVersions = candidates.filter((_, index) => available[index]);
     const items = await Promise.all(latestVersions.map(async (version) => {
       const removedCourses = await this.continuity.resolveRemovedCourses(
         this.prisma,
@@ -153,6 +165,8 @@ export class MembershipCheckoutService {
   private async createCheckoutTransaction(
     tx: Prisma.TransactionClient, learnerId: string, input: CreateMembershipCheckoutDto, keyHash: string, requestHash: string,
   ) {
+    if (this.revenue) await this.revenue.lockCheckout(tx);
+    if (this.revenueMembership) await this.revenueMembership.synchronizeCheckout(tx);
     const existing = await tx.commerceIdempotencyRecord.findUnique({
       where: { actorId_operation_keyHashVersion_keyHash: { actorId: learnerId, operation: 'membership_checkout', keyHashVersion: 1, keyHash } },
     });
@@ -236,6 +250,7 @@ export class MembershipCheckoutService {
     await this.continuity.persistSnapshots(tx, checkoutIntent.id, learnerId, removedCourses);
     await tx.commerceOrderLine.create({ data: { orderId, productId: product.id, productType: CommerceProductType.membership, productReferenceId: version.id, sellerId: product.sellerId, displayTitle: version.displayName, unitListPriceAmountMinor: listAmount, subtotalAmountMinor: listAmount, discountAmountMinor: discountAmount, finalAmountMinor: amount, currency: CURRENCY } });
     await tx.commerceIdempotencyRecord.update({ where: { id: idempotency.id }, data: { status: CommerceIdempotencyStatus.completed, resourceType: 'commerce_order', resourceId: orderId, completedAt: now, lockedUntil: now } });
+    await this.revenue?.captureOrder(tx, orderId);
     await this.audit.record({ actorId: learnerId, action: AuditAction.MembershipCheckoutCreated, target: { type: 'membership_checkout_intent', id: orderId }, metadata: { orderNumber: order.orderNumber, versionId: version.id, durationMonths: duration.months, action, startsAt: term.startsAt.toISOString(), endsAt: term.endsAt.toISOString(), removedCourseCount: removedCourses.length } }, tx);
     return this.checkoutResponse(tx, orderId);
   }

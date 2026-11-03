@@ -1,3 +1,4 @@
+import { RevenueSharingModule } from './modules/revenue-sharing/revenue-sharing.module';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AppConfigModule } from './config/app-config.module';
@@ -42,6 +43,7 @@ import { GdsWalletModule } from './modules/wallet/gds-wallet.module';
     LoggingModule,
     MonitoringModule,
     PrismaModule,
+    RevenueSharingModule,
     AccessModule,
     AuditModule,
     RedisModule,

@@ -168,6 +168,7 @@ export class MembershipAdminService {
     input: ConfigureMembershipPlanEntitlementDto,
   ) {
     return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
       const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
       if (!version) throw new NotFoundException('Membership plan version not found.');
@@ -219,12 +220,14 @@ export class MembershipAdminService {
     input: ConfigureMembershipIncludedCourseDto,
   ) {
     return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
       const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
       if (!version) throw new NotFoundException('Membership plan version not found.');
       if (version.status !== MembershipPlanVersionStatus.draft) {
         throw new ConflictException('Published membership course inclusions are immutable.');
       }
+      await this.assertUnmanagedPlan(tx, version.planId);
       const course = await tx.course.findFirst({
         where: { id: input.courseId, deletedAt: null, status: 'published', moderationStatus: 'clear' },
         select: { id: true, title: true, slug: true },
@@ -323,7 +326,9 @@ export class MembershipAdminService {
   ) {
     const normalized = this.normalizeVersion(input);
     return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plans WHERE id = ${planId}::uuid FOR UPDATE`);
+      await this.assertUnmanagedPlan(tx, planId);
       const plan = await tx.membershipPlan.findUnique({ where: { id: planId } });
       if (!plan) throw new NotFoundException('Membership plan not found.');
       if (plan.status !== MembershipPlanStatus.active) {
@@ -365,6 +370,7 @@ export class MembershipAdminService {
 
   archivePlan(actorId: string, planId: string) {
     return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plans WHERE id = ${planId}::uuid FOR UPDATE`);
       const current = await tx.membershipPlan.findUnique({ where: { id: planId } });
       if (!current) throw new NotFoundException('Membership plan not found.');
@@ -396,6 +402,7 @@ export class MembershipAdminService {
     transition: 'publish' | 'archive',
   ) {
     return this.runSerializable(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(73410201)`);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
       const current = await tx.membershipPlanVersion.findUnique({
         where: { id: versionId },
@@ -417,6 +424,7 @@ export class MembershipAdminService {
           throw new ConflictException('Only active membership plans can publish versions.');
         }
       }
+      if (transition === 'publish') await this.assertUnmanagedPlan(tx, current.planId);
       const now = new Date();
       const updated = await tx.membershipPlanVersion.update({
         where: { id: versionId },
@@ -597,6 +605,12 @@ export class MembershipAdminService {
     return { id: item.id, versionId: item.versionId, graceDays: item.graceDays, course: item.course };
   }
 
+  private async assertUnmanagedPlan(tx: Prisma.TransactionClient, planId: string) {
+    const rows = await tx.$queryRaw<Array<{ managed: boolean }>>(Prisma.sql`
+      SELECT EXISTS(SELECT 1 FROM revenue_plan_policies
+        WHERE plan_id = ${planId}::uuid AND status IN ('active', 'scheduled')) AS managed`);
+    if (rows?.[0]?.managed) throw new ConflictException('This plan is managed by revenue policies. Publish changes through revenue configuration.');
+  }
   private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
