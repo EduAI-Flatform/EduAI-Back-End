@@ -10,12 +10,13 @@ import { GdsInternalTopupPreparationService } from './gds-internal-topup-prepara
 import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
 import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
 import { GdsInternalCheckoutService } from './gds-internal-checkout.service';
+import { GdsTopupCancellationService } from './gds-topup-cancellation.service';
 import { AuditModule } from '../../common/audit/audit.module';
 import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
   imports: [AppConfigModule, AuthModule, PrismaModule, PaymentsModule, AuditModule],
   controllers: [GdsWalletController],
-  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService, GdsPayosQrPreviewService, GdsInternalCheckoutService],
+  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService, GdsPayosQrPreviewService, GdsInternalCheckoutService, GdsTopupCancellationService],
 })
 export class GdsWalletModule {}

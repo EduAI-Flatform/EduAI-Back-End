@@ -10,6 +10,7 @@ import { GdsWalletService } from './gds-wallet.service';
 import { GdsCreateTopupDto } from './dto/gds-create-topup.dto';
 import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
 import { GdsInternalCheckoutService } from './gds-internal-checkout.service';
+import { GdsTopupCancellationService } from './gds-topup-cancellation.service';
 
 @ApiTags('GDS Wallet (sandbox only)')
 @ApiBearerAuth()
@@ -21,6 +22,7 @@ export class GdsWalletController {
     private readonly wallet: GdsWalletService,
     private readonly qr: GdsPayosQrPreviewService,
     private readonly checkout: GdsInternalCheckoutService,
+    private readonly cancellation: GdsTopupCancellationService,
   ) {}
 
   @Get()
@@ -41,6 +43,16 @@ export class GdsWalletController {
     @Body() input: GdsCreateTopupDto,
   ) {
     return this.qr.create(buyerId, input.amountMinor, idempotencyKey);
+  }
+
+  /** Cancels only an authenticated, unpaid UAT link owned by the learner. */
+  @Post('topups/:topupId/cancel')
+  @RateLimit({ identity: 'user', limit: 5, name: 'gds-topup-cancel', windowSeconds: 60 })
+  cancelTopup(
+    @CurrentUser('id') buyerId: string,
+    @Param('topupId', new ParseUUIDPipe({ version: '4' })) topupId: string,
+  ) {
+    return this.cancellation.cancel(buyerId, topupId);
   }
 
   /** One order = one idempotency identity. UAT only; no browser payment proof. */

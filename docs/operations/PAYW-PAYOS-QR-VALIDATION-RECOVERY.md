@@ -112,3 +112,17 @@ stopping polling and showing wallet/course/membership navigation. Expiry hides
 the QR but keeps following delayed settlement until the user leaves that intent.
 Errors and review states do not assert credit. No schema or merchant changes.
 Regression verification uses mocked APIs and creates no real payment.
+
+
+### Learner cancellation
+
+POST /wallet/gds/topups/:topupId/cancel is student-owned and uses the same UAT
+gates as QR creation. Before cancellation, authenticated PayOS GET must match
+link, order and exact amount with zero paid and no transactions. The cancel
+response must independently match those facts and report CANCELLED.
+A conditional serializable update changes only the local pending status; newly
+arrived signed inbox, reconciliation or journal evidence prevents that update.
+Provider errors retain the intent and polling. A prior remote cancellation can
+be recovered without another remote cancel. No receiving-account, journal or
+balance changes are made. The dialog requires explicit learner confirmation.
+Provider contract: https://payos.vn/docs/api/ (cancel payment link).
