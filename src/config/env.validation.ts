@@ -382,8 +382,13 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
         `PAYOS production configuration requires ${missing.join(', ')}`,
       );
     }
-    if (validated.NODE_ENV !== 'production') {
-      throw new Error('PAYOS_ENVIRONMENT=production requires NODE_ENV=production');
+    // PayOS exposes a real merchant API, not a synthetic sandbox API.
+    // An explicitly classified DEV/UAT runtime may use a separately owned
+    // test merchant channel; wallet features still hard-reject NODE_ENV
+    // production and DEPLOYMENT_CLASS production regardless of flags.
+    if (validated.NODE_ENV !== 'production' &&
+        !(validated.NODE_ENV === 'development' && validated.DEPLOYMENT_CLASS === 'uat')) {
+      throw new Error('PAYOS_ENVIRONMENT=production requires NODE_ENV=production or explicit development UAT');
     }
     if (validated.PAYOS_API_BASE_URL !== OFFICIAL_PAYOS_API_BASE_URL) {
       throw new Error(

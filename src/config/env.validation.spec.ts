@@ -287,6 +287,7 @@ describe('validateEnv', () => {
       validateEnv({
         ...paymentBase,
         NODE_ENV: 'development',
+        DEPLOYMENT_CLASS: 'production',
         PAYOS_ENVIRONMENT: 'production',
         PAYOS_CLIENT_ID: 'client',
         PAYOS_API_KEY: 'api-key',
@@ -295,7 +296,31 @@ describe('validateEnv', () => {
         PAYOS_CANCEL_URL: 'https://app.example/payments/cancel',
         PAYOS_WEBHOOK_URL: 'https://api.example/api/v1/payments/webhooks/payos',
       }),
-    ).toThrow('PAYOS_ENVIRONMENT=production requires NODE_ENV=production');
+    ).toThrow('PAYOS_ENVIRONMENT=production requires NODE_ENV=production or explicit development UAT');
+  });
+
+  it('allows a separate personal PayOS channel ONLY in a development UAT deployment', () => {
+    const personalUat = {
+      ...paymentBase,
+      NODE_ENV: 'development',
+      DEPLOYMENT_CLASS: 'uat',
+      PAYOS_ENVIRONMENT: 'production',
+      PAYOS_CLIENT_ID: 'personal-client',
+      PAYOS_API_KEY: 'personal-api-key',
+      PAYOS_CHECKSUM_KEY: 'personal-checksum-key',
+      PAYOS_RETURN_URL: 'https://eduai-uat.vercel.app/wallet/gds',
+      PAYOS_CANCEL_URL: 'https://eduai-uat.vercel.app/wallet/gds',
+      PAYOS_WEBHOOK_URL: 'https://eduai-uat.onrender.com/api/v1/payments/webhooks/payos',
+    };
+    expect(validateEnv(personalUat)).toMatchObject({
+      NODE_ENV: 'development', DEPLOYMENT_CLASS: 'uat', PAYOS_ENVIRONMENT: 'production',
+    });
+    expect(() => validateEnv({ ...personalUat, DEPLOYMENT_CLASS: 'production' }))
+      .toThrow('requires NODE_ENV=production or explicit development UAT');
+    expect(() => validateEnv({ ...personalUat, NODE_ENV: 'test' }))
+      .toThrow('requires NODE_ENV=production or explicit development UAT');
+    expect(() => validateEnv({ ...personalUat, PAYOS_RETURN_URL: 'http://unsafe.example' }))
+      .toThrow('PAYOS_RETURN_URL must use https');
   });
 
   it('accepts only the official PayOS API origin and HTTPS callback URLs', () => {
