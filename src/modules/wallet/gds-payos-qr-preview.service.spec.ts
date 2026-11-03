@@ -1,3 +1,4 @@
+import { PaymentProviderError } from '../payments/payment-provider';
 import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
 
 const buyerId = '11111111-1111-4111-8111-111111111111';
@@ -11,7 +12,7 @@ const config = {
 };
 const prep = { prepare: jest.fn() };
 const links = { attachCreatedLink: jest.fn() };
-const payos = { createPaymentRequest: jest.fn() };
+const payos = { createPaymentRequest: jest.fn(), retrievePaymentRequest: jest.fn() };
 const providers = { requireEnabled: jest.fn(() => payos) };
 const service = new GdsPayosQrPreviewService(config as never, prep as never, links as never, providers as never);
 
@@ -103,4 +104,62 @@ describe('GDS UAT PayOS QR creation, without funding', () => {
     await expect(service.create(buyerId, '250000', undefined)).rejects.toThrow();
     expect(prep.prepare).not.toHaveBeenCalled();
   });
+});
+
+it('queries the existing order after PayOS succeeds but persistence fails; never creates twice', async () => {
+  links.attachCreatedLink.mockRejectedValueOnce(new Error('database unavailable'));
+  await expect(service.create(buyerId, '250000', 'idempotency-unit-123')).rejects.toThrow();
+  const first = prep.prepare.mock.results[0];
+  const prepared = await first.value;
+  prep.prepare.mockResolvedValue({ ...prepared, reused: true });
+  payos.retrievePaymentRequest.mockResolvedValue({
+    providerPaymentIdentity: 'provider_link', localOrderReference: 123456,
+    amountMinor: 250000n, amountPaidMinor: 0n, amountRemainingMinor: 250000n,
+    status: 'PENDING', receivingAccount: null, transactions: [],
+  });
+  await expect(service.create(buyerId, '250000', 'idempotency-unit-123'))
+    .rejects.toThrow('GDS_TOPUP_RECOVERY_REQUIRES_PAYOS_QR');
+  expect(payos.retrievePaymentRequest).toHaveBeenCalledWith('123456');
+  expect(payos.createPaymentRequest).toHaveBeenCalledTimes(1);
+  expect(links.attachCreatedLink).toHaveBeenCalledTimes(1);
+});
+
+it.each(['timeout', 'invalid_signature', 'malformed_response', 'rejected'] as const)(
+  'does not treat a recovery %s as permission to create another link', async (code) => {
+    const prepared = await prep.prepare();
+    prep.prepare.mockResolvedValue({ ...prepared, reused: true });
+    payos.retrievePaymentRequest.mockRejectedValue(new PaymentProviderError(code, false));
+    await expect(service.create(buyerId, '250000', 'idempotency-unit-123')).rejects.toThrow();
+    expect(payos.createPaymentRequest).not.toHaveBeenCalled();
+    expect(links.attachCreatedLink).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  { localOrderReference: 654321 }, { amountMinor: 1n },
+  { status: 'PAID' }, { status: 'UNDERPAID' }, { status: 'EXPIRED' },
+  { amountPaidMinor: 1n }, { amountRemainingMinor: 249999n },
+])('rejects mismatched or non-pending recovered facts without mutation', async (patch) => {
+  const prepared = await prep.prepare();
+  prep.prepare.mockResolvedValue({ ...prepared, reused: true });
+  payos.retrievePaymentRequest.mockResolvedValue({
+    providerPaymentIdentity: 'provider_link', localOrderReference: 123456,
+    amountMinor: 250000n, amountPaidMinor: 0n, amountRemainingMinor: 250000n,
+    status: 'PENDING', transactions: [], ...patch,
+  });
+  await expect(service.create(buyerId, '250000', 'idempotency-unit-123'))
+    .rejects.toThrow('GDS_TOPUP_PAYOS_RECOVERY_MISMATCH');
+  expect(payos.createPaymentRequest).not.toHaveBeenCalled();
+  expect(links.attachCreatedLink).not.toHaveBeenCalled();
+});
+
+it('does not persist a pending link when the authenticated QR cannot be encoded', async () => {
+  const created = await payos.createPaymentRequest();
+  payos.createPaymentRequest.mockResolvedValue({ ...created, qrPayload: 'x'.repeat(8192) });
+  links.attachCreatedLink.mockResolvedValue({
+    paymentLinkId: 'provider_link', checkoutUrl: created.checkoutUrl, qrPayload: 'x'.repeat(8192),
+  });
+  await expect(service.create(buyerId, '250000', 'idempotency-unit-123'))
+    .rejects.toThrow('GDS_TOPUP_PAYOS_QR_ENCODING_FAILED');
+  expect(links.attachCreatedLink).not.toHaveBeenCalled();
 });

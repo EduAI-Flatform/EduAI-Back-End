@@ -74,6 +74,7 @@ jobs:
           modules/wallet/gds-internal-topup-preparation.service.spec.ts
           modules/wallet/gds-internal-topup-link.service.spec.ts
           modules/wallet/gds-payos-qr-preview.service.spec.ts
+          modules/payments/payos-link.validation.spec.ts
           modules/wallet/gds-internal-checkout.service.spec.ts
 
       - name: GDS sandbox PostgreSQL inbox and checkout invariants

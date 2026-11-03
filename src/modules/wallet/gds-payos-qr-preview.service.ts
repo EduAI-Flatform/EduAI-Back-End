@@ -1,6 +1,7 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import { AppConfigService } from '../../config/app-config.service';
+import { isPayosLinkIdentity, payosLinkIssues } from '../payments/payos-link.validation';
 import { PAYMENT_PROVIDER_REGISTRY } from '../payments/payment-provider';
 import { PaymentProviderRegistry } from '../payments/payment-provider.registry';
 import { GdsInternalTopupPreparationService } from './gds-internal-topup-preparation.service';
@@ -14,6 +15,8 @@ import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
  */
 @Injectable()
 export class GdsPayosQrPreviewService {
+  private readonly logger = new Logger(GdsPayosQrPreviewService.name);
+
   constructor(
     private readonly config: AppConfigService,
     private readonly preparation: GdsInternalTopupPreparationService,
@@ -54,6 +57,29 @@ export class GdsPayosQrPreviewService {
     }
     const request = prepared.payosRequest;
     const provider = this.providers.requireEnabled('payos');
+    if (prepared.reused) {
+      // A previous process may have reached PayOS even though the local row
+      // remains CREATED. Reuse its immutable order code; never issue POST again.
+      let existing;
+      try {
+        existing = await provider.retrievePaymentRequest(String(request.orderCode));
+      } catch {
+        this.logger.warn({ event: 'gds_payos_recovery_blocked', reason: 'lookup_failed' });
+        throw new ServiceUnavailableException('GDS_TOPUP_PAYOS_RECOVERY_UNAVAILABLE');
+      }
+      if (existing.localOrderReference !== request.orderCode ||
+          existing.amountMinor !== BigInt(request.amount) ||
+          !isPayosLinkIdentity(existing.providerPaymentIdentity) ||
+          existing.status !== 'PENDING' || existing.amountPaidMinor !== 0n ||
+          existing.amountRemainingMinor !== BigInt(request.amount) || existing.transactions.length !== 0) {
+        this.logger.warn({ event: 'gds_payos_recovery_blocked', reason: 'facts_mismatch' });
+        throw new ConflictException('GDS_TOPUP_PAYOS_RECOVERY_MISMATCH');
+      }
+      // SDK 2.0.5 GET supplies status, not the signed create receipt's currency,
+      // accountNumber or QR. A status response cannot authorize first binding.
+      this.logger.warn({ event: 'gds_payos_recovery_blocked', reason: 'presentation_facts_unavailable' });
+      throw new ConflictException('GDS_TOPUP_RECOVERY_REQUIRES_PAYOS_QR');
+    }
     const created = await provider.createPaymentRequest({
       paymentAttemptIdentity: prepared.intent.id,
       providerOrderReference: String(request.orderCode),
@@ -64,6 +90,22 @@ export class GdsPayosQrPreviewService {
       returnUrls: { success: request.returnUrl, cancel: request.cancelUrl },
       expiresAt: new Date(request.expiredAt * 1000),
     });
+    const issues = payosLinkIssues(created);
+    if (issues.length) {
+      this.logger.warn({ event: 'gds_payos_preview_rejected', issues });
+      throw new ServiceUnavailableException('GDS_TOPUP_INVALID_PAYOS_LINK');
+    }
+    // A bounded SDK string may still exceed QR encoder capacity. Encode before
+    // changing the local intent, and never log the payload or encoder error.
+    let qrCodeDataUrl: string;
+    try {
+      qrCodeDataUrl = await QRCode.toDataURL(created.qrPayload as string, {
+        errorCorrectionLevel: 'M', margin: 1, width: 320,
+      });
+    } catch {
+      this.logger.warn({ event: 'gds_payos_preview_rejected', issues: ['qr_encoding_failed'] });
+      throw new ServiceUnavailableException('GDS_TOPUP_PAYOS_QR_ENCODING_FAILED');
+    }
     // PayOS's authenticated create response is the source of its receiving
     // bank account. The link transaction binds that hash once, before a QR
     // can be shown; later signed callbacks/reconciliation must match it.
@@ -71,9 +113,7 @@ export class GdsPayosQrPreviewService {
     if (!link.qrPayload) {
       throw new ServiceUnavailableException('PayOS did not return a bank QR');
     }
-    const qrCodeDataUrl = await QRCode.toDataURL(link.qrPayload, {
-      errorCorrectionLevel: 'M', margin: 1, width: 320,
-    });
+
     return {
       topupId: prepared.intent.id,
       amountMinor: request.amount.toString(),

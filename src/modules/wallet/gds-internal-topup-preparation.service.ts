@@ -23,6 +23,8 @@ export type PrepareGdsTopup = {
 
 export type PreparedGdsTopup = {
   intent: GdsPayosTopupIntent;
+  /** Existing intents must query PayOS before any outbound create. */
+  reused: boolean;
   /** Server-only PayOS SDK input; no payment link or QR is created here. */
   payosRequest: GdsPayosTopupRequest | null;
 };
@@ -70,7 +72,7 @@ export class GdsInternalTopupPreparationService {
         if (intent.status === 'CREATED' && intent.expiresAt <= new Date()) {
           throw new GdsWalletInvariantError('GDS_TOPUP_PREPARATION_EXPIRED');
         }
-        return { intent, payosRequest: intent.status === 'CREATED'
+        return { intent, reused: true, payosRequest: intent.status === 'CREATED'
           ? buildGdsPayosTopupRequest(intent, input.urls) : null };
       }
 
@@ -112,7 +114,7 @@ export class GdsInternalTopupPreparationService {
         payosOrderCode: intent.payosOrderCode, transferMemo: payosRequest.description,
         receivingAccountHash: intent.receivingAccountHash, expiresAt: intent.expiresAt,
       } });
-      return { intent, payosRequest };
+      return { intent, reused: false, payosRequest };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 10_000 });
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
