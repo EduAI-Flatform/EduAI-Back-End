@@ -340,6 +340,7 @@ export class AuthService {
 
         const user = await tx.user.create({
           data: {
+            gdsInternalWallet: { create: {} },
             authProvider,
             avatarUrl,
             email,

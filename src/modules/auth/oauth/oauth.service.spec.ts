@@ -494,6 +494,7 @@ describe('OAuthService', () => {
     expect(tx.user.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         authProvider: 'facebook',
+        gdsInternalWallet: { create: {} },
         email: 'facebook@example.com',
         emailVerified: true,
       }),

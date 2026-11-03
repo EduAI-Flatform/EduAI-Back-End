@@ -174,6 +174,7 @@ describe('AuthService.loginWithFirebase', () => {
           firebaseUid: 'firebase-uid',
           fullName: 'Student User',
           passwordHash: null,
+          gdsInternalWallet: { create: {} },
         },
       }),
     );

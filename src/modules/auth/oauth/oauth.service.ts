@@ -562,6 +562,7 @@ export class OAuthService {
 
     const created = await tx.user.create({
       data: {
+        gdsInternalWallet: { create: {} },
         authProvider: this.toAuthProvider(provider),
         avatarUrl: identity.avatarUrl,
         email: identity.email as string,

@@ -52,6 +52,18 @@ async function main() {
         await runtime.gdsInternalWallet.upsert({where:{buyerId:probe},create:{buyerId:probe},update:{}});
         const empty=await runtime.gdsInternalWallet.findUniqueOrThrow({where:{buyerId:probe}});
         assert.equal(empty.availableMinor,0n);
+        const legacy=randomUUID();
+        await db.user.create({data:{id:legacy,email:legacy+'@synthetic.invalid',fullName:'Legacy zero-wallet user'}});
+        const {GdsWalletService}=require('../dist/src/modules/wallet/gds-wallet.service.js');
+        const zeroConfig={app:{nodeEnv:'production',deploymentClass:'production'},gdsWallet:{sandboxEnabled:false},payos:{environment:'production'},commerce:{idempotencySecret:'synthetic-gds-checkout-ci-only-32-chars'}};
+        const summary=new GdsWalletService(runtime,zeroConfig);
+        const zero=await Promise.all([summary.summary(legacy),summary.summary(legacy)]);
+        assert.ok(zero.every(x=>x.state==='READY_PRODUCTION'&&x.balance.availableMinor==='0'));
+        assert.equal(await runtime.gdsInternalWallet.count({where:{buyerId:legacy}}),1);
+        assert.equal(await runtime.gdsInternalJournal.count({where:{wallet:{buyerId:legacy}}}),0);
+        const signedUp=randomUUID();
+        await db.user.create({data:{id:signedUp,email:signedUp+'@synthetic.invalid',fullName:'Signup zero-wallet user',gdsInternalWallet:{create:{}}}});
+        assert.equal((await runtime.gdsInternalWallet.findUniqueOrThrow({where:{buyerId:signedUp}})).availableMinor,0n);
         await assert.rejects(runtime.gdsInternalWallet.update({where:{id:empty.id},data:{availableMinor:9999n}}));
         console.log('GDS_RUNTIME_PRISMA_ZERO_WALLET=PASS');
       }finally{await runtime.$disconnect();}

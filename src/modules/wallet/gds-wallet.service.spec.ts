@@ -9,15 +9,15 @@ const config = {
 };
 
 describe('GDS wallet learner API projection', () => {
-  const db = { gdsInternalWallet: { findUnique: jest.fn() }, gdsInternalJournal: { findMany: jest.fn() }, buyerWalletLink: { findUnique: jest.fn() } };
+  const db = { gdsInternalWallet: { findUnique: jest.fn(), createMany: jest.fn(), findUniqueOrThrow: jest.fn() }, gdsInternalJournal: { findMany: jest.fn() }, buyerWalletLink: { findUnique: jest.fn() } };
   const service = new GdsWalletService(db as never, config as never);
-  beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.gdsInternalJournal.findMany.mockReset().mockResolvedValue([]); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; config.gdsWallet.checkoutEnabled = false; config.gdsWallet.qrPreviewEnabled = false; });
+  beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.gdsInternalWallet.createMany.mockReset().mockResolvedValue({count:1}); db.gdsInternalWallet.findUniqueOrThrow.mockReset().mockResolvedValue({id:"zero-wallet",status:"ACTIVE",availableMinor:0n,heldMinor:0n}); db.gdsInternalJournal.findMany.mockReset().mockResolvedValue([]); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; config.gdsWallet.checkoutEnabled = false; config.gdsWallet.qrPreviewEnabled = false; });
 
   it('enables UAT PayOS topup when the provider is configured without a bank-account env key', async () => {
     config.gdsWallet.sandboxEnabled = true;
     config.gdsWallet.qrPreviewEnabled = true;
     db.gdsInternalWallet.findUnique.mockResolvedValue(null);
-    expect(await service.summary(buyerId)).toMatchObject({ state: 'NOT_INITIALIZED', topupEnabled: true });
+    expect(await service.summary(buyerId)).toMatchObject({ state: 'READY_SANDBOX', topupEnabled: true });
     config.payos.environment = 'disabled';
     expect(await service.summary(buyerId)).toMatchObject({ topupEnabled: false });
     config.payos.environment = 'production';
@@ -51,7 +51,7 @@ describe('GDS wallet learner API projection', () => {
     db.gdsInternalWallet.findUnique.mockResolvedValue({ id: 'wallet-production', status: 'ACTIVE', availableMinor: -1n, heldMinor: 0n });
     expect(await productionService.summary(buyerId)).toMatchObject({ state: 'RECONCILIATION_REQUIRED', topupEnabled: false, paymentEnabled: false });
     db.gdsInternalWallet.findUnique.mockResolvedValue(null);
-    expect(await productionService.summary(buyerId)).toMatchObject({ mode: 'production', state: 'NOT_INITIALIZED', balance: null, topupEnabled: true });
+    expect(await productionService.summary(buyerId)).toMatchObject({ mode: 'production', state: 'READY_PRODUCTION', balance: {availableMinor:'0'}, topupEnabled: true });
   });
 
   it('defaults OFF and never invents funds without an initialized internal wallet', async () => {
@@ -59,9 +59,9 @@ describe('GDS wallet learner API projection', () => {
     expect(db.gdsInternalWallet.findUnique).not.toHaveBeenCalled();
     config.gdsWallet.sandboxEnabled = true;
     db.gdsInternalWallet.findUnique.mockResolvedValue(null);
-    expect(await service.summary(buyerId)).toMatchObject({ state: 'NOT_INITIALIZED', balance: null, topupEnabled: false });
+    expect(await service.summary(buyerId)).toMatchObject({ state: 'READY_SANDBOX', balance: {availableMinor:'0'}, topupEnabled: false });
     expect(db.buyerWalletLink.findUnique).not.toHaveBeenCalled();
-    expect(db.gdsInternalJournal.findMany).not.toHaveBeenCalled();
+    expect(db.gdsInternalWallet.createMany).toHaveBeenCalledWith({data:[{buyerId}],skipDuplicates:true});
   });
 
   it('projects internal account balances as strings and never enables payment', async () => {
@@ -136,4 +136,15 @@ describe('GDS wallet learner API projection', () => {
     expect(await service.summary(buyerId)).toMatchObject({ available: false, state: 'SUSPENDED', balance: null, paymentEnabled: false, topupEnabled: false });
     expect(db.buyerWalletLink.findUnique).not.toHaveBeenCalled();
   });
+});
+
+
+describe('zero wallet initialization',()=>{
+ it('creates an absent wallet without posting money, and never updates a funded wallet',async()=>{
+ const db={gdsInternalWallet:{findUnique:jest.fn().mockResolvedValueOnce(null).mockResolvedValue({id:'wallet',status:'ACTIVE',availableMinor:5000n,heldMinor:0n}),createMany:jest.fn().mockResolvedValue({count:1}),findUniqueOrThrow:jest.fn().mockResolvedValue({id:'wallet',status:'ACTIVE',availableMinor:0n,heldMinor:0n})},gdsInternalJournal:{findMany:jest.fn().mockResolvedValue([])}};
+ const c={...config,app:{...config.app,nodeEnv:'test',deploymentClass:'uat'},gdsWallet:{sandboxEnabled:true}};const service=new GdsWalletService(db as never,c as never);
+ expect((await service.summary(buyerId)).balance?.availableMinor).toBe('0');
+ expect((await service.summary(buyerId)).balance?.availableMinor).toBe('5000');
+ expect(db.gdsInternalWallet.createMany).toHaveBeenCalledTimes(1);expect(db.gdsInternalWallet.createMany).toHaveBeenCalledWith({data:[{buyerId}],skipDuplicates:true});
+ });
 });

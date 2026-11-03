@@ -49,7 +49,12 @@ export class GdsWalletService {
     const activeTopup = topupId ? await this.topupStatus(buyerId, topupId) : null;
     // PAYW-04I changes the preferred model: this reads the isolated internal
     // prepaid journal projection, never the earlier partner-wallet mirror.
-    const wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
+    let wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
+    if (!wallet) {
+      // Atomic conflict-ignore initialization never rewrites an existing balance or status.
+      await this.prisma.gdsInternalWallet.createMany({ data: [{ buyerId }], skipDuplicates: true });
+      wallet = await this.prisma.gdsInternalWallet.findUniqueOrThrow({ where: { buyerId } });
+    }
     const basis = {
       ...disabled, mode: capabilities.mode, activeTopup,
       topupEnabled: capabilities.topupEnabled &&
@@ -57,7 +62,6 @@ export class GdsWalletService {
         /^https:\/\//.test(this.config.app.publicAppUrl ?? '') &&
         Boolean(this.config.commerce.idempotencySecret),
     };
-    if (!wallet) return { ...basis, state: 'NOT_INITIALIZED' };
     if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED', topupEnabled: false };
     if (typeof wallet.availableMinor !== 'bigint' || typeof wallet.heldMinor !== 'bigint' ||
         wallet.availableMinor < 0n || wallet.heldMinor < 0n) {
