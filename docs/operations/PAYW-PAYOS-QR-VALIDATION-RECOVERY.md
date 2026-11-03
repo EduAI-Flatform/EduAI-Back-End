@@ -126,3 +126,20 @@ Provider errors retain the intent and polling. A prior remote cancellation can
 be recovered without another remote cancel. No receiving-account, journal or
 balance changes are made. The dialog requires explicit learner confirmation.
 Provider contract: https://payos.vn/docs/api/ (cancel payment link).
+
+
+### UAT course for checkout verification
+
+Created course 86573544-6fe6-469b-b12e-87128b4cf53a, slug
+kiem-thu-thanh-toan-10000-uat, fixed price 10000 VND, published/public, active
+commerce product and one protected article lesson. It is clearly labelled UAT.
+Creation used existing course, lesson, publication and commerce services with
+the existing demo instructor/admin, without changing roles or existing courses.
+No orders, payments, enrollments, grants or wallet entries were created.
+
+The bounded script scripts/create-payw-uat-course.cjs defaults to dry-run and
+requires --uat --expected-db-fingerprint <reviewed-host-and-db-fingerprint>.
+Use --apply only for the reviewed isolated UAT database. It refuses conflicting
+existing fixtures before writes; a verified repeat returns changed:false.
+Checks: guard tests PASS; live public course API HTTP200 with price
+{amountMinor:10000,currency:VND}; repeated apply changed:false.
