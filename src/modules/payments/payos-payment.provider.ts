@@ -1,3 +1,4 @@
+import { isPayosAccount, isPayosLinkIdentity, isPayosQr, isPayosCheckoutUrl } from './payos-link.validation';
 import {
   APIError,
   ConnectionError,
@@ -42,7 +43,7 @@ const STATUSES = new Set<PaymentProviderStatus>([
   'PROCESSING',
   'FAILED',
 ]);
-const PAYOS_CHECKOUT_HOSTS = new Set(['pay.payos.vn', 'next.pay.payos.vn']);
+
 const PAYOS_CHECKOUT_BASE_URL = 'https://pay.payos.vn/web/';
 
 export class PayosPaymentProvider implements PaymentProvider {
@@ -196,6 +197,9 @@ function normalizeCreated(value: unknown): CreatedPaymentRequest {
   const status = requireStatus(item.status);
   const currency = requireVnd(item.currency);
   const checkoutUrl = requireHttpsUrl(item.checkoutUrl);
+  if (!isPayosAccount(item.accountNumber) || !isPayosLinkIdentity(item.paymentLinkId) || !isPayosQr(item.qrCode)) {
+    throw new PaymentProviderError('malformed_response', false);
+  }
 
   return {
     providerPaymentIdentity: requireString(item.paymentLinkId, 128),
@@ -247,6 +251,7 @@ function requireTransactions(value: unknown): PaymentRequestStatus['transactions
       reference: requireString(item.reference, 128),
       amountMinor: BigInt(requireNonNegativeInteger(item.amount)),
       receivingAccount: requireString(item.accountNumber, 128),
+      ...normalizeVirtualAccount(item.virtualAccountNumber),
       occurredAt: requireProviderDate(item.transactionDateTime),
     };
   });
@@ -269,7 +274,14 @@ function normalizeWebhook(value: unknown): VerifiedPaymentWebhook {
     providerCode,
     responseCode: providerCode,
     receivingAccount: requireString(item.accountNumber, 128),
+    ...normalizeVirtualAccount(item.virtualAccountNumber),
   };
+}
+
+function normalizeVirtualAccount(value: unknown): { virtualReceivingAccount?: string } {
+  if (value === undefined || value === null || value === "") return {};
+  if (!isPayosAccount(value)) throw new PaymentProviderError("malformed_response", false);
+  return { virtualReceivingAccount: value };
 }
 
 function mapProviderError(error: unknown): PaymentProviderError {
@@ -346,20 +358,7 @@ function requireVnd(value: unknown): 'VND' {
 
 function requireHttpsUrl(value: unknown): string {
   const url = requireString(value, 2048);
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== 'https:' ||
-      parsed.port.length > 0 ||
-      parsed.username.length > 0 ||
-      parsed.password.length > 0 ||
-      !PAYOS_CHECKOUT_HOSTS.has(parsed.hostname.toLowerCase())
-    ) {
-      throw new Error();
-    }
-  } catch {
-    throw new PaymentProviderError('malformed_response', false);
-  }
+  if (!isPayosCheckoutUrl(url)) throw new PaymentProviderError('malformed_response', false);
   return url;
 }
 

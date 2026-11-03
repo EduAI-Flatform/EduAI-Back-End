@@ -17,6 +17,7 @@ export interface GdsInternalPayosSettlement {
   amountRemainingMinor: bigint;
   currency: 'VND';
   receivingAccountHash: string;
+  settlementReceivingAccountHash?: string;
   collectionReference: string;
   status: 'PAID';
   signatureVerifiedAt: Date;
@@ -59,7 +60,9 @@ export function prepareGdsInternalTopupCredit(
       settlement.orderCode !== intent.payosOrderCode ||
       !intent.paymentLinkId || settlement.paymentLinkId !== intent.paymentLinkId ||
       settlement.receivingAccountHash !== intent.receivingAccountHash ||
-      settlement.collectionReference !== intent.collectionReference) {
+      settlement.collectionReference !== intent.collectionReference ||
+      (intent.settlementReceivingAccountHash != null &&
+        settlement.settlementReceivingAccountHash !== intent.settlementReceivingAccountHash)) {
     invariant('GDS_INTERNAL_TOPUP_PAYMENT_MISMATCH');
   }
   if (!(settlement.signatureVerifiedAt instanceof Date) ||

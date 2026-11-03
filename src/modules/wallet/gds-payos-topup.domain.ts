@@ -19,8 +19,11 @@ export interface GdsPayosTopupIntent {
   amountMinor: bigint;
   currency: 'VND';
   payosOrderCode: bigint;
-  /** SHA256 hash of the verified PayOS channel's receiving account. */
+  /** SHA256 of accountNumber in authenticated link creation; it may be a QR virtual account. */
   receivingAccountHash: string;
+  /** Physical receiver, scoped to this link after signed webhook and GET agree. */
+  settlementReceivingAccountHash?: string | null;
+  createdAt?: Date;
   expiresAt: Date;
   status: GdsPayosTopupStatus;
   paymentLinkId: string | null;

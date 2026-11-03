@@ -351,6 +351,53 @@ describe('PayosPaymentProvider', () => {
     );
   });
 
+  it('unwraps and verifies an actual SDK create envelope containing a virtual account', async () => {
+    const checksumKey = 'unit-test-checksum';
+    const data = { ...validCreated, accountNumber: 'VIRTUAL123456789012345678901234567890123' };
+    const canonical = Object.keys(data).sort()
+      .map((key) => `${key}=${data[key as keyof typeof data]}`).join('&');
+    const signature = createHmac('sha256', checksumKey).update(canonical).digest('hex');
+    let tampered = false;
+    const sdk = new PayOS({
+      clientId: 'unit-client', apiKey: 'unit-api', checksumKey,
+      logger: null, logLevel: 'off', maxRetries: 0,
+      fetch: async () => new Response(JSON.stringify({ code: '00', desc: 'success',
+        data: tampered ? { ...data, accountNumber: 'other-account' } : data, signature,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    });
+    const provider = new PayosPaymentProvider(sdk);
+    const input = {
+      amountMinor: 125000n, currency: 'VND' as const, description: 'EDUAI 123',
+      providerOrderReference: '123', localOrderReference: 123, paymentAttemptIdentity: 'unit-attempt',
+      returnUrls: { success: 'https://app.example/return', cancel: 'https://app.example/cancel' },
+    };
+    await expect(provider.createPaymentRequest(input)).resolves.toMatchObject({
+      receivingAccount: data.accountNumber, providerPaymentIdentity: data.paymentLinkId,
+      amountMinor: 125000n, currency: 'VND', qrPayload: data.qrCode,
+    });
+    tampered = true;
+    await expect(provider.createPaymentRequest(input)).rejects.toMatchObject({ code: 'invalid_signature' });
+  });
+  it('preserves virtual recipient evidence separately from the physical receiver', async () => {
+    const { client, provider } = setup();
+    client.webhooks.verify.mockResolvedValue({
+      accountNumber: 'physical-account', virtualAccountNumber: 'VIRTUAL-ORDER-1',
+      amount: 125000, code: '00', currency: 'VND', orderCode: 123,
+      paymentLinkId: 'payment-link-id', reference: 'bank-ref', transactionDateTime: '2026-11-03 14:00:00',
+    });
+    await expect(provider.verifyWebhook({ body: { data: {}, signature: 'test' }, headers: {} }))
+      .resolves.toMatchObject({ receivingAccount: 'physical-account', virtualReceivingAccount: 'VIRTUAL-ORDER-1' });
+    client.paymentRequests.get.mockResolvedValue({ ...validStatus, accountNumber: undefined,
+      transactions: [{ reference: 'bank-ref', amount: 125000, accountNumber: 'physical-account',
+        virtualAccountNumber: 'VIRTUAL-ORDER-1', transactionDateTime: '2026-11-03 14:00:00' }],
+    });
+    const status = await provider.reconcilePaymentRequest('payment-link-id');
+    expect(status.receivingAccount).toBeNull();
+    expect(status.transactions[0]).toMatchObject({
+      receivingAccount: 'physical-account', virtualReceivingAccount: 'VIRTUAL-ORDER-1',
+    });
+  });
+
   it('does not log credentials, raw provider errors, or webhook input', async () => {
     const { client, provider } = setup();
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation();

@@ -8,6 +8,7 @@ import {
 } from './dto/order-history.dto';
 
 const historyInclude = {
+  membershipCheckoutIntent: { select: { action: true, startsAt: true, endsAt: true, durationOption: { select: { months: true } } } },
   lines: { orderBy: { createdAt: 'asc' as const } },
   paymentAttempts: { orderBy: { createdAt: 'desc' as const }, take: 1 },
 } satisfies Prisma.CommerceOrderInclude;
@@ -69,6 +70,12 @@ export class CommerceOrderHistoryService {
       discount: money(order.discountAmountMinor),
       payable: money(order.payableAmountMinor),
       paymentRequired: order.payableAmountMinor > 0n,
+      membership: order.membershipCheckoutIntent ? {
+        action: order.membershipCheckoutIntent.action.toUpperCase(),
+        durationMonths: order.membershipCheckoutIntent.durationOption.months,
+        startsAt: order.membershipCheckoutIntent.startsAt,
+        endsAt: order.membershipCheckoutIntent.endsAt,
+      } : null,
       lines: order.lines.map((line) => ({
         id: line.id,
         productType: line.productType.toUpperCase(),

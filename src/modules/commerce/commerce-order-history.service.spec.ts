@@ -144,4 +144,11 @@ describe('CommerceOrderHistoryService', () => {
       service.get('other-student', '11111111-1111-4111-8111-111111111111'),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
+ it('projects the authoritative membership renewal period without payment secrets',async()=>{
+  const {service,prisma}=harness();
+  prisma.commerceOrder.findFirst.mockResolvedValueOnce({...order(),membershipCheckoutIntent:{action:'renew',startsAt:new Date('2026-12-03T00:00:00Z'),endsAt:new Date('2027-01-03T00:00:00Z'),durationOption:{months:1}}});
+  const result=await service.get('student-id','11111111-1111-4111-8111-111111111111');
+  expect(result).toHaveProperty('membership',{action:'RENEW',durationMonths:1,startsAt:new Date('2026-12-03T00:00:00Z'),endsAt:new Date('2027-01-03T00:00:00Z')});
+ });
+
 });

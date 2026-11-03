@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { CreatedPaymentRequest } from '../payments/payment-provider';
 import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
@@ -118,17 +119,60 @@ describe('GDS authenticated SDK link attachment (source-only, no public QR)', ()
   it('rejects malformed SDK facts before touching DB', async () => {
     await expect(service.attachCreatedLink(topupId, { ...link, status: 'PAID' }))
       .rejects.toThrow('GDS_TOPUP_INVALID_PAYOS_LINK');
-    await expect(service.attachCreatedLink(topupId, { ...link, receivingAccount: 'not-account' }))
+    await expect(service.attachCreatedLink(topupId, { ...link, receivingAccount: 'bad account' }))
       .rejects.toThrow('GDS_TOPUP_INVALID_PAYOS_LINK');
     await expect(service.attachCreatedLink('bad-id', link)).rejects.toThrow('GDS_TOPUP_INVALID_PAYOS_LINK');
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
+  it('logs only fixed diagnostic reasons and omits sensitive SDK fields', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    try {
+      await expect(service.attachCreatedLink(topupId, {
+        ...link, status: 'PAID', receivingAccount: 'sensitive account', qrPayload: 'sensitive-qr'.repeat(1000),
+      })).rejects.toThrow('GDS_TOPUP_INVALID_PAYOS_LINK');
+      expect(warn).toHaveBeenCalledWith({ event: 'gds_payos_link_rejected',
+        issues: ['status_not_pending', 'invalid_receiving_account', 'invalid_qr_payload'] });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('sensitive');
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(link.providerPaymentIdentity);
+      expect(db.$transaction).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
   it('retries serialization races and refuses unknown intents', async () => {
     db.$transaction.mockRejectedValueOnce({ code: 'P2034' });
     await service.attachCreatedLink(topupId, link);
     expect(db.$transaction).toHaveBeenCalledTimes(2);
     tx.gdsInternalTopup.findUnique.mockResolvedValue(null);
     await expect(service.attachCreatedLink(topupId, link)).rejects.toThrow('GDS_TOPUP_INTENT_NOT_FOUND');
+  });
+});
+
+// Regression: PayOS virtual accounts are opaque authenticated identifiers.
+describe('PayOS SDK beneficiary contract regression', () => {
+  it('accepts an alphanumeric virtual account without changing its bytes', async () => {
+    const account = 'VIRTUAL123456789012345678901234567890123';
+    const tx = {
+      $queryRaw: jest.fn(),
+      gdsInternalTopup: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: topupId, buyerId, amountMinor: link.amountMinor, currency: 'VND',
+          payosOrderCode: BigInt(link.providerOrderReference),
+          receivingAccountHash: GDS_UNBOUND_RECEIVING_ACCOUNT_HASH,
+          status: 'CREATED', expiresAt: new Date('2027-01-01'),
+          paymentLinkId: null, collectionReference: null,
+        }), update: jest.fn(),
+      },
+      commercePaymentAttempt: { findFirst: jest.fn().mockResolvedValue(null) },
+      buyerWalletPayosTopup: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const db = { $transaction: jest.fn((action) => action(tx)) };
+    const service = new GdsInternalTopupLinkService(db as never, {
+      app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true },
+    } as never);
+    await expect(service.attachCreatedLink(topupId, { ...link, receivingAccount: account }))
+      .resolves.toHaveProperty('paymentLinkId', link.providerPaymentIdentity);
+    expect(tx.gdsInternalTopup.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ receivingAccountHash: createHash('sha256').update(account).digest('hex') }),
+    }));
   });
 });

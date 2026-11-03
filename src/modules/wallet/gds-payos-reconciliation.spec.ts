@@ -79,6 +79,79 @@ describe('GDS source-only verified PayOS reconciliation', () => {
     expect(intent.status).toBe('PENDING_PAYOS'); // no DB or input mutation
   });
 
+  it('binds the physical settlement recipient from two agreeing authenticated sources without replacing the QR account', async () => {
+    const virtualHash = createHash('sha256').update('VIRTUAL-GDS-ORDER-1').digest('hex');
+    const virtualIntent = { ...intent, receivingAccountHash: virtualHash };
+    provider.reconcilePaymentRequest.mockResolvedValue({ ...payosStatus(), receivingAccount: null });
+
+    const result = await verifyAndReconcileGdsPayosTopup(virtualIntent, {}, port);
+
+    expect(provider.verifyWebhook).toHaveBeenCalledTimes(1);
+    expect(provider.reconcilePaymentRequest).toHaveBeenCalledWith(intent.paymentLinkId);
+    expect(result.intent).toMatchObject({
+      status: 'PAYOS_VERIFIED', receivingAccountHash: virtualHash,
+      settlementReceivingAccountHash: receivingAccountHash,
+    });
+    expect(result.settlement).toMatchObject({
+      receivingAccountHash: virtualHash, settlementReceivingAccountHash: receivingAccountHash,
+      collectionReference: signedEvent().providerSettlementReference,
+    });
+    expect(virtualIntent.receivingAccountHash).toBe(virtualHash);
+    expect(virtualIntent).not.toHaveProperty('settlementReceivingAccountHash');
+  });
+
+  it('rejects a changed physical recipient after the first settlement binding even if both provider facts agree', async () => {
+    const boundIntent = { ...intent, settlementReceivingAccountHash: receivingAccountHash };
+    const changedAccount = '999999999999';
+    provider.verifyWebhook.mockResolvedValue({ ...signedEvent(), receivingAccount: changedAccount });
+    provider.reconcilePaymentRequest.mockResolvedValue({
+      ...payosStatus(), receivingAccount: null,
+      transactions: [{ ...payosStatus().transactions[0], receivingAccount: changedAccount }],
+    });
+
+    await expect(verifyAndReconcileGdsPayosTopup(boundIntent, {}, port)).rejects.toThrow();
+    expect(boundIntent.settlementReceivingAccountHash).toBe(receivingAccountHash);
+    expect(boundIntent.receivingAccountHash).toBe(receivingAccountHash);
+  });
+
+  it('requires the signed webhook physical recipient to match the independently queried transfer', async () => {
+    provider.verifyWebhook.mockResolvedValue({ ...signedEvent(), receivingAccount: '3333333333' });
+    provider.reconcilePaymentRequest.mockResolvedValue({ ...payosStatus(), receivingAccount: null });
+
+    await expect(verifyAndReconcileGdsPayosTopup(intent, {}, port))
+      .rejects.toThrow('GDS_PAYOS_RECONCILIATION_MISMATCH');
+    expect(provider.reconcilePaymentRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['webhook', 'query'] as const)('never ignores a contradictory virtual recipient supplied by the %s', async (source) => {
+    const otherVirtual = 'VIRTUAL-OTHER-ORDER';
+    if (source === 'webhook') {
+      provider.verifyWebhook.mockResolvedValue({ ...signedEvent(), virtualReceivingAccount: otherVirtual });
+    } else {
+      provider.reconcilePaymentRequest.mockResolvedValue({
+        ...payosStatus(), transactions: [{ ...payosStatus().transactions[0], virtualReceivingAccount: otherVirtual }],
+      });
+    }
+
+    await expect(verifyAndReconcileGdsPayosTopup(intent, {}, port)).rejects.toThrow();
+  });
+
+  it('accepts matching virtual recipient evidence while retaining both distinct immutable recipient hashes', async () => {
+    const virtualAccount = 'VIRTUAL-GDS-ORDER-1';
+    const virtualHash = createHash('sha256').update(virtualAccount).digest('hex');
+    const virtualIntent = { ...intent, receivingAccountHash: virtualHash };
+    provider.verifyWebhook.mockResolvedValue({ ...signedEvent(), virtualReceivingAccount: virtualAccount });
+    provider.reconcilePaymentRequest.mockResolvedValue({
+      ...payosStatus(), receivingAccount: null,
+      transactions: [{ ...payosStatus().transactions[0], virtualReceivingAccount: virtualAccount }],
+    });
+
+    const result = await verifyAndReconcileGdsPayosTopup(virtualIntent, {}, port);
+    expect(result.settlement).toMatchObject({
+      receivingAccountHash: virtualHash, settlementReceivingAccountHash: receivingAccountHash,
+    });
+  });
+
   it.each([
     ['sandbox disabled', { sandboxEnabled: false, nodeEnv: 'test', deploymentClass: 'uat' }],
     ['production NODE_ENV', { sandboxEnabled: true, nodeEnv: 'production', deploymentClass: 'uat' }],
@@ -111,7 +184,6 @@ describe('GDS source-only verified PayOS reconciliation', () => {
     ['wrong order code', { localOrderReference: 555 }],
     ['wrong link', { providerPaymentIdentity: 'another-link' }],
     ['wrong paid amount', { amountMinor: 99_999n }],
-    ['wrong receiving bank account', { receivingAccount: '3333333333' }],
     ['wrong payment result', { providerCode: '01' }],
     ['wrong settlement identity', { providerEventIdentity: 'different-transfer' }],
   ])('rejects signed webhook with %s before the second query', async (_label, changed) => {
@@ -126,7 +198,7 @@ describe('GDS source-only verified PayOS reconciliation', () => {
     ['underpaid', { amountPaidMinor: 99_999n, amountRemainingMinor: 1n }],
     ['overpaid', { amountPaidMinor: 100_001n }],
     ['wrong payment link', { providerPaymentIdentity: 'another-link' }],
-    ['wrong bank', { receivingAccount: '3333333333' }],
+    ['wrong transfer bank', { transactions: [{ ...payosStatus().transactions[0], receivingAccount: '3333333333' }] }],
     ['split settlement', { transactions: [payosStatus().transactions[0], payosStatus().transactions[0]] }],
     ['mismatched transaction', { transactions: [{ ...payosStatus().transactions[0], reference: 'different-transfer' }] }],
     ['transfer predates created link', { createdAt: new Date('2026-11-02T12:01:00Z') }],
@@ -155,7 +227,7 @@ describe('GDS source-only verified PayOS reconciliation', () => {
   it('is idempotent for the same already-verified collection, but rejects a different signed transfer', async () => {
     const verified = { ...intent, status: 'PAYOS_VERIFIED' as const, collectionReference: 'payos-transfer-1' };
     const result = await verifyAndReconcileGdsPayosTopup(verified, {}, port);
-    expect(result.intent).toEqual(verified);
+    expect(result.intent).toMatchObject(verified);
     provider.verifyWebhook.mockResolvedValueOnce({
       ...signedEvent(), providerSettlementReference: 'payos-transfer-2', providerEventIdentity: 'payos-transfer-2',
     });

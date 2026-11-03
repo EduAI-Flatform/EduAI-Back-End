@@ -13,7 +13,7 @@ export class GdsPayosInboxScheduler implements OnApplicationBootstrap, OnApplica
   onApplicationBootstrap(): void {
     if (!this.inbox.enabled()) return;
     void this.tick();
-    this.timer = setInterval(() => void this.tick(), 30_000);
+    this.timer = setInterval(() => void this.tick(), 3_000);
     this.timer.unref?.();
   }
 

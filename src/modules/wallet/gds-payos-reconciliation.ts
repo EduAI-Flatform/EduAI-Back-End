@@ -10,6 +10,7 @@ import {
   GdsPayosTopupIntent,
 } from './gds-payos-topup.domain';
 import { GdsWalletInvariantError } from './gds-wallet.domain';
+import { isPayosAccount } from '../payments/payos-link.validation';
 
 /**
  * PAYW-04B source-only bridge to EduAI's genuine PayOS SDK adapter.
@@ -46,60 +47,57 @@ function requireClock(value: Date): Date {
 }
 
 function accountHash(account: string | null | undefined): string {
-  if (typeof account !== 'string' || !/^[0-9]{6,32}$/.test(account)) {
+  if (!isPayosAccount(account)) {
     reject('GDS_PAYOS_RECEIVING_ACCOUNT_MISMATCH');
   }
   return createHash('sha256').update(account, 'utf8').digest('hex');
 }
 
-function checkVerifiedWebhook(
-  intent: GdsPayosTopupIntent,
-  fact: VerifiedPaymentWebhook,
-): void {
+function checkVirtualAccount(intent: GdsPayosTopupIntent, account?: string, verifiedHash?: string): void {
+  if ((account !== undefined && accountHash(account) !== intent.receivingAccountHash) ||
+      (verifiedHash !== undefined && verifiedHash !== intent.receivingAccountHash)) {
+    reject('GDS_PAYOS_RECEIVING_ACCOUNT_MISMATCH');
+  }
+}
+
+function checkVerifiedWebhook(intent: GdsPayosTopupIntent, fact: VerifiedPaymentWebhook): void {
   if (fact.provider !== 'payos' || fact.providerCode !== '00' ||
       fact.providerOrderReference !== intent.payosOrderCode.toString() ||
       fact.localOrderReference !== Number(intent.payosOrderCode) ||
       fact.providerPaymentIdentity !== intent.paymentLinkId ||
-      !fact.providerSettlementReference ||
-      fact.providerEventIdentity !== fact.providerSettlementReference ||
+      !fact.providerSettlementReference || fact.providerEventIdentity !== fact.providerSettlementReference ||
       fact.amountMinor !== intent.amountMinor || fact.currency !== 'VND' ||
-      accountHash(fact.receivingAccount) !== intent.receivingAccountHash ||
       !(fact.occurredAt instanceof Date) || !Number.isFinite(fact.occurredAt.getTime())) {
     reject('GDS_PAYOS_WEBHOOK_MISMATCH');
   }
+  const physicalHash = accountHash(fact.receivingAccount);
+  if (intent.settlementReceivingAccountHash != null &&
+      intent.settlementReceivingAccountHash !== physicalHash) reject('GDS_PAYOS_RECEIVING_ACCOUNT_MISMATCH');
+  checkVirtualAccount(intent, fact.virtualReceivingAccount, fact.verifiedVirtualAccountHash);
 }
 
-function checkProviderStatus(
-  intent: GdsPayosTopupIntent,
-  fact: VerifiedPaymentWebhook,
-  status: PaymentRequestStatus,
-): void {
-  if (status.status !== 'PAID' ||
-      status.providerPaymentIdentity !== intent.paymentLinkId ||
-      status.localOrderReference !== Number(intent.payosOrderCode) ||
-      status.amountMinor !== intent.amountMinor ||
-      status.amountPaidMinor !== intent.amountMinor ||
-      status.amountRemainingMinor !== 0n ||
-      !(status.createdAt instanceof Date) ||
-      !Number.isFinite(status.createdAt.getTime()) ||
-      accountHash(status.receivingAccount) !== intent.receivingAccountHash ||
-      status.transactions.length !== 1) {
+function checkProviderStatus(intent: GdsPayosTopupIntent, fact: VerifiedPaymentWebhook, status: PaymentRequestStatus): void {
+  if (status.status !== 'PAID' || status.providerPaymentIdentity !== intent.paymentLinkId ||
+      status.localOrderReference !== Number(intent.payosOrderCode) || status.amountMinor !== intent.amountMinor ||
+      status.amountPaidMinor !== intent.amountMinor || status.amountRemainingMinor !== 0n ||
+      !(status.createdAt instanceof Date) || !Number.isFinite(status.createdAt.getTime()) ||
+      status.transactions.length !== 1) reject('GDS_PAYOS_RECONCILIATION_MISMATCH');
+  const physicalHash = accountHash(fact.receivingAccount);
+  // GET has no documented root accountNumber. Its single signed transaction
+  // identifies the real receiver; compare it to the signed webhook, not the QR VA.
+  if (status.receivingAccount != null && accountHash(status.receivingAccount) !== physicalHash) {
     reject('GDS_PAYOS_RECONCILIATION_MISMATCH');
   }
-
-  // A multi-transfer/overpayment case is not an exact 1:1 wallet credit.
-  // Require a single provider-confirmed bank transfer matching the signed
-  // event; otherwise route to manual reconciliation, never auto-credit.
   const transfer = status.transactions[0];
-  if (transfer.reference !== fact.providerSettlementReference ||
-      transfer.amountMinor !== intent.amountMinor ||
-      accountHash(transfer.receivingAccount) !== intent.receivingAccountHash ||
-      !(transfer.occurredAt instanceof Date) ||
-      !Number.isFinite(transfer.occurredAt.getTime()) ||
+  if (transfer.reference !== fact.providerSettlementReference || transfer.amountMinor !== intent.amountMinor ||
+      accountHash(transfer.receivingAccount) !== physicalHash ||
+      !(transfer.occurredAt instanceof Date) || !Number.isFinite(transfer.occurredAt.getTime()) ||
       transfer.occurredAt < status.createdAt ||
+      (intent.createdAt !== undefined && transfer.occurredAt < intent.createdAt) ||
       transfer.occurredAt.getTime() !== fact.occurredAt.getTime()) {
     reject('GDS_PAYOS_RECONCILIATION_MISMATCH');
   }
+  checkVirtualAccount(intent, transfer.virtualReceivingAccount);
 }
 
 export async function verifyAndReconcileGdsPayosTopup(
@@ -161,6 +159,7 @@ export async function reconcileSignedGdsPayosTopup(
 
   const providerReconciledAt = requireClock(port.now());
   if (providerReconciledAt < verifiedAt) reject('GDS_PAYOS_RECONCILIATION_CLOCK');
+  const physicalHash = accountHash(verified.receivingAccount);
   const nextIntent = acceptGdsPayosCollection(intent, {
     orderCode: intent.payosOrderCode,
     amountMinor: intent.amountMinor,
@@ -174,7 +173,7 @@ export async function reconcileSignedGdsPayosTopup(
   if (nextIntent.status !== 'PAYOS_VERIFIED' && nextIntent.status !== 'CREDITED') reject('GDS_PAYOS_RECONCILIATION_REVIEW');
 
   return {
-    intent: nextIntent,
+    intent: { ...nextIntent, settlementReceivingAccountHash: physicalHash },
     settlement: {
       orderCode: intent.payosOrderCode,
       paymentLinkId,
@@ -182,6 +181,7 @@ export async function reconcileSignedGdsPayosTopup(
       amountRemainingMinor: 0n,
       currency: 'VND',
       receivingAccountHash: intent.receivingAccountHash,
+      settlementReceivingAccountHash: physicalHash,
       collectionReference: verified.providerSettlementReference,
       status: 'PAID',
       signatureVerifiedAt: verifiedAt,

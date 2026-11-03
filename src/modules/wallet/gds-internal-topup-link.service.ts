@@ -1,20 +1,23 @@
 import { createHash } from 'node:crypto';
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { payosLinkIssues } from '../payments/payos-link.validation';
 import { CreatedPaymentRequest } from '../payments/payment-provider';
 import { attachGdsPayosLink, GDS_UNBOUND_RECEIVING_ACCOUNT_HASH, GdsPayosTopupIntent } from './gds-payos-topup.domain';
 import { GdsWalletInvariantError } from './gds-wallet.domain';
 import { lockGdsPayosOrderNamespace } from './gds-payos-order-namespace';
 
 /**
- * The *future* trusted PayOS SDK caller passes only its normalized result to
+ * The trusted PayOS SDK caller passes only its normalized result to
  * this internal service. This code never calls PayOS or exposes a public QR
- * API. The callback/worker and outbound retry recovery are still required.
+ * API. Only authenticated create facts may establish beneficiary binding.
  */
 @Injectable()
 export class GdsInternalTopupLinkService {
+  private readonly logger = new Logger(GdsInternalTopupLinkService.name);
+
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
 
   async attachCreatedLink(topupId: string, created: CreatedPaymentRequest): Promise<{
@@ -26,15 +29,16 @@ export class GdsInternalTopupLinkService {
         this.config.app.nodeEnv === 'production' || this.config.app.deploymentClass === 'production') {
       throw new ForbiddenException('GDS PayOS link persistence is unavailable');
     }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(topupId) ||
-        created.status !== 'PENDING' || !created.receivingAccount ||
-        !/^[0-9]{6,32}$/.test(created.receivingAccount) ||
-        !created.providerPaymentIdentity || !/^[A-Za-z0-9_-]{1,128}$/.test(created.providerPaymentIdentity) ||
-        (created.qrPayload !== undefined && (typeof created.qrPayload !== 'string' ||
-          created.qrPayload.length > 4096))) {
+    const issues = payosLinkIssues(created);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(topupId)) {
+      issues.push('invalid_topup_id');
+    }
+    if (issues.length) {
+      // Fixed reason codes only; never serialize SDK data or raw errors.
+      this.logger.warn({ event: 'gds_payos_link_rejected', issues });
       throw new GdsWalletInvariantError('GDS_TOPUP_INVALID_PAYOS_LINK');
     }
-    const receivingAccountHash = createHash('sha256').update(created.receivingAccount).digest('hex');
+    const receivingAccountHash = createHash('sha256').update(created.receivingAccount as string).digest('hex');
 
     const execute = () => this.prisma.$transaction(async (tx) => {
       await lockGdsPayosOrderNamespace(tx);

@@ -159,8 +159,7 @@ export class GdsInternalCheckoutService {
         }
         return result;
       } catch (error) {
-        if (error && typeof error === 'object' && 'code' in error &&
-            (error.code === 'P2034' || error.code === 'P2002') && attempt < 2) continue;
+        if (isRetryableGdsTransaction(error) && attempt < 2) continue;
         if (error instanceof GdsWalletInvariantError) {
           throw new ConflictException({
             error: error.code,
@@ -172,4 +171,14 @@ export class GdsInternalCheckoutService {
     }
     throw new GdsWalletInvariantError('GDS_CAPTURE_RETRY_EXHAUSTED');
   }
+}
+
+function isRetryableGdsTransaction(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const failure = error as { code?: string; name?: string; cause?: { kind?: string }; meta?: { code?: string; driverAdapterError?: { cause?: { originalCode?: string; kind?: string } } } };
+  if (failure.code === 'P2034' || failure.code === 'P2002') return true;
+  const cause = failure.meta?.driverAdapterError?.cause;
+  return ((failure.code === 'P2010' || failure.code === 'P2039') &&
+    (failure.meta?.code === '40001' || cause?.originalCode === '40001' || cause?.kind === 'TransactionWriteConflict')) ||
+    (failure.name === 'DriverAdapterError' && failure.cause?.kind === 'TransactionWriteConflict');
 }

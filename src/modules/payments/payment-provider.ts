@@ -78,6 +78,7 @@ export interface PaymentRequestStatus {
     reference: string;
     amountMinor: bigint;
     receivingAccount: string;
+    virtualReceivingAccount?: string;
     occurredAt: Date;
   }>;
 }
@@ -107,6 +108,9 @@ export interface VerifiedPaymentWebhook {
   responseCode?: string;
   transactionStatus?: string;
   receivingAccount?: string;
+  virtualReceivingAccount?: string;
+  /** Hash retained by the immutable GDS signed inbox after SDK verification. */
+  verifiedVirtualAccountHash?: string;
 }
 
 export interface PaymentProvider {
