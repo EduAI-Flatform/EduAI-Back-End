@@ -59,3 +59,7 @@ jobs:
           mv "$RUNNER_TEMP/gds-pending"/* prisma/migrations/
           npm run prisma:migrate:deploy
           npx prisma migrate status
+      - name: Regression-test advisory transaction mutex using actual Prisma 7 and PostgreSQL
+        run: |
+          npm run build
+          node scripts/test-gds-order-namespace-prisma.cjs
