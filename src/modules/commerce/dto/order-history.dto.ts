@@ -58,7 +58,18 @@ export class OrderHistoryPaymentResponseDto {
   createdAt!: Date;
 }
 
+export class OrderMembershipPeriodResponseDto {
+  @ApiProperty({ enum: ['PURCHASE', 'RENEW', 'UPGRADE', 'DOWNGRADE'] })
+  action!: string;
+  @ApiProperty() durationMonths!: number;
+  @ApiProperty() startsAt!: Date;
+  @ApiProperty() endsAt!: Date;
+}
+
 export class OrderHistoryItemResponseDto {
+  @ApiPropertyOptional({ type: OrderMembershipPeriodResponseDto, nullable: true })
+  membership?: OrderMembershipPeriodResponseDto | null;
+
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
