@@ -143,3 +143,18 @@ Use --apply only for the reviewed isolated UAT database. It refuses conflicting
 existing fixtures before writes; a verified repeat returns changed:false.
 Checks: guard tests PASS; live public course API HTTP200 with price
 {amountMinor:10000,currency:VND}; repeated apply changed:false.
+
+
+### GDS course and membership checkout source-validator fix
+
+The historical commerce_validate_settlement trigger classified wallet_capture
+as external provider_collection and rejected it despite valid GDS journal proof.
+The additive 20261103030000 migration adds a separate guarded GDS branch,
+preserving existing provider and zero-payable checks. It requires the exact
+order owner, captured hold, immutable CAPTURE journal, VND amount/reference,
+pending order and no competing external attempt or settlement.
+Regression now installs the actual historical source trigger: the old isolated
+fixture omitted it. Tests cover valid capture and adversarial proof failures.
+The migration replay workflow additionally runs real course/membership services
+against its disposable PostgreSQL database, including concurrent replay.
+No existing customer order is paid by deployment or migration.
