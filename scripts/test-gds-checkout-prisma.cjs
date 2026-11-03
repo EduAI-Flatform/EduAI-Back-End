@@ -65,4 +65,4 @@ async function main() {
     }
   } finally { await db.$disconnect(); }
 }
-main().catch(error=>{console.error('GDS_FULL_SCHEMA_CHECKOUT=FAIL',error?.name||'Error',error?.code||'');process.exitCode=1});
+main().catch(error=>{console.error('GDS_FULL_SCHEMA_CHECKOUT=FAIL',error?.name||'Error',error?.code||'', error?.message||'', JSON.stringify(error?.meta??{}));process.exitCode=1});

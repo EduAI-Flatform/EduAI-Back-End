@@ -8,7 +8,7 @@ on:
 
 jobs:
   production-baseline-to-head:
-    name: Replay 65 production migrations then 9 GDS migrations
+    name: Replay 65 production migrations then 10 GDS migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
