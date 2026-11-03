@@ -24,7 +24,7 @@ export class GdsWalletController {
   ) {}
 
   @Get()
-  @ApiQuery({ name: 'topupId', required: false, type: String, format: 'uuid' })
+  @ApiQuery({ name: 'topupId', required: false, schema: { type: 'string', format: 'uuid' } })
   @RateLimit({ identity: 'user', limit: 30, name: 'gds-wallet-summary', windowSeconds: 60 })
   summary(
     @CurrentUser('id') buyerId: string,
