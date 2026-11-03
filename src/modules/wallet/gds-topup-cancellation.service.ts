@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
@@ -15,12 +16,12 @@ export class GdsTopupCancellationService {
   ) {}
 
   async cancel(buyerId: string, topupId: string) {
-    const { app, gdsWallet, payos } = this.config;
-    if (!gdsWallet.sandboxEnabled || !gdsWallet.qrPreviewEnabled ||
-        app.nodeEnv === 'production' || app.deploymentClass !== 'uat') {
+    const { app, payos } = this.config;
+    const capabilities = gdsWalletCapabilities(this.config);
+    if (!capabilities.cancellationEnabled) {
       throw new ForbiddenException('GDS PayOS cancellation is not available');
     }
-    if (payos.environment !== 'production' || !/^https:\/\//.test(app.publicAppUrl ?? '') ||
+    if (payos.environment !== 'production' || (capabilities.mode !== 'production' && !/^https:\/\//.test(app.publicAppUrl ?? '')) ||
         !this.config.commerce.idempotencySecret) {
       throw new ServiceUnavailableException('GDS QR configuration is incomplete');
     }

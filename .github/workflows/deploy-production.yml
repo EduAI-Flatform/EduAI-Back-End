@@ -19,6 +19,21 @@ on:
         default: false
         required: true
 
+      gds_wallet_topup:
+        description: 'Production wallet topup admission; preserve does not change the server setting'
+        type: choice
+        default: preserve
+        options: [preserve, enable, disable]
+      gds_wallet_checkout:
+        description: 'Production wallet checkout admission; existing transfer reconciliation always continues'
+        type: choice
+        default: preserve
+        options: [preserve, enable, disable]
+      gds_wallet_uat_database_fingerprint:
+        description: 'SHA256 of the isolated UAT database identity; required for first activation, contains no credentials'
+        type: string
+        default: ''
+
 concurrency:
   group: eduai-backend-production
   cancel-in-progress: false
@@ -140,10 +155,17 @@ jobs:
 
       - name: Deploy backend
         env:
+          GDS_TOPUP_ACTION: ${{ inputs.gds_wallet_topup || 'preserve' }}
+          GDS_CHECKOUT_ACTION: ${{ inputs.gds_wallet_checkout || 'preserve' }}
+          GDS_UAT_DATABASE_FINGERPRINT: ${{ inputs.gds_wallet_uat_database_fingerprint || '' }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
+          for wallet_action in "$GDS_TOPUP_ACTION" "$GDS_CHECKOUT_ACTION"; do
+            case "$wallet_action" in preserve|enable|disable) ;; *) exit 1 ;; esac
+          done
+          if [[ -n "$GDS_UAT_DATABASE_FINGERPRINT" && ! "$GDS_UAT_DATABASE_FINGERPRINT" =~ ^[a-fA-F0-9]{64}$ ]]; then exit 1; fi
           case "$GITHUB_SHA" in
             ???????*)
               if [ "${#GITHUB_SHA}" -ne 40 ]; then
@@ -162,7 +184,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -i ~/.ssh/eduai_deploy \
             -p "$VPS_PORT" \
-            "$VPS_USER@$VPS_HOST" "EXPECTED_DEPLOY_SHA='$GITHUB_SHA' bash -s" << 'EOF'
+            "$VPS_USER@$VPS_HOST" "EXPECTED_DEPLOY_SHA='$GITHUB_SHA' GDS_TOPUP_ACTION='$GDS_TOPUP_ACTION' GDS_CHECKOUT_ACTION='$GDS_CHECKOUT_ACTION' GDS_UAT_DATABASE_FINGERPRINT='$GDS_UAT_DATABASE_FINGERPRINT' bash -s" << 'EOF'
           set -Eeuo pipefail
 
           deployment_stage="initialization"
@@ -279,6 +301,9 @@ jobs:
           echo "Installing dependencies..."
           deployment_stage="dependency-installation"
           npm ci
+
+          deployment_stage="wallet-production-configuration"
+          node scripts/configure-gds-production-wallet.cjs --topup "$GDS_TOPUP_ACTION" --checkout "$GDS_CHECKOUT_ACTION" --uat-fingerprint "$GDS_UAT_DATABASE_FINGERPRINT"
 
           echo "Verifying permanent Commerce configuration..."
           deployment_stage="commerce-configuration"

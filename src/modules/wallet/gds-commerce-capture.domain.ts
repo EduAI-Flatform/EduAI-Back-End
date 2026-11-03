@@ -53,13 +53,12 @@ export type PreparedGdsCommerceCapture = {
 };
 
 /**
- * PAYW-04C source-only contract. A reserve alone is NOT a payment, and this
+ * Canonical wallet capture contract. A reserve alone is NOT a payment, and this
  * pure plan MUST NOT be published as a checkout endpoint or treated as paid.
  * The future caller must lock the Commerce order, hold and wallet inside the
  * same serializable transaction, insert CAPTURE+canonical settlement, confirm
  * the order and invoke fulfillment in that transaction. The existing
- * SQL proof migrations are source-only; production and standalone financial
- * recovery remain gated.
+ * SQL constraints verify canonical financial proof independently of the caller.
  */
 export function prepareGdsCommerceCapture(input: GdsCommerceCaptureInput): PreparedGdsCommerceCapture {
   const { buyerId, order, wallet, hold } = input;

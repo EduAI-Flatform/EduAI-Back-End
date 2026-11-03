@@ -42,6 +42,17 @@ beforeEach(() => {
 });
 
 describe('GDS UAT PayOS QR creation, without funding', () => {
+  it('creates production QR only when production topup admission is explicitly enabled', async () => {
+    const productionConfig = { app: { nodeEnv: 'production', deploymentClass: 'production', publicAppUrl: 'https://eduai.example.org' }, gdsWallet: { sandboxEnabled: false, productionTopupEnabled: false, productionCheckoutEnabled: true }, payos: { environment: 'production', clientId: 'client', apiKey: 'key', checksumKey: 'checksum', webhookUrl: 'https://api.eduai.example.org/api/v1/payments/webhooks/payos' }, commerce: { idempotencySecret: 'x'.repeat(32) } };
+    const productionService = new GdsPayosQrPreviewService(productionConfig as never, prep as never, links as never, providers as never);
+    await expect(productionService.create(buyerId, '250000', 'production-key-123')).rejects.toThrow('GDS PayOS QR preview is not available');
+    expect(prep.prepare).not.toHaveBeenCalled();
+    productionConfig.gdsWallet.productionTopupEnabled = true;
+    await expect(productionService.create(buyerId, '250000', 'production-key-123')).resolves.toMatchObject({ amountMinor: '250000', gdsCredited: false });
+    expect(prep.prepare).toHaveBeenCalledWith(expect.objectContaining({ urls: { returnUrl: 'https://eduai.example.org/wallet/gds', cancelUrl: 'https://eduai.example.org/wallet/gds' } }));
+    for (const amount of ['1999', '10000001']) await expect(productionService.create(buyerId, amount, 'production-key-123')).rejects.toThrow('GDS_TOPUP_AMOUNT_OUT_OF_RANGE');
+  });
+
   it('creates a real SDK request using the reserved exact VND, memo and PayOS-provided recipient account', async () => {
     const output = await service.create(buyerId, '250000', 'idempotency-unit-123');
     expect(prep.prepare).toHaveBeenCalledWith(expect.objectContaining({

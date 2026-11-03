@@ -8,8 +8,8 @@ function fixture() {
   const release = REVIEWED_REVENUE_MIGRATIONS.map(x => row(x.name, x.sha256));
   return { base, release, input: { allowAlreadyApplied: true, localMigrationNames: [...base, ...release].map(x => x.migration_name), localMigrationChecksums: Object.fromEntries([...base, ...release].map(x => [x.migration_name, x.checksum])), migrationRows: base } };
 }
-test('pins all eleven GDS/revenue upgrade artifacts', () => {
-  assert.equal(REVIEWED_REVENUE_MIGRATIONS.length, 11);
+test('pins all twelve GDS/revenue upgrade artifacts', () => {
+  assert.equal(REVIEWED_REVENUE_MIGRATIONS.length, 12);
   assert.deepEqual(assertReviewedRevenueMigrationFingerprints(join(__dirname, '..')), Object.fromEntries(REVIEWED_REVENUE_MIGRATIONS.map(x => [x.name, x.sha256])));
 });
 test('accepts only the reviewed release after the receipt baseline is applied', () => {

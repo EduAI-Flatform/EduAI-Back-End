@@ -20,11 +20,12 @@ import { isPayosAccount } from '../payments/payos-link.validation';
  *
  * The PAYW-04E inbox worker persists verified collection facts, checks the
  * global Commerce/legacy namespace and posts the journal inside one
- * serializable transaction. Production remains hard-disabled.
+ * serializable transaction. Production uses its independently validated recovery capability.
  */
 export interface GdsPayosReconciliationPort {
   provider: Pick<PaymentProvider, 'verifyWebhook' | 'reconcilePaymentRequest'>;
   sandboxEnabled: boolean;
+  processingEnabled?: boolean;
   nodeEnv: string;
   deploymentClass: string;
   now: () => Date;
@@ -116,9 +117,9 @@ export async function verifyAndReconcileGdsPayosTopup(
  * Re-query the provider each attempt: a webhook alone must not mint value.
  */
 function requireEligibleGdsPayosIntent(intent: GdsPayosTopupIntent, port: GdsPayosReconciliationPort): void {
-  if (!port.sandboxEnabled ||
-      (port.nodeEnv !== 'test' && port.nodeEnv !== 'development') ||
-      port.deploymentClass !== 'uat') {
+  const eligibleUat = port.sandboxEnabled && ['test', 'development'].includes(port.nodeEnv) && port.deploymentClass === 'uat';
+  const eligibleProduction = port.processingEnabled === true && port.nodeEnv === 'production' && port.deploymentClass === 'production';
+  if (!eligibleUat && !eligibleProduction) {
     reject('GDS_PAYOS_RECONCILIATION_DISABLED');
   }
   if (!intent.id || !intent.buyerId || !intent.paymentLinkId ||

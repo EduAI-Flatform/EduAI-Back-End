@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { ConflictException, ForbiddenException, Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import { AppConfigService } from '../../config/app-config.service';
@@ -8,9 +9,8 @@ import { GdsInternalTopupPreparationService } from './gds-internal-topup-prepara
 import { GdsInternalTopupLinkService } from './gds-internal-topup-link.service';
 
 /**
- * Strictly UAT-only PayOS QR presentation. A payment link can collect real
- * money even if there is no wallet crediting workflow. This endpoint MUST
- * remain gated until finance has approved manual reconciliation/refunds.
+ * PayOS QR presentation, independently gated from recovery and checkout.
+ * Production admission requires explicit configuration and merchant credentials.
  * No webhook, credit, ledger, or settlement writes are performed here.
  */
 @Injectable()
@@ -25,9 +25,8 @@ export class GdsPayosQrPreviewService {
   ) {}
 
   async create(buyerId: string, amountMinor: string, idempotencyKey: string | undefined) {
-    const { app, gdsWallet, payos } = this.config;
-    if (!gdsWallet.sandboxEnabled || !gdsWallet.qrPreviewEnabled ||
-        app.nodeEnv === 'production' || app.deploymentClass !== 'uat') {
+    const { app, payos } = this.config;
+    if (!gdsWalletCapabilities(this.config).topupEnabled) {
       throw new ForbiddenException('GDS PayOS QR preview is not available');
     }
     const appUrl = app.publicAppUrl;

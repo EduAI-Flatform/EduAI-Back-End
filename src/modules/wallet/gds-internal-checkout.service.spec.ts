@@ -12,7 +12,7 @@ const settlementId = '44444444-4444-4444-8444-444444444444';
 
 function setup(options: { existingHold?: boolean; confirmed?: boolean; amount?: bigint;
   available?: bigint; paymentCount?: number; sandboxEnabled?: boolean; checkoutEnabled?: boolean;
-  production?: boolean } = {}) {
+  production?: boolean; productionCheckout?: boolean } = {}) {
   const amount = options.amount ?? 100_000n;
   let hold = options.existingHold || options.confirmed ? {
     walletId, orderRef: orderId, amountMinor: amount, status: options.confirmed ? 'CAPTURED' : 'RESERVED',
@@ -69,9 +69,10 @@ function setup(options: { existingHold?: boolean; confirmed?: boolean; amount?: 
   };
   const prisma = { $transaction: jest.fn().mockImplementation(async (action) => action(tx)) };
   const config = { gdsWallet: { sandboxEnabled: options.sandboxEnabled ?? true,
-    checkoutEnabled: options.checkoutEnabled ?? true },
+    checkoutEnabled: options.checkoutEnabled ?? true, productionCheckoutEnabled: options.productionCheckout === true },
     app: { nodeEnv: options.production ? 'production' : 'test',
-      deploymentClass: options.production ? 'production' : 'uat' } };
+      deploymentClass: options.production ? 'production' : 'uat', publicAppUrl: 'https://eduai.example.org' },
+    payos: { environment: 'production', clientId: 'client', apiKey: 'key', checksumKey: 'checksum', webhookUrl: 'https://api.eduai.example.org/api/v1/payments/webhooks/payos' }, commerce: { idempotencySecret: 'x'.repeat(32) } };
   const fulfillment = {
     fulfillConfirmedOrder: jest.fn().mockResolvedValue(undefined),
     dispatchPending: jest.fn().mockResolvedValue(undefined),
@@ -108,6 +109,12 @@ describe('PAYW-04C internal-only Commerce capture orchestration', () => {
     }), tx);
     expect(fulfillment.fulfillConfirmedOrder).toHaveBeenCalledWith(tx, orderId, 'user', buyerId);
     expect(fulfillment.dispatchPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('captures a production order only with its independent checkout flag', async () => {
+    const { service, tx } = setup({ production: true, productionCheckout: true });
+    await expect(service.payOrder(buyerId, orderId)).resolves.toMatchObject({ status: 'CONFIRMED' });
+    expect(tx.gdsInternalJournal.create.mock.calls.map(([arg]) => arg.data.kind)).toEqual(['RESERVE','CAPTURE']);
   });
 
   it('captures an existing RESERVED hold without reserving twice', async () => {

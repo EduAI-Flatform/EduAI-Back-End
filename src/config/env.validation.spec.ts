@@ -22,6 +22,12 @@ describe('validateEnv', () => {
     });
   });
 
+  it('defaults production wallet admission switches off and validates each independently', () => {
+    expect(validateEnv(paymentBase)).toMatchObject({ GDS_WALLET_PRODUCTION_TOPUP_ENABLED: false, GDS_WALLET_PRODUCTION_CHECKOUT_ENABLED: false });
+    expect(validateEnv({ ...paymentBase, GDS_WALLET_PRODUCTION_TOPUP_ENABLED: 'true' })).toMatchObject({ GDS_WALLET_PRODUCTION_TOPUP_ENABLED: true, GDS_WALLET_PRODUCTION_CHECKOUT_ENABLED: false });
+    expect(() => validateEnv({ ...paymentBase, GDS_WALLET_PRODUCTION_CHECKOUT_ENABLED: 'yes' })).toThrow('GDS_WALLET_PRODUCTION_CHECKOUT_ENABLED');
+  });
+
   it('validates the wallet sandbox switch independently of payment provider flags', () => {
     expect(validateEnv({ ...paymentBase, GDS_WALLET_SANDBOX_ENABLED: 'true' }).GDS_WALLET_SANDBOX_ENABLED).toBe(true);
     expect(() => validateEnv({ ...paymentBase, GDS_WALLET_SANDBOX_ENABLED: 'perhaps' })).toThrow('GDS_WALLET_SANDBOX_ENABLED');

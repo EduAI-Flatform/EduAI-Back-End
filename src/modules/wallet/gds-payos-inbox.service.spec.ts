@@ -135,6 +135,21 @@ describe('PAYW-04E signed inbox → independent PayOS lookup → exactly-once GD
     service = new GdsPayosInboxService(prisma as never, config as never, provider as never, journal);
   });
 
+  it('processes and deduplicates production transfers despite admission off and public URL misconfiguration', async () => {
+    config.app = { nodeEnv: 'production', deploymentClass: 'production', publicAppUrl: 'invalid-url' };
+    config.gdsWallet = { sandboxEnabled: false, productionTopupEnabled: false, productionCheckoutEnabled: false };
+    config.payos = { environment: 'production', clientId: 'client', apiKey: 'key', checksumKey: 'checksum', webhookUrl: 'https://api.eduai.example.org/api/v1/payments/webhooks/payos' };
+    config.commerce = { idempotencySecret: 'x'.repeat(32) };
+    expect(await service.ingestSignedIfWallet(event)).toBe('RECEIVED');
+    expect(wallet.availableMinor).toBe(0n);
+    expect(await service.processPending()).toMatchObject({ processed: 1 });
+    expect(wallet.availableMinor).toBe(amount);
+    await service.ingestSignedIfWallet(event);
+    await service.processPending();
+    expect(entries).toHaveLength(1);
+    expect(wallet.availableMinor).toBe(amount);
+  });
+
   it('records only signed normalized facts and credits exactly 1 GDS for each received VND', async () => {
     expect(await service.ingestSignedIfWallet(event)).toBe('RECEIVED');
     expect(wallet.availableMinor).toBe(0n); // Webhook alone is never funds.
@@ -337,8 +352,8 @@ describe('PAYW-04E signed inbox → independent PayOS lookup → exactly-once GD
     expect(entries).toHaveLength(0);
   });
 
-  it('fails closed with no inbox DB access in production, even if flag is set', async () => {
-    config.app.nodeEnv = 'production'; config.app.deploymentClass = 'production';
+  it('fails closed with no inbox DB access for mixed UAT/production classification', async () => {
+    config.app.nodeEnv = 'production'; config.app.deploymentClass = 'uat';
     expect(await service.ingestSignedIfWallet(event)).toBeNull();
     expect(await service.processPending()).toEqual({ processed: 0, reviewed: 0, deferred: 0 });
     expect(prisma.gdsInternalTopup.findFirst).not.toHaveBeenCalled();

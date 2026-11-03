@@ -26,6 +26,34 @@ const REVENUE_APPEND_ONLY_TABLES = Object.freeze([
   'revenue_earning_periods',
   'revenue_ledger_entries',
 ]);
+
+const GDS_RUNTIME_TABLES = Object.freeze([
+  'gds_internal_wallets', 'gds_internal_topups', 'gds_internal_holds',
+  'gds_internal_journal', 'gds_internal_payos_inbox', 'gds_internal_payos_reconciliations',
+]);
+const GDS_RUNTIME_UPDATES = Object.freeze({
+  gds_internal_wallets: ['updated_at'],
+  gds_internal_topups: ['status', 'payment_link_id', 'receiving_account_hash', 'settlement_receiving_account_hash', 'collection_reference', 'signature_verified_at', 'provider_reconciled_at', 'credited_at', 'updated_at'],
+  gds_internal_payos_inbox: ['status', 'attempt_count', 'next_attempt_at', 'review_reason', 'processed_at'],
+});
+
+function buildRuntimeGdsPrivilegeStatement(runtimeUrl) {
+  const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
+  const table = name => quoteIdentifier('public') + '.' + quoteIdentifier(name);
+  const all = GDS_RUNTIME_TABLES.map(table).join(', ');
+  const statements = [
+    'REVOKE ALL PRIVILEGES ON TABLE ' + all + ' FROM ' + role + ', PUBLIC',
+    'GRANT SELECT ON TABLE ' + all + ' TO ' + role,
+    'GRANT INSERT (id, buyer_id, created_at, updated_at) ON TABLE public.gds_internal_wallets TO ' + role,
+    'GRANT INSERT ON TABLE public.gds_internal_topups, public.gds_internal_journal, public.gds_internal_payos_inbox, public.gds_internal_payos_reconciliations TO ' + role,
+    'REVOKE EXECUTE ON FUNCTION public.gds_internal_apply_journal() FROM ' + role + ', PUBLIC',
+  ];
+  for (const [name, columns] of Object.entries(GDS_RUNTIME_UPDATES)) {
+    statements.push('GRANT UPDATE (' + columns.map(quoteIdentifier).join(', ') + ') ON TABLE ' + table(name) + ' TO ' + role);
+  }
+  return statements.join('; ');
+}
+
 const LEGACY_RECONCILIATION_MARKER_TABLE =
   'commerce_reconciliation_legacy_acknowledgements';
 
@@ -91,6 +119,7 @@ async function grantRuntimeMembershipPrivileges(
     transactionOpen = true;
     await client.query(buildRuntimePrivilegeStatement(runtimeUrl));
     await client.query(buildRuntimeRevenuePrivilegeStatement(runtimeUrl));
+    await client.query(buildRuntimeGdsPrivilegeStatement(runtimeUrl));
     await client.query('COMMIT');
     transactionOpen = false;
   } catch {
@@ -129,6 +158,9 @@ async function revokeRuntimeLegacyMarkerPrivileges(
 }
 
 module.exports = {
+  GDS_RUNTIME_TABLES,
+  GDS_RUNTIME_UPDATES,
+  buildRuntimeGdsPrivilegeStatement,
   MEMBERSHIP_RUNTIME_TABLES,
   REVENUE_APPEND_ONLY_TABLES,
   buildRuntimeRevenuePrivilegeStatement,

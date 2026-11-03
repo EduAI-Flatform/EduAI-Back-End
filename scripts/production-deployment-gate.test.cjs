@@ -27,3 +27,13 @@ test('skipped deployments do not send external notifications', () => {
   const notify = workflow.split(/\r?\n  notify:/)[1];
   assert.match(notify, /if: \$\{\{ always\(\) && needs.deploy.result != 'skipped' \}\}/);
 });
+
+
+test('wallet production admission changes require explicit enum inputs and preserve on source pushes', () => {
+  assert.match(trigger, /gds_wallet_topup:[\s\S]*?default: preserve/);
+  assert.match(trigger, /gds_wallet_checkout:[\s\S]*?default: preserve/);
+  assert.match(workflow, /inputs.gds_wallet_topup \|\| 'preserve'/);
+  assert.match(workflow, /inputs.gds_wallet_checkout \|\| 'preserve'/);
+  assert.match(workflow, /preserve\|enable\|disable/);
+  assert.match(workflow, /configure-gds-production-wallet.cjs --topup/);
+});

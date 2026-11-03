@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { createHmac, randomInt, randomUUID } from 'node:crypto';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
@@ -40,8 +41,8 @@ export class GdsInternalTopupPreparationService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
 
   async prepare(input: PrepareGdsTopup): Promise<PreparedGdsTopup> {
-    if (!this.config.gdsWallet.sandboxEnabled ||
-        this.config.app.nodeEnv === 'production' || this.config.app.deploymentClass === 'production') {
+    const capabilities = gdsWalletCapabilities(this.config);
+    if (!(capabilities.mode === 'production' ? capabilities.topupEnabled : capabilities.readEnabled)) {
       throw new ForbiddenException('GDS topup preparation is unavailable');
     }
     if (!UUID.test(input.buyerId) || !IDEMPOTENCY_KEY.test(input.idempotencyKey) ||

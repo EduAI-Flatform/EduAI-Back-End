@@ -12,7 +12,7 @@ import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
 import { GdsInternalCheckoutService } from './gds-internal-checkout.service';
 import { GdsTopupCancellationService } from './gds-topup-cancellation.service';
 
-@ApiTags('GDS Wallet (sandbox only)')
+@ApiTags('GDS Wallet')
 @ApiBearerAuth()
 @Controller('wallet/gds')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -45,7 +45,7 @@ export class GdsWalletController {
     return this.qr.create(buyerId, input.amountMinor, idempotencyKey);
   }
 
-  /** Cancels only an authenticated, unpaid UAT link owned by the learner. */
+  /** Cancels only an authenticated, unpaid link owned by the learner. */
   @Post('topups/:topupId/cancel')
   @RateLimit({ identity: 'user', limit: 5, name: 'gds-topup-cancel', windowSeconds: 60 })
   cancelTopup(
@@ -55,7 +55,7 @@ export class GdsWalletController {
     return this.cancellation.cancel(buyerId, topupId);
   }
 
-  /** One order = one idempotency identity. UAT only; no browser payment proof. */
+  /** One order = one idempotency identity. No browser payment proof. */
   @Post('orders/:orderId/pay')
   @RateLimit({ identity: 'user', limit: 5, name: 'gds-wallet-checkout', windowSeconds: 60 })
   payOrder(

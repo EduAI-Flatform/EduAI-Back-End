@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { GdsPayosInboxService } from './gds-payos-inbox.service';
 
-/** Retry after process restarts and provider outages; never active on production. */
+/** Retry after process restarts and provider outages; independent of new topup and checkout admission. */
 @Injectable()
 export class GdsPayosInboxScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(GdsPayosInboxScheduler.name);

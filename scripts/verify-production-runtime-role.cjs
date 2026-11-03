@@ -131,6 +131,27 @@ function buildRuntimeClientConfig(connectionString) {
   };
 }
 
+
+const GDS_RUNTIME_ROLE_QUERY = `
+WITH protected(name) AS (VALUES ('gds_internal_wallets'),('gds_internal_holds'),('gds_internal_journal'),('gds_internal_payos_reconciliations')), capabilities AS (
+ SELECT bool_and(to_regclass('public.'||name) IS NOT NULL
+ AND NOT has_table_privilege(current_user, 'public.'||name, 'DELETE')
+ AND NOT has_table_privilege(current_user, 'public.'||name, 'TRIGGER')
+ AND (CASE WHEN name='gds_internal_wallets' THEN NOT has_column_privilege(current_user,'public.gds_internal_wallets','available_minor','UPDATE') AND NOT has_column_privilege(current_user,'public.gds_internal_wallets','held_minor','UPDATE') ELSE NOT has_any_column_privilege(current_user, 'public.'||name, 'UPDATE') END)) AS protected
+ FROM protected
+)
+SELECT COALESCE(capabilities.protected,false)
+ AND NOT has_column_privilege(current_user,'public.gds_internal_wallets','available_minor','INSERT')
+ AND NOT has_column_privilege(current_user,'public.gds_internal_wallets','held_minor','INSERT')
+ AND NOT has_table_privilege(current_user,'public.gds_internal_holds','INSERT')
+ AND NOT has_schema_privilege(current_user,'public','CREATE')
+ AND EXISTS(SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.gds_internal_apply_journal()') AND prosecdef
+   AND proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp'] AND NOT pg_has_role(current_user,proowner,'MEMBER'))
+ AND NOT has_function_privilege(current_user,'public.gds_internal_apply_journal()','EXECUTE')
+ AS "gdsRuntimeLeastPrivilegeReady"
+FROM capabilities
+`;
+
 function assessRuntimeRole(row) {
   const commerceTablesPresent = requiredBoolean(
     row.commerceTablesPresent,
@@ -274,6 +295,9 @@ async function run() {
 
     stage = 'assessment';
     const assessment = assessRuntimeRole(result.rows[0]);
+    const gds = await client.query(GDS_RUNTIME_ROLE_QUERY);
+    if (gds.rows[0]?.gdsRuntimeLeastPrivilegeReady !== true) throw new Error("GDS runtime privileges are unsafe");
+    console.log("gdsRuntimeLeastPrivilegeReady: true");
 
     stage = 'transaction';
     await client.query('COMMIT');
@@ -309,6 +333,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  GDS_RUNTIME_ROLE_QUERY,
   RUNTIME_ROLE_QUERY,
   assessRuntimeRole,
   assertRuntimeRoleReady,

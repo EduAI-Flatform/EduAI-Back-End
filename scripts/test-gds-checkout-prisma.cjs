@@ -36,7 +36,8 @@ async function main() {
     await db.membershipPlanVersion.update({where:{id:ids.version},data:{status:'published',publishedById:ids.seller,publishedAt:new Date()}});
     // Explicitly synthetic opening balances, restricted to the disposable database above.
     for(const buyerId of [ids.buyerCourse,ids.buyerMember]) await db.gdsInternalWallet.create({data:{buyerId,availableMinor:40000n}});
-    const config={app:{nodeEnv:'test',deploymentClass:'uat'},gdsWallet:{sandboxEnabled:true,checkoutEnabled:true},commerce:{idempotencySecret:'synthetic-gds-checkout-ci-only'}};
+    const production=process.env.GDS_TEST_PRODUCTION==='true';
+    const config=production?{app:{nodeEnv:'production',deploymentClass:'production',publicAppUrl:'https://production.example'},gdsWallet:{sandboxEnabled:false,productionTopupEnabled:false,productionCheckoutEnabled:true},payos:{environment:'production',clientId:'synthetic',apiKey:'synthetic',checksumKey:'synthetic',webhookUrl:'https://api.production.example/api/v1/payments/webhooks/payos'},commerce:{idempotencySecret:'synthetic-gds-checkout-ci-only-32-chars'}}:{app:{nodeEnv:'test',deploymentClass:'uat'},gdsWallet:{sandboxEnabled:true,checkoutEnabled:true},commerce:{idempotencySecret:'synthetic-gds-checkout-ci-only'}};
     const audit=new AuditService(db);
     const access=new CourseAccessService(db,config);
     const fulfillment=new CommerceFulfillmentService(db,access,audit,{createForUser:async()=>{}});

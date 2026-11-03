@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { createHash } from 'node:crypto';
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
@@ -25,8 +26,7 @@ export class GdsInternalTopupLinkService {
     checkoutUrl: string;
     qrPayload: string | null;
   }> {
-    if (!this.config.gdsWallet.sandboxEnabled ||
-        this.config.app.nodeEnv === 'production' || this.config.app.deploymentClass === 'production') {
+    if (!gdsWalletCapabilities(this.config).processingEnabled) {
       throw new ForbiddenException('GDS PayOS link persistence is unavailable');
     }
     const issues = payosLinkIssues(created);

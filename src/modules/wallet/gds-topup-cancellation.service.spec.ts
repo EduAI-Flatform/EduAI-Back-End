@@ -36,6 +36,14 @@ describe('GDS authenticated unpaid PayOS cancellation', () => {
       data: { status: 'CANCELLED' },
     }));
   });
+  it('cancels an existing production topup with admission off and misconfigured public URL', async () => {
+    config.app = { nodeEnv: 'production', deploymentClass: 'production', publicAppUrl: 'invalid' };
+    config.gdsWallet = { sandboxEnabled: false, productionTopupEnabled: false, productionCheckoutEnabled: false };
+    config.payos = { environment: 'production', clientId: 'client', apiKey: 'key', checksumKey: 'checksum', webhookUrl: 'https://api.eduai.example.org/api/v1/payments/webhooks/payos' };
+    config.commerce = { idempotencySecret: 'x'.repeat(32) };
+    await expect(service.cancel(buyerId, topupId)).resolves.toMatchObject({ status: 'CANCELLED', gdsCredited: false });
+    expect(provider.cancelPaymentRequest).toHaveBeenCalledTimes(1);
+  });
   it.each(['wallet', 'qr', 'runtime', 'deployment', 'provider'])('rejects disabled %s before any database or provider access', async (gate) => {
     if (gate === 'wallet') config.gdsWallet.sandboxEnabled = false;
     if (gate === 'qr') config.gdsWallet.qrPreviewEnabled = false;

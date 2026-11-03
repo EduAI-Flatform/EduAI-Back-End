@@ -92,6 +92,8 @@ export interface BackendConfig {
     defaultProvider: ValidatedEnv['PAYMENT_DEFAULT_PROVIDER'];
   };
   gdsWallet: {
+    productionTopupEnabled: boolean;
+    productionCheckoutEnabled: boolean;
     sandboxEnabled: boolean;
     checkoutEnabled: boolean;
     qrPreviewEnabled: boolean;
@@ -215,6 +217,8 @@ export default function configuration(): BackendConfig {
       defaultProvider: env.PAYMENT_DEFAULT_PROVIDER,
     },
     gdsWallet: {
+      productionTopupEnabled: env.GDS_WALLET_PRODUCTION_TOPUP_ENABLED,
+      productionCheckoutEnabled: env.GDS_WALLET_PRODUCTION_CHECKOUT_ENABLED,
       sandboxEnabled: env.GDS_WALLET_SANDBOX_ENABLED && env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS !== 'production',
       checkoutEnabled: env.GDS_WALLET_CHECKOUT_ENABLED && env.GDS_WALLET_SANDBOX_ENABLED &&
         env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS === 'uat',

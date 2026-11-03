@@ -37,6 +37,23 @@ describe('GDS wallet learner API projection', () => {
     config.app.deploymentClass = 'uat';
   });
 
+  it('reads production history with admission off and reports READY_PRODUCTION', async () => {
+    const production = { app: { nodeEnv: 'production', deploymentClass: 'production', publicAppUrl: 'https://eduai.example.org' }, gdsWallet: { sandboxEnabled: false, productionTopupEnabled: false, productionCheckoutEnabled: false }, payos: { environment: 'production', clientId: 'client', apiKey: 'key', checksumKey: 'checksum', webhookUrl: 'https://api.eduai.example.org/api/v1/payments/webhooks/payos' }, commerce: { idempotencySecret: 'x'.repeat(32) } };
+    const productionService = new GdsWalletService(db as never, production as never);
+    db.gdsInternalWallet.findUnique.mockResolvedValue({ id: 'wallet-production', status: 'ACTIVE', availableMinor: 2000n, heldMinor: 0n });
+    expect(await productionService.summary(buyerId)).toMatchObject({ available: true, mode: 'production', state: 'READY_PRODUCTION', paymentEnabled: false, topupEnabled: false, balance: {availableMinor: '2000'} });
+    production.gdsWallet.productionCheckoutEnabled = true;
+    expect(await productionService.summary(buyerId)).toMatchObject({ paymentEnabled: true, topupEnabled: false });
+    production.gdsWallet.productionTopupEnabled = true;
+    expect(await productionService.summary(buyerId)).toMatchObject({ paymentEnabled: true, topupEnabled: true });
+    db.gdsInternalWallet.findUnique.mockResolvedValue({ id: 'wallet-production', status: 'SUSPENDED', availableMinor: 2000n, heldMinor: 0n });
+    expect(await productionService.summary(buyerId)).toMatchObject({ state: 'SUSPENDED', topupEnabled: false, paymentEnabled: false });
+    db.gdsInternalWallet.findUnique.mockResolvedValue({ id: 'wallet-production', status: 'ACTIVE', availableMinor: -1n, heldMinor: 0n });
+    expect(await productionService.summary(buyerId)).toMatchObject({ state: 'RECONCILIATION_REQUIRED', topupEnabled: false, paymentEnabled: false });
+    db.gdsInternalWallet.findUnique.mockResolvedValue(null);
+    expect(await productionService.summary(buyerId)).toMatchObject({ mode: 'production', state: 'NOT_INITIALIZED', balance: null, topupEnabled: true });
+  });
+
   it('defaults OFF and never invents funds without an initialized internal wallet', async () => {
     expect((await service.summary(buyerId)).state).toBe('UNAVAILABLE');
     expect(db.gdsInternalWallet.findUnique).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { createHash } from 'node:crypto';
 import { ConflictException, ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma, GdsInternalPayosInbox, GdsInternalTopup } from '../../../generated/prisma/client';
@@ -24,7 +25,7 @@ const isPrismaRetry = (error: unknown): boolean =>
 /**
  * PAYW-04E: consumes signed facts from the EXISTING Commerce PayOS webhook.
  * No second merchant webhook URL is installed (which would steal Commerce
- * callbacks). Production is hard OFF, even if a feature flag is mis-set.
+ * callbacks). Production processing survives new-transaction admission switches.
  * The durable inbox stores only normalized facts AFTER SDK verification.
  */
 @Injectable()
@@ -39,9 +40,7 @@ export class GdsPayosInboxService {
   ) {}
 
   enabled(): boolean {
-    return this.config.gdsWallet.sandboxEnabled &&
-      this.config.app.deploymentClass === 'uat' &&
-      (this.config.app.nodeEnv === 'test' || this.config.app.nodeEnv === 'development');
+    return gdsWalletCapabilities(this.config).processingEnabled;
   }
 
   /**
@@ -49,7 +48,7 @@ export class GdsPayosInboxService {
    * Signature verification is performed by PaymentWebhookService first.
    */
   async ingestSignedIfWallet(fact: VerifiedPaymentWebhook): Promise<'RECEIVED' | 'DUPLICATE' | 'REVIEW' | null> {
-    if (!this.enabled()) return null; // No DB access on production deployments.
+    if (!this.enabled()) return null; // No unclassified environment may process wallet facts.
     if (fact.provider !== 'payos' || fact.providerCode !== '00' ||
         !Number.isSafeInteger(fact.localOrderReference) || fact.localOrderReference <= 0) return null;
 
@@ -176,7 +175,7 @@ export class GdsPayosInboxService {
       const intent = this.topupIntent(snapshot.topup);
       const fact = this.signedFact(snapshot);
       const { settlement } = await reconcileSignedGdsPayosTopup(intent, fact, {
-        provider: this.provider, sandboxEnabled: this.enabled(),
+        provider: this.provider, sandboxEnabled: this.config.gdsWallet.sandboxEnabled, processingEnabled: this.enabled(),
         nodeEnv: this.config.app.nodeEnv, deploymentClass: this.config.app.deploymentClass,
         now: () => new Date(),
       }, snapshot.signatureVerifiedAt);

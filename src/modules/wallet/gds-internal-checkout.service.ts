@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { randomUUID } from 'node:crypto';
 import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import {
@@ -15,9 +16,8 @@ import { GdsWalletInvariantError } from './gds-wallet.domain';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * PAYW-04C source-only transactional checkout. Not exposed through HTTP.
- * Never call on production: merchant/legal release, durable recovery, final
- * UAT and financial authority must be confirmed first. The transaction is
+ * Transactional checkout, admitted only by the environment-specific capability.
+ * The transaction is
  * all-or-nothing: reserved GDS, capture, canonical Commerce settlement,
  * order confirmation and course/membership fulfillment commit together.
  */
@@ -35,9 +35,7 @@ export class GdsInternalCheckoutService {
   async payOrder(buyerId: string, orderId: string): Promise<{
     orderId: string; status: 'CONFIRMED'; amountMinor: string; currency: 'VND';
   }> {
-    if (!this.config.gdsWallet.sandboxEnabled || !this.config.gdsWallet.checkoutEnabled ||
-        this.config.app.nodeEnv === 'production' ||
-        this.config.app.deploymentClass === 'production') {
+    if (!gdsWalletCapabilities(this.config).checkoutEnabled) {
       throw new ForbiddenException('GDS checkout is unavailable');
     }
     if (!UUID.test(buyerId) || !UUID.test(orderId)) {

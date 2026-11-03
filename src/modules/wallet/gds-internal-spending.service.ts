@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { CommerceOrderStatus, Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
@@ -17,10 +18,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export class GdsInternalSpendingService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
 
-  private assertSandboxAndIdentity(buyerId: string, orderId: string): void {
-    if (!this.config.gdsWallet.sandboxEnabled ||
-        this.config.app.nodeEnv === 'production' ||
-        this.config.app.deploymentClass === 'production') {
+  private assertSpendingAndIdentity(buyerId: string, orderId: string, recovery = false): void {
+    const capabilities = gdsWalletCapabilities(this.config);
+    const allowed = capabilities.mode === 'production'
+      ? recovery ? capabilities.processingEnabled : capabilities.checkoutEnabled
+      : capabilities.readEnabled;
+    if (!allowed) {
       throw new ForbiddenException('GDS internal spending is unavailable');
     }
     if (!UUID.test(buyerId) || !UUID.test(orderId)) {
@@ -29,7 +32,7 @@ export class GdsInternalSpendingService {
   }
 
   async reserveForUnpaidCommerceOrder(buyerId: string, orderId: string): Promise<GdsInternalBalance> {
-    this.assertSandboxAndIdentity(buyerId, orderId);
+    this.assertSpendingAndIdentity(buyerId, orderId);
     return this.retrySerializable(async (tx) => {
       // Serialize all decisions on this order with other Commerce transitions.
       await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${orderId}::uuid FOR UPDATE`);
@@ -88,7 +91,7 @@ export class GdsInternalSpendingService {
    * unknown provider status, or buyer cancellation click is NOT proof.
    */
   async releaseForFinalUnpaidOrder(buyerId: string, orderId: string): Promise<GdsInternalBalance> {
-    this.assertSandboxAndIdentity(buyerId, orderId);
+    this.assertSpendingAndIdentity(buyerId, orderId, true);
     return this.retrySerializable(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${orderId}::uuid FOR UPDATE`);
       const order = await tx.commerceOrder.findUnique({ where: { id: orderId },

@@ -1,15 +1,16 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export type GdsWalletSummary = {
   available: boolean;
-  mode: 'disabled' | 'sandbox';
-  state: 'UNAVAILABLE' | 'NOT_INITIALIZED' | 'SUSPENDED' | 'READY_SANDBOX' | 'RECONCILIATION_REQUIRED';
+  mode: 'disabled' | 'sandbox' | 'production';
+  state: 'UNAVAILABLE' | 'NOT_INITIALIZED' | 'SUSPENDED' | 'READY_SANDBOX' | 'READY_PRODUCTION' | 'RECONCILIATION_REQUIRED';
   /** VND as decimal strings to avoid JS BigInt serialization/precision errors. */
   balance: null | { settledMinor: string; reservedMinor: string; availableMinor: string; currency: 'VND' };
-  paymentEnabled: boolean; // UAT-only GDS capture endpoint; never production.
-  topupEnabled: boolean; // QR preview only; never means wallet crediting.
+  paymentEnabled: boolean; // Separately gated from topups and recovery.
+  topupEnabled: boolean; // Creating a QR is never evidence of wallet credit.
   activeTopup: null | {
     topupId: string;
     amountMinor: string;
@@ -36,9 +37,8 @@ export class GdsWalletService {
       available: false, mode: 'disabled', state: 'UNAVAILABLE', balance: null,
       paymentEnabled: false, topupEnabled: false, recentTransactions: [], activeTopup: null,
     };
-    // A feature flag can NEVER make this wallet accessible on production.
-    if (!this.config.gdsWallet.sandboxEnabled ||
-        this.config.app.nodeEnv === 'production' || this.config.app.deploymentClass === 'production') {
+    const capabilities = gdsWalletCapabilities(this.config);
+    if (!capabilities.readEnabled) {
       return disabled;
     }
     if (topupId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(topupId)) {
@@ -51,18 +51,17 @@ export class GdsWalletService {
     // prepaid journal projection, never the earlier partner-wallet mirror.
     const wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
     const basis = {
-      ...disabled, mode: 'sandbox' as const, activeTopup,
-      topupEnabled: this.config.gdsWallet.qrPreviewEnabled === true &&
-        this.config.app.deploymentClass === 'uat' &&
+      ...disabled, mode: capabilities.mode, activeTopup,
+      topupEnabled: capabilities.topupEnabled &&
         this.config.payos.environment === 'production' &&
         /^https:\/\//.test(this.config.app.publicAppUrl ?? '') &&
         Boolean(this.config.commerce.idempotencySecret),
     };
     if (!wallet) return { ...basis, state: 'NOT_INITIALIZED' };
-    if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED' };
+    if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED', topupEnabled: false };
     if (typeof wallet.availableMinor !== 'bigint' || typeof wallet.heldMinor !== 'bigint' ||
         wallet.availableMinor < 0n || wallet.heldMinor < 0n) {
-      return { ...basis, state: 'RECONCILIATION_REQUIRED' };
+      return { ...basis, state: 'RECONCILIATION_REQUIRED', topupEnabled: false };
     }
     const journal = await this.prisma.gdsInternalJournal.findMany({
       where: { walletId: wallet.id },
@@ -76,9 +75,8 @@ export class GdsWalletService {
       return { ...basis, state: 'RECONCILIATION_REQUIRED' };
     }
     return {
-      ...basis, available: true, state: 'READY_SANDBOX',
-      paymentEnabled: this.config.gdsWallet.checkoutEnabled === true &&
-        this.config.app.deploymentClass === 'uat',
+      ...basis, available: true, state: capabilities.mode === 'production' ? 'READY_PRODUCTION' : 'READY_SANDBOX',
+      paymentEnabled: capabilities.checkoutEnabled,
       balance: {
         settledMinor: (wallet.availableMinor + wallet.heldMinor).toString(),
         reservedMinor: wallet.heldMinor.toString(),

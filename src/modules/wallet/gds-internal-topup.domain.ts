@@ -2,7 +2,7 @@ import { GdsWalletInvariantError } from './gds-wallet.domain';
 import { GdsPayosTopupIntent } from './gds-payos-topup.domain';
 
 /**
- * PAYW-04 proposed CLOSED-LOOP / service-prepayment model, sandbox-only.
+ * Closed-loop service-prepayment ledger; callers enforce environment capabilities.
  * NOT an e-wallet issuer, merchant configuration, legal approval or live credit path.
  * Nothing here writes to a wallet, Commerce settlement or database.
  *

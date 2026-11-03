@@ -1,3 +1,4 @@
+import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
@@ -17,16 +18,14 @@ export type GdsInternalBalance = {
 /**
  * Internal service-prepayment ledger integration; the signed-inbox worker
  * calls it only after independently querying PayOS. No browser, screenshot
- * or QR result is an authorized caller. Production paths remain hard OFF.
+ * or QR result is an authorized caller. Admission switches do not interrupt recovery.
  */
 @Injectable()
 export class GdsInternalJournalService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
 
-  private requireSandbox(): void {
-    if (!this.config.gdsWallet.sandboxEnabled ||
-        this.config.app.nodeEnv === 'production' ||
-        this.config.app.deploymentClass === 'production') {
+  private requireProcessing(): void {
+    if (!gdsWalletCapabilities(this.config).processingEnabled) {
       throw new ForbiddenException('GDS internal prepayment is unavailable');
     }
   }
@@ -37,7 +36,7 @@ export class GdsInternalJournalService {
    * projection atomically. No fee is subtracted from credited VND.
    */
   async creditVerifiedTopup(intent: GdsPayosTopupIntent, settlement: GdsInternalPayosSettlement): Promise<GdsInternalBalance> {
-    this.requireSandbox();
+    this.requireProcessing();
     // Reject synthetic/invalid evidence before even starting a DB transaction.
     prepareGdsInternalTopupCredit(intent, settlement);
     const execute = () => this.prisma.$transaction(async (tx) =>
@@ -65,7 +64,7 @@ export class GdsInternalJournalService {
     tx: Prisma.TransactionClient, intent: GdsPayosTopupIntent,
     settlement: GdsInternalPayosSettlement,
   ): Promise<GdsInternalBalance> {
-      this.requireSandbox();
+      this.requireProcessing();
       const credit = prepareGdsInternalTopupCredit(intent, settlement);
       const topup = await tx.gdsInternalTopup.findUnique({ where: { id: intent.id } });
       if (!topup || topup.buyerId !== credit.buyerId || topup.walletId === '' ||
