@@ -26,6 +26,8 @@ async function main() {
     await db.user.createMany({data:['buyerCourse','buyerMember','seller'].map(k=>({id:ids[k],email:ids[k]+'@synthetic.invalid',fullName:'Synthetic GDS checkout'}))});
     const role=await db.role.upsert({where:{name:'student'},create:{name:'student'},update:{}});
     await db.userRole.createMany({data:['buyerCourse','buyerMember'].map(k=>({userId:ids[k],roleId:role.id}))});
+    const adminRole=await db.role.upsert({where:{name:'platform_admin'},create:{name:'platform_admin'},update:{}});
+    await db.userRole.create({data:{userId:ids.seller,roleId:adminRole.id}});
     await db.course.create({data:{id:ids.course,instructorId:ids.seller,title:'Synthetic GDS paid course',slug:'gds-'+ids.course,level:'beginner',status:'published',visibility:'public',priceAmountMinor:10000,priceCurrency:'VND'}});
     await db.membershipPlan.create({data:{id:ids.plan,code:'GDS_'+ids.plan.replace(/-/g,'').toUpperCase()}});
     await db.membershipPlanVersion.create({data:{id:ids.version,planId:ids.plan,versionNumber:1,displayName:'Synthetic GDS member',baseMonthlyPriceAmountMinor:20000n,currency:'VND',createdById:ids.seller}});
