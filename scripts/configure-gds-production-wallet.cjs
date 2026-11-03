@@ -15,15 +15,18 @@ function setVariable(source, name, value) {
 function configureGdsProductionWallet(source, options = {}) {
   const choices = { topup: options.topup || 'preserve', checkout: options.checkout || 'preserve' };
   for (const v of Object.values(choices)) if (!['preserve','enable','disable'].includes(v)) throw new Error('Wallet production action is invalid');
-  if (Object.values(choices).every(v => v === 'preserve')) return source;
+  const current = dotenv.parse(source);
+  const repairLegacySandbox = current.NODE_ENV === 'production' && current.DEPLOYMENT_CLASS === 'production' && current.VNPAY_ENVIRONMENT === 'sandbox' && Object.values(FLAGS).some(name => current[name] === 'true');
+  if (Object.values(choices).every(v => v === 'preserve') && !repairLegacySandbox) return source;
   let candidate = source;
   for (const [key, name] of Object.entries(FLAGS)) if (choices[key] !== 'preserve') candidate = setVariable(candidate, name, String(choices[key] === 'enable'));
   const env = dotenv.parse(candidate);
-  if (Object.values(choices).includes('enable')) {
+  if (Object.values(choices).includes('enable') || repairLegacySandbox) {
     if (env.NODE_ENV !== 'production') throw new Error('Wallet activation requires the production runtime');
     // Explicit wallet activation retires the VPS legacy VNPay sandbox classification.
     candidate = setVariable(candidate, 'DEPLOYMENT_CLASS', 'production');
     candidate = setVariable(candidate, 'PAYMENT_DEFAULT_PROVIDER', 'payos');
+    candidate = setVariable(candidate, 'VNPAY_ENVIRONMENT', 'disabled');
     const fingerprint = options.uatFingerprint || env.GDS_WALLET_UAT_DATABASE_FINGERPRINT;
     if (!/^[a-f0-9]{64}$/i.test(fingerprint || '') || fingerprint.toLowerCase() === databaseFingerprint(env.DATABASE_URL)) throw new Error('Wallet activation requires a distinct confirmed UAT database identity');
     candidate = setVariable(candidate, 'GDS_WALLET_UAT_DATABASE_FINGERPRINT', fingerprint.toLowerCase());
