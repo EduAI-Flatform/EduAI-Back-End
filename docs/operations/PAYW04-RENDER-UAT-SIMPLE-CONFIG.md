@@ -45,6 +45,10 @@ PAYOS_WEBHOOK_URL=https://eduai-back-end.onrender.com/api/v1/payments/webhooks/p
   work when `GDS_WALLET` is absent; the new switch takes precedence when present.
 - `PAYOS_ENVIRONMENT=production` is the official real PayOS API and is
   independent of `NODE_ENV`. **Personal PayOS QR can receive real funds** on UAT.
+- `NODE_ENV=development` is appropriate for an isolated UAT instance, not the
+  public production backend. The runtime has development CORS defaults, returns
+  more descriptive internal errors, and uses local rate limits when Redis is
+  absent. Keep `NODE_ENV=production` on the VPS with real users.
 - For this *new, isolated TEST database only*, an explicit Commerce HMAC secret
   is optional when `JWT_REFRESH_SECRET` has at least 32 stable characters: the
   server derives a domain-separated HMAC key. Keep this refresh key unchanged
