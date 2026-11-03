@@ -158,3 +158,15 @@ fixture omitted it. Tests cover valid capture and adversarial proof failures.
 The migration replay workflow additionally runs real course/membership services
 against its disposable PostgreSQL database, including concurrent replay.
 No existing customer order is paid by deployment or migration.
+
+
+UAT application verified 2026-11-03: exact single pending migration applied;
+checksum matches repository SQL and live function contains wallet_capture guard.
+The existing 10000 VND course order and 20000 VND membership order remained
+pending/not_started, with unchanged buyer balance 40000 VND and held zero.
+No payment executed. Full-schema disposable PostgreSQL regression passed both
+course and membership capture, exact journal/settlement/entitlements, concurrent
+requests and replay. Prisma 7 can expose raw-query SQLSTATE40001 as P2010;
+GDS checkout retries this bounded transaction conflict, without retrying proof
+constraint failures. Frontend membership catalog now creates only the order;
+payment method selection and confirmation belong to the order page.
