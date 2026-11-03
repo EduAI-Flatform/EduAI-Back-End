@@ -2,14 +2,26 @@ import { GdsWalletService } from './gds-wallet.service';
 
 const buyerId = 'test-buyer';
 const config = {
-  app: { nodeEnv: 'test', deploymentClass: 'uat' },
-  gdsWallet: { sandboxEnabled: false, checkoutEnabled: false },
+  app: { nodeEnv: 'test', deploymentClass: 'uat', publicAppUrl: 'https://uat.example.org' },
+  gdsWallet: { sandboxEnabled: false, checkoutEnabled: false, qrPreviewEnabled: false },
+  payos: { environment: 'production' },
+  commerce: { idempotencySecret: 'test-secret' },
 };
 
 describe('GDS wallet learner API projection', () => {
   const db = { gdsInternalWallet: { findUnique: jest.fn() }, gdsInternalJournal: { findMany: jest.fn() }, buyerWalletLink: { findUnique: jest.fn() } };
   const service = new GdsWalletService(db as never, config as never);
-  beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.gdsInternalJournal.findMany.mockReset().mockResolvedValue([]); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; config.gdsWallet.checkoutEnabled = false; });
+  beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.gdsInternalJournal.findMany.mockReset().mockResolvedValue([]); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; config.gdsWallet.checkoutEnabled = false; config.gdsWallet.qrPreviewEnabled = false; });
+
+  it('enables UAT PayOS topup when the provider is configured without a bank-account env key', async () => {
+    config.gdsWallet.sandboxEnabled = true;
+    config.gdsWallet.qrPreviewEnabled = true;
+    db.gdsInternalWallet.findUnique.mockResolvedValue(null);
+    expect(await service.summary(buyerId)).toMatchObject({ state: 'NOT_INITIALIZED', topupEnabled: true });
+    config.payos.environment = 'disabled';
+    expect(await service.summary(buyerId)).toMatchObject({ topupEnabled: false });
+    config.payos.environment = 'production';
+  });
 
   it('never queries or exposes money in production, even with a true flag', async () => {
     config.gdsWallet.sandboxEnabled = true;

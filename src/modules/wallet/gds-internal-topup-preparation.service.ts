@@ -4,7 +4,7 @@ import { Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GdsWalletInvariantError } from './gds-wallet.domain';
-import { GdsPayosTopupIntent, buildGdsPayosTopupRequest, GdsPayosTopupRequest } from './gds-payos-topup.domain';
+import { GDS_UNBOUND_RECEIVING_ACCOUNT_HASH, GdsPayosTopupIntent, buildGdsPayosTopupRequest, GdsPayosTopupRequest } from './gds-payos-topup.domain';
 import { lockGdsPayosOrderNamespace } from './gds-payos-order-namespace';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -17,8 +17,6 @@ export type PrepareGdsTopup = {
   buyerId: string;
   amountMinor: bigint;
   idempotencyKey: string;
-  /** Hash of receiving account from verified server-side merchant config. */
-  receivingAccountHash: string;
   expiresAt: Date;
   urls: { returnUrl: string; cancelUrl: string };
 };
@@ -30,11 +28,10 @@ export type PreparedGdsTopup = {
 };
 
 /**
- * PAYW-04B: persist a unique, idempotent topup intent BEFORE any future
- * PayOS SDK call. This is an INTERNAL SOURCE-ONLY service: no HTTP route,
- * scheduler, webhook or PayOS client invokes it today. The receiving hash
- * MUST originate in independently verified merchant configuration, not an
- * HTTP request. Do not enable until that receiving-account provision exists.
+ * Persist a unique, idempotent topup intent BEFORE the PayOS SDK call.
+ * A prepared intent carries an explicitly unbound recipient hash. The
+ * authenticated PayOS SDK response binds the actual recipient exactly once
+ * in the same transaction that persists the PayOS payment link.
  */
 @Injectable()
 export class GdsInternalTopupPreparationService {
@@ -46,7 +43,6 @@ export class GdsInternalTopupPreparationService {
       throw new ForbiddenException('GDS topup preparation is unavailable');
     }
     if (!UUID.test(input.buyerId) || !IDEMPOTENCY_KEY.test(input.idempotencyKey) ||
-        !/^[a-f0-9]{64}$/.test(input.receivingAccountHash) ||
         typeof input.amountMinor !== 'bigint' || input.amountMinor <= 0n ||
         input.amountMinor > BigInt(Number.MAX_SAFE_INTEGER) ||
         !(input.expiresAt instanceof Date) || !Number.isFinite(input.expiresAt.getTime()) ||
@@ -65,8 +61,7 @@ export class GdsInternalTopupPreparationService {
         where: { buyerId_requestKeyHash: { buyerId: input.buyerId, requestKeyHash } },
       });
       if (previous) {
-        if (previous.amountMinor !== input.amountMinor || previous.currency !== 'VND' ||
-            previous.receivingAccountHash !== input.receivingAccountHash) {
+        if (previous.amountMinor !== input.amountMinor || previous.currency !== 'VND') {
           throw new GdsWalletInvariantError('GDS_TOPUP_IDEMPOTENCY_CONFLICT');
         }
         const intent = this.project(previous);
@@ -106,7 +101,7 @@ export class GdsInternalTopupPreparationService {
       const intent: GdsPayosTopupIntent = {
         id: randomUUID(), buyerId: input.buyerId, amountMinor: input.amountMinor,
         currency: 'VND', payosOrderCode: chosenOrderCode,
-        receivingAccountHash: input.receivingAccountHash, expiresAt: input.expiresAt,
+        receivingAccountHash: GDS_UNBOUND_RECEIVING_ACCOUNT_HASH, expiresAt: input.expiresAt,
         status: 'CREATED', paymentLinkId: null, collectionReference: null,
         partnerCreditEventId: null,
       };

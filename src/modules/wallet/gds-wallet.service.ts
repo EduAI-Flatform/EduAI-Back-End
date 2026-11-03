@@ -40,7 +40,9 @@ export class GdsWalletService {
       ...disabled, mode: 'sandbox' as const,
       topupEnabled: this.config.gdsWallet.qrPreviewEnabled === true &&
         this.config.app.deploymentClass === 'uat' &&
-        /^\d{6,32}$/.test(this.config.gdsWallet.receivingAccount ?? ''),
+        this.config.payos.environment === 'production' &&
+        /^https:\/\//.test(this.config.app.publicAppUrl ?? '') &&
+        Boolean(this.config.commerce.idempotencySecret),
     };
     if (!wallet) return { ...basis, state: 'NOT_INITIALIZED' };
     if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED' };
