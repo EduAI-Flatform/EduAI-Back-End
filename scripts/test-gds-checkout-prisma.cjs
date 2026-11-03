@@ -37,6 +37,25 @@ async function main() {
     // Explicitly synthetic opening balances, restricted to the disposable database above.
     for(const buyerId of [ids.buyerCourse,ids.buyerMember]) await db.gdsInternalWallet.create({data:{buyerId,availableMinor:40000n}});
     const production=process.env.GDS_TEST_PRODUCTION==='true';
+    if (production) {
+      const runtimeRole='gds_runtime_'+randomUUID().replaceAll('-','');
+      const quoted='"'+runtimeRole+'"';
+      await db.$executeRawUnsafe('CREATE ROLE '+quoted+' NOLOGIN');
+      await db.$executeRawUnsafe('GRANT USAGE ON SCHEMA public TO '+quoted);
+      const { buildRuntimeGdsPrivilegeStatement }=require('./membership-runtime-privileges.cjs');
+      // pg accepts one statement per prepared query; these trusted generated grants contain no values.
+      for (const sql of buildRuntimeGdsPrivilegeStatement('postgresql://'+runtimeRole+'@localhost/test').split(';').filter(x=>x.trim())) await db.$executeRawUnsafe(sql);
+      const runtime=new PrismaClient({adapter:new PrismaPg({connectionString:process.env.DATABASE_URL,options:'-c role='+runtimeRole})});
+      try {
+        const probe=randomUUID();
+        await db.user.create({data:{id:probe,email:probe+'@synthetic.invalid',fullName:'Runtime zero balance probe'}});
+        await runtime.gdsInternalWallet.upsert({where:{buyerId:probe},create:{buyerId:probe},update:{}});
+        const empty=await runtime.gdsInternalWallet.findUniqueOrThrow({where:{buyerId:probe}});
+        assert.equal(empty.availableMinor,0n);
+        await assert.rejects(runtime.gdsInternalWallet.update({where:{id:empty.id},data:{availableMinor:9999n}}));
+        console.log('GDS_RUNTIME_PRISMA_ZERO_WALLET=PASS');
+      }finally{await runtime.$disconnect();}
+    }
     const config=production?{app:{nodeEnv:'production',deploymentClass:'production',publicAppUrl:'https://production.example'},gdsWallet:{sandboxEnabled:false,productionTopupEnabled:false,productionCheckoutEnabled:true},payos:{environment:'production',clientId:'synthetic',apiKey:'synthetic',checksumKey:'synthetic',webhookUrl:'https://api.production.example/api/v1/payments/webhooks/payos'},commerce:{idempotencySecret:'synthetic-gds-checkout-ci-only-32-chars'}}:{app:{nodeEnv:'test',deploymentClass:'uat'},gdsWallet:{sandboxEnabled:true,checkoutEnabled:true},commerce:{idempotencySecret:'synthetic-gds-checkout-ci-only'}};
     const audit=new AuditService(db);
     const access=new CourseAccessService(db,config);
