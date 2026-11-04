@@ -201,6 +201,8 @@ enum TmiEntitlementStatus {
 }
 
 model User {
+  gdsAccountVerifications GdsAccountVerification[] @relation("AccountVerificationOwner")
+  gdsPerformedAccountVerifications GdsAccountVerification[] @relation("AccountVerificationActor")
   gdsWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalOwner")
   gdsProcessedWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalProcessor")
   gdsWithdrawalEvents GdsWithdrawalEvent[] @relation("GdsWithdrawalActor")
@@ -1774,6 +1776,7 @@ model GdsWithdrawalSettings {
   version Int @default(1)
   admissionEnabled Boolean @default(false) @map("admission_enabled")
   processingEnabled Boolean @default(false) @map("processing_enabled")
+  accountVerificationRequired Boolean @default(false) @map("account_verification_required")
   revenueCutoffAt DateTime @default(now()) @map("revenue_cutoff_at")
   revenueActivatedAt DateTime? @map("revenue_activated_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1789,6 +1792,13 @@ model GdsWithdrawal {
   bankCode String @map("bank_code") @db.VarChar(32)
   accountNumber String @map("account_number") @db.VarChar(34)
   accountHolder String @map("account_holder") @db.VarChar(160)
+  verificationId String? @unique @map("verification_id") @db.Uuid
+  bankBin String? @map("bank_bin") @db.VarChar(6)
+  bankName String? @map("bank_name") @db.VarChar(200)
+  bankShortName String? @map("bank_short_name") @db.VarChar(80)
+  accountVerifiedAt DateTime? @map("account_verified_at")
+  verification GdsAccountVerification? @relation("WithdrawalVerification", fields: [verificationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  transferVerifications GdsAccountVerification[] @relation("WithdrawalTransferVerification")
   settingsVersion Int @map("settings_version")
   minimumMinor BigInt @map("minimum_minor")
   maximumMinor BigInt @map("maximum_minor")
@@ -1851,6 +1861,32 @@ model GdsRevenueEffect {
   projection GdsRevenueProjection @relation(fields: [projectionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   @@unique([projectionId, revision])
   @@map("gds_revenue_effects")
+}
+
+model GdsAccountVerification {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  bankCode String @map("bank_code") @db.VarChar(32)
+  bankBin String @map("bank_bin") @db.VarChar(6)
+  bankName String @map("bank_name") @db.VarChar(200)
+  bankShortName String @map("bank_short_name") @db.VarChar(80)
+  accountNumber String @map("account_number") @db.VarChar(34)
+  accountHolder String @map("account_holder") @db.VarChar(160)
+  normalizedAccountHolder String @map("normalized_account_holder") @db.VarChar(160)
+  provider String @db.VarChar(24)
+  providerReference String? @map("provider_reference") @db.VarChar(160)
+  purpose String @db.VarChar(16)
+  withdrawalId String? @map("withdrawal_id") @db.Uuid
+  verifiedAt DateTime @map("verified_at")
+  expiresAt DateTime @map("expires_at")
+  owner User @relation("AccountVerificationOwner", fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor User @relation("AccountVerificationActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  withdrawal GdsWithdrawal? @relation("WithdrawalTransferVerification", fields: [withdrawalId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  usedBy GdsWithdrawal? @relation("WithdrawalVerification")
+  @@index([withdrawalId, expiresAt], map: "gds_account_verification_withdrawal_idx")
+  @@index([ownerId, expiresAt], map: "gds_account_verification_owner_idx")
+  @@map("gds_account_verifications")
 }
 
 model UserRole {

@@ -11,7 +11,7 @@ const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { 
 const makeRow = () => ({ id: 'request-id', ownerId: 'owner', walletId: 'wallet', requestKeyHash: 'private-hash', amountMinor: 50000n,
   bankCode: 'MB', accountNumber: '123456789', accountHolder: 'NGUYEN VAN A', status: 'PENDING',
   minimumMinor: 50000n, maximumMinor: 10000000n, createdAt: new Date('2026-01-01'), processingAdminId: null });
-function setup() {
+function setup(accounts?: { available: jest.Mock; resolve: jest.Mock; verifyTransfer: jest.Mock }) {
   const row = makeRow();
   const tx = {
     $queryRaw: jest.fn(),
@@ -24,10 +24,47 @@ function setup() {
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
   const revenue = { transaction: (fn: (arg: typeof tx) => unknown) => fn(tx), syncOwner: jest.fn() };
-  return { row, tx, revenue, service: new GdsWithdrawalService(tx as never, config as never, revenue as never) };
+  return { row, tx, revenue, service: new GdsWithdrawalService(tx as never, config as never, revenue as never, accounts as never) };
 }
 const input = { amountMinor: '50000', bankCode: 'MB', accountNumber: '123456789', accountHolder: 'NGUYEN VAN A' };
 describe('GDS withdrawal API and service boundaries', () => {
+  it('requires successful evidence before touching funds when mandatory verification is enabled', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn().mockRejectedValue(new Error('INVALID_OR_EXPIRED')), verifyTransfer: jest.fn() };
+    const { service, tx, revenue } = setup(accounts);
+    const settings = await tx.gdsWithdrawalSettings.findUniqueOrThrow();
+    tx.gdsWithdrawalSettings.findUniqueOrThrow.mockResolvedValue({ ...settings, accountVerificationRequired: true } as never);
+    await expect(service.create('owner', input, 'unique-request-key-123')).rejects.toThrow('VERIFICATION_REQUIRED');
+    await expect(service.create('owner', { ...input, verificationId: 'proof' }, 'unique-request-key-123')).rejects.toThrow('INVALID_OR_EXPIRED');
+    expect(revenue.syncOwner).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawal.create).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it('uses the verified beneficiary snapshot instead of a forged client name', async () => {
+    const proof = { id: 'proof', accountHolder: 'VERIFIED RECIPIENT', bankBin: '970422', bankName: 'Military Bank', bankShortName: 'MB', verifiedAt: new Date() };
+    const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn().mockResolvedValue(proof), verifyTransfer: jest.fn() };
+    const { service, tx } = setup(accounts);
+    await service.create('owner', { ...input, accountHolder: 'FORGED NAME', verificationId: 'proof' }, 'unique-request-key-123');
+    expect(tx.gdsWithdrawal.create.mock.calls[0][0].data).toMatchObject({ accountHolder: proof.accountHolder, verificationId: proof.id, bankBin: proof.bankBin, accountVerifiedAt: proof.verifiedAt });
+    expect(accounts.resolve).toHaveBeenCalledWith(tx, 'owner', input.bankCode, input.accountNumber, 'proof');
+  });
+  it('replays an already created verified request without checking expired evidence or provider availability', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(false), resolve: jest.fn().mockRejectedValue(new Error('EXPIRED')), verifyTransfer: jest.fn() };
+    const { service, tx, row } = setup(accounts);
+    tx.gdsWithdrawal.findUnique.mockResolvedValue({ ...row, verificationId: 'proof' } as never);
+    await expect(service.create('owner', { ...input, verificationId: 'proof' }, 'unique-request-key-123')).resolves.toMatchObject({ id: row.id });
+    await expect(service.create('owner', { ...input, verificationId: 'other' }, 'unique-request-key-123')).rejects.toThrow('IDEMPOTENCY_CONFLICT');
+    expect(accounts.resolve).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawal.create).not.toHaveBeenCalled();
+  });
+  it('rechecks the beneficiary outside the money transaction and does not claim on provider failure', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn(), verifyTransfer: jest.fn().mockRejectedValue(new Error('PROVIDER_UNAVAILABLE')) };
+    const { service, tx, row, revenue } = setup(accounts);
+    tx.gdsWithdrawal.findUnique.mockResolvedValue({ ...row, status: 'APPROVED', verificationId: 'proof' } as never);
+    const transaction = jest.spyOn(revenue, 'transaction');
+    await expect(service.act('admin', row.id, 'process', { reason: 'Check recipient' })).rejects.toThrow('PROVIDER_UNAVAILABLE');
+    expect(transaction).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
   it('allows students/instructors to use their wallet but preserves student-only checkout', () => {
     expect(Reflect.getMetadata('roles', GdsWithdrawalController)).toEqual([RoleName.student, RoleName.instructor]);
     expect(Reflect.getMetadata('roles', GdsWithdrawalAdminController)).toEqual([RoleName.platform_admin]);

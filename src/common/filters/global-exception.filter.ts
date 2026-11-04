@@ -32,11 +32,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const request = http.getRequest<CorrelatedRequest>();
     const response = http.getResponse<Response>();
     const status = this.getStatus(exception);
-    const message = this.getMessage(exception, status);
+    // Prisma errors may embed query arguments. Banking routes must not log them.
+    const banking = /\/(?:admin\/)?wallet\/gds(?:\/|$)/.test(safeRequestPath(request));
+    const message = banking && status === HttpStatus.INTERNAL_SERVER_ERROR ? 'Internal server error' : this.getMessage(exception, status);
     const code = this.getCode(exception, status);
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
-      this.logger.error('critical request error', this.getStack(exception), 'GlobalExceptionFilter', {
+      this.logger.error('critical request error', banking ? 'Banking request failed; details redacted' : this.getStack(exception), 'GlobalExceptionFilter', {
         code,
         failureClass: this.getFailureClass(exception),
         method: request.method,

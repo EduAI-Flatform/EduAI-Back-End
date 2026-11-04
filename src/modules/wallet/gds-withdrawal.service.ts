@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { GdsWithdrawal, Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
@@ -7,32 +7,44 @@ import { GdsCreateWithdrawalDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, G
 import { GdsRevenueWalletService, lockGdsFinance } from './gds-revenue-wallet.service';
 import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { nextWithdrawalStatus, validateWithdrawalAmount, WithdrawalAction } from './gds-withdrawal.domain';
+import { GdsAccountVerificationService } from './gds-account-verification.service';
 
 @Injectable()
 export class GdsWithdrawalService {
-  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly revenue: GdsRevenueWalletService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly revenue: GdsRevenueWalletService,
+    @Optional() private readonly accounts?: GdsAccountVerificationService) {}
 
   async settings() {
     const s = await this.prisma.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
     const capabilities = gdsWalletCapabilities(this.config);
     return { minimumMinor: s.minimumMinor.toString(), maximumMinor: s.maximumMinor.toString(), version: s.version,
       admissionEnabled: s.admissionEnabled && capabilities.processingEnabled,
-      processingEnabled: s.processingEnabled && capabilities.processingEnabled };
+      processingEnabled: s.processingEnabled && capabilities.processingEnabled,
+      accountVerificationRequired: s.accountVerificationRequired ?? false,
+      accountVerificationAvailable: this.accounts?.available() ?? false };
   }
 
   async updateSettings(actorId: string, input: GdsWithdrawalSettingsDto) {
     const minimum = BigInt(input.minimumMinor), maximum = BigInt(input.maximumMinor);
+    if (input.accountVerificationRequired === true && !this.accounts?.available()) throw new ForbiddenException('GDS_ACCOUNT_VERIFICATION_UNAVAILABLE');
     if (minimum <= 0n || maximum < minimum || maximum > BigInt(Number.MAX_SAFE_INTEGER)) throw new BadRequestException('GDS_WITHDRAWAL_INVALID_LIMITS');
     return this.revenue.transaction(async tx => {
       await lockGdsFinance(tx);
       const changed = await tx.gdsWithdrawalSettings.updateMany({ where: { id: 'global', version: input.version }, data: {
         minimumMinor: minimum, maximumMinor: maximum, version: { increment: 1 },
         admissionEnabled: input.admissionEnabled, processingEnabled: input.processingEnabled,
+        ...(input.accountVerificationRequired !== undefined ? { accountVerificationRequired: input.accountVerificationRequired } : {}),
       } });
       if (changed.count !== 1) throw new ConflictException('GDS_WITHDRAWAL_SETTINGS_CHANGED');
       await tx.auditLog.create({ data: { actorId, action: 'gds.withdrawal.settings.changed', targetType: 'gds_withdrawal_settings', targetId: 'global',
         metadataJson: { ...input, version: input.version + 1 } } });
-      return { ...input, version: input.version + 1 };
+      const saved = await tx.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
+      const capabilities = gdsWalletCapabilities(this.config);
+      return { minimumMinor: saved.minimumMinor.toString(), maximumMinor: saved.maximumMinor.toString(), version: saved.version,
+        admissionEnabled: saved.admissionEnabled && capabilities.processingEnabled,
+        processingEnabled: saved.processingEnabled && capabilities.processingEnabled,
+        accountVerificationRequired: saved.accountVerificationRequired ?? false,
+        accountVerificationAvailable: this.accounts?.available() ?? false };
     });
   }
 
@@ -44,12 +56,18 @@ export class GdsWithdrawalService {
       const existing = await tx.gdsWithdrawal.findUnique({ where: { ownerId_requestKeyHash: { ownerId, requestKeyHash: hash } } });
       if (existing) {
         if (existing.amountMinor.toString() !== input.amountMinor || existing.bankCode !== input.bankCode ||
-          existing.accountNumber !== input.accountNumber || existing.accountHolder !== input.accountHolder) throw new ConflictException('GDS_WITHDRAWAL_IDEMPOTENCY_CONFLICT');
+          existing.accountNumber !== input.accountNumber ||
+          (existing.verificationId ? existing.verificationId !== input.verificationId : existing.accountHolder !== input.accountHolder)) throw new ConflictException('GDS_WITHDRAWAL_IDEMPOTENCY_CONFLICT');
         return withdrawalResponse(existing, true);
       }
       this.requireProcessing();
       const settings = await tx.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
       if (!settings.admissionEnabled || !settings.processingEnabled) throw new ForbiddenException('GDS_WITHDRAWAL_ADMISSION_DISABLED');
+      if (settings.accountVerificationRequired && (!input.verificationId || !this.accounts?.available())) throw new ForbiddenException('GDS_ACCOUNT_VERIFICATION_REQUIRED');
+      const proof = input.verificationId && this.accounts ? await this.accounts.resolve(tx, ownerId, input.bankCode, input.accountNumber, input.verificationId) : null;
+      if (input.verificationId && !proof) throw new ConflictException('GDS_ACCOUNT_VERIFICATION_INVALID_OR_EXPIRED');
+      const accountHolder = proof?.accountHolder ?? input.accountHolder?.trim();
+      if (!accountHolder) throw new BadRequestException('GDS_ACCOUNT_HOLDER_REQUIRED');
       await this.revenue.syncOwner(tx, ownerId);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM gds_internal_wallets WHERE buyer_id=${ownerId}::uuid FOR UPDATE`);
       const wallet = await tx.gdsInternalWallet.findUnique({ where: { buyerId: ownerId } });
@@ -57,7 +75,8 @@ export class GdsWithdrawalService {
       const amount = validateWithdrawalAmount(input.amountMinor, settings.minimumMinor, settings.maximumMinor, wallet.availableMinor);
       const row = await tx.gdsWithdrawal.create({ data: {
         ownerId, walletId: wallet.id, requestKeyHash: hash, amountMinor: amount,
-        bankCode: input.bankCode, accountNumber: input.accountNumber, accountHolder: input.accountHolder,
+        bankCode: input.bankCode, accountNumber: input.accountNumber, accountHolder,
+        ...(proof ? { verificationId: proof.id, bankBin: proof.bankBin, bankName: proof.bankName, bankShortName: proof.bankShortName, accountVerifiedAt: proof.verifiedAt } : {}),
         settingsVersion: settings.version, minimumMinor: settings.minimumMinor, maximumMinor: settings.maximumMinor,
       } });
       await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: row.id, actorId: ownerId, toStatus: 'PENDING', reason: 'Người dùng tạo yêu cầu rút tiền.' } });
@@ -84,6 +103,14 @@ export class GdsWithdrawalService {
   }
 
   async act(actorId: string, id: string, action: WithdrawalAction, input: GdsWithdrawalActionDto, ownerOnly = false) {
+    if (action === 'process' && this.accounts) {
+      const pending = await this.prisma.gdsWithdrawal.findUnique({ where: { id } });
+      if (!pending) throw new NotFoundException('GDS_WITHDRAWAL_NOT_FOUND');
+      if (pending.ownerId === actorId) throw new ForbiddenException('GDS_WITHDRAWAL_SELF_PROCESSING_FORBIDDEN');
+      if (pending.status !== 'APPROVED') throw new ConflictException('GDS_WITHDRAWAL_INVALID_TRANSITION');
+      const policy = await this.prisma.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
+      if (policy.accountVerificationRequired || pending.verificationId) await this.accounts.verifyTransfer(actorId, id);
+    }
     return this.revenue.transaction(async tx => {
       await lockGdsFinance(tx);
       const row = await tx.gdsWithdrawal.findFirst({ where: { id, ...(ownerOnly ? { ownerId: actorId } : {}) } });

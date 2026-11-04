@@ -15,7 +15,8 @@ async function main() {
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
   const { GdsWithdrawalService } = require('../dist/src/modules/wallet/gds-withdrawal.service.js');
-  const { buildRuntimeGdsPrivilegeStatement, buildRuntimeGdsWithdrawalPrivilegeStatement } = require('./membership-runtime-privileges.cjs');
+  const { GdsAccountVerificationService } = require('../dist/src/modules/wallet/gds-account-verification.service.js');
+  const { buildRuntimeGdsPrivilegeStatement, buildRuntimeGdsWithdrawalPrivilegeStatement, buildRuntimeGdsVerificationPrivilegeStatement } = require('./membership-runtime-privileges.cjs');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true } };
   const revenue = new GdsRevenueWalletService(db, config, new RevenueFinanceService(db));
@@ -94,7 +95,8 @@ async function main() {
     const role = `gds_withdraw_${randomUUID().replaceAll('-', '')}`;
     await db.$executeRawUnsafe(`CREATE ROLE "${role}" NOLOGIN`);
     await db.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
-    for (const statement of [buildRuntimeGdsPrivilegeStatement(`postgresql://${role}@localhost/test`), buildRuntimeGdsWithdrawalPrivilegeStatement(`postgresql://${role}@localhost/test`)].join(';').split(';').filter(x => x.trim())) {
+    for (const statement of [buildRuntimeGdsPrivilegeStatement(`postgresql://${role}@localhost/test`), buildRuntimeGdsWithdrawalPrivilegeStatement(`postgresql://${role}@localhost/test`),
+      buildRuntimeGdsVerificationPrivilegeStatement(`postgresql://${role}@localhost/test`)].join(';').split(';').filter(x => x.trim())) {
       await db.$executeRawUnsafe(statement);
     }
     await db.$executeRawUnsafe(`GRANT SELECT ON revenue_earning_periods, revenue_ledger_entries TO "${role}"`);
@@ -111,6 +113,96 @@ async function main() {
       await assert.rejects(runtime.gdsInternalWallet.update({ where: { id: f.wallet.id }, data: { debtMinor: 1n } }));
       await assert.rejects(runtime.gdsWithdrawal.update({ where: { id: created.id }, data: { status: 'PAID' } }));
       console.log('GDS_WITHDRAWAL_RESTRICTED_RUNTIME=PASS');
+
+      // Synthetic lookup exists only inside this guarded disposable-CI test.
+      // All persistence, restricted-role permissions, triggers and races remain real PostgreSQL.
+      let lookupEnabled = true;
+      let lookups = 0;
+      const syntheticBank = { code: 'MB', bin: '970422', name: 'Synthetic CI Bank', shortName: 'MB', lookupSupported: true };
+      const syntheticBanks = { async get(code) { assert.ok(['MB', '970422'].includes(code)); return syntheticBank; } };
+      const syntheticProvider = {
+        isAvailable: () => lookupEnabled,
+        available: bin => lookupEnabled && bin === syntheticBank.bin,
+        async lookup(bin, account) {
+          assert.ok(lookupEnabled, 'Disabled synthetic provider must never be called');
+          assert.equal(bin, syntheticBank.bin); assert.equal(account, input.accountNumber);
+          lookups += 1;
+          return { accountHolder: input.accountHolder, provider: 'vietqr', providerReference: `ci:lookup:${randomUUID()}` };
+        },
+      };
+      const accounts = new GdsAccountVerificationService(runtime, syntheticBanks, syntheticProvider);
+      const verifiedService = new GdsWithdrawalService(runtime, config, runtimeRevenue, accounts);
+      await runtime.gdsWithdrawalSettings.update({ where: { id: 'global' }, data: { accountVerificationRequired: true } });
+      const g = await user(500000n);
+      await assert.rejects(verifiedService.create(g.id, input, randomUUID()), /GDS_ACCOUNT_VERIFICATION_REQUIRED/);
+      assert.equal((await balance(g.id)).heldMinor, 0n);
+      assert.equal(await db.gdsInternalJournal.count({ where: { walletId: g.wallet.id, kind: 'WITHDRAWAL_RESERVE' } }), 0);
+      const verified = await accounts.verify(g.id, input.bankCode, input.accountNumber);
+      const verifiedInput = { ...input, accountHolder: 'UNTRUSTED CLIENT NAME', verificationId: verified.verificationId };
+      const verifiedKey = randomUUID();
+      const verifiedRequest = await verifiedService.create(g.id, verifiedInput, verifiedKey);
+      assert.equal(verifiedRequest.accountHolder, input.accountHolder);
+      const replay = await verifiedService.create(g.id, verifiedInput, verifiedKey);
+      assert.equal(replay.id, verifiedRequest.id);
+      await assert.rejects(verifiedService.create(g.id, verifiedInput, randomUUID()));
+      assert.equal(await db.gdsWithdrawal.count({ where: { ownerId: g.id } }), 1);
+      assert.equal((await balance(g.id)).heldMinor, 150000n);
+      assert.equal(await db.gdsInternalJournal.count({ where: { walletId: g.wallet.id, kind: 'WITHDRAWAL_RESERVE' } }), 1);
+      console.log('GDS_VERIFIED_RUNTIME_CREATE_REPLAY_AND_PROOF_REUSE=PASS');
+
+      // Race distinct keys against a single proof with enough money for both:
+      // evidence uniqueness, rather than insufficient funds, must pick one winner.
+      const h = await user(500000n);
+      const shared = await accounts.verify(h.id, input.bankCode, input.accountNumber);
+      const sharedInput = { ...input, verificationId: shared.verificationId };
+      const proofRace = await settle([
+        verifiedService.create(h.id, sharedInput, randomUUID()), verifiedService.create(h.id, sharedInput, randomUUID()),
+      ]);
+      assert.equal(proofRace.filter(result => result.status === 'fulfilled').length, 1);
+      assert.equal((await balance(h.id)).heldMinor, 150000n);
+      assert.equal(await db.gdsInternalJournal.count({ where: { walletId: h.wallet.id, kind: 'WITHDRAWAL_RESERVE' } }), 1);
+      console.log('GDS_VERIFIED_RUNTIME_CONCURRENT_PROOF_REUSE=PASS');
+
+      await verifiedService.act(admin, verifiedRequest.id, 'approve', { reason: 'Synthetic verified approval' });
+      await assert.rejects(accounts.qr(admin, verifiedRequest.id), /GDS_WITHDRAWAL_QR_NOT_ALLOWED/);
+      const lookupsBeforeClaims = lookups;
+      const verifiedClaims = await settle([
+        verifiedService.act(admin, verifiedRequest.id, 'process', { reason: 'Synthetic verified claim' }),
+        verifiedService.act(otherAdmin, verifiedRequest.id, 'process', { reason: 'Synthetic competing claim' }),
+      ]);
+      assert.equal(verifiedClaims.filter(result => result.status === 'fulfilled').length, 1);
+      assert.ok(lookups > lookupsBeforeClaims, 'Transfer claim must perform a new beneficiary lookup');
+      const verifiedClaimed = await db.gdsWithdrawal.findUniqueOrThrow({ where: { id: verifiedRequest.id } });
+      const claimant = verifiedClaimed.processingAdminId;
+      const nonClaimant = claimant === admin ? otherAdmin : admin;
+      assert.ok([admin, otherAdmin].includes(claimant));
+      assert.equal(await db.gdsAccountVerification.count({ where: { withdrawalId: verifiedRequest.id, purpose: 'TRANSFER', actorId: claimant } }), 1);
+      await assert.rejects(accounts.qr(nonClaimant, verifiedRequest.id), /GDS_WITHDRAWAL_QR_NOT_ALLOWED/);
+      const qr = await accounts.qr(claimant, verifiedRequest.id);
+      assert.equal(qr.bankBin, syntheticBank.bin); assert.equal(qr.accountNumber, input.accountNumber);
+      assert.equal(qr.accountHolder, input.accountHolder); assert.equal(qr.amountMinor, input.amountMinor);
+      assert.equal(qr.transferContent, `GDSW${verifiedRequest.id.replaceAll('-', '').slice(0, 21).toUpperCase()}`);
+      assert.ok(qr.qrCodeDataUrl.startsWith('data:image/png;base64,'));
+      const png = Buffer.from(qr.qrCodeDataUrl.slice('data:image/png;base64,'.length), 'base64');
+      assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      assert.equal(png.readUInt32BE(16), 480); assert.equal(png.readUInt32BE(20), 480);
+      console.log('GDS_VERIFIED_RUNTIME_CLAIM_AND_PROTECTED_QR=PASS');
+
+      lookupEnabled = false;
+      const lookupsBeforeRecovery = lookups;
+      const replayDuringOutage = await verifiedService.create(g.id, verifiedInput, verifiedKey);
+      assert.equal(replayDuringOutage.id, verifiedRequest.id);
+      await assert.rejects(accounts.verify(g.id, input.bankCode, input.accountNumber), /GDS_ACCOUNT_VERIFICATION_UNAVAILABLE/);
+      await verifiedService.act(claimant, verifiedRequest.id, 'pay', { reason: 'Synthetic statement proves transfer despite lookup outage',
+        bankTransactionRef: `ci:verified:${randomUUID()}`, transferredAt: new Date().toISOString() });
+      assert.equal(lookups, lookupsBeforeRecovery);
+      assert.equal((await balance(g.id)).heldMinor, 0n);
+      assert.equal((await balance(g.id)).availableMinor, 350000n);
+      assert.equal(await db.gdsInternalJournal.count({ where: { orderRef: verifiedRequest.id, kind: 'WITHDRAWAL_PAID' } }), 1);
+      await assert.rejects(accounts.qr(claimant, verifiedRequest.id), /GDS_WITHDRAWAL_QR_NOT_ALLOWED/);
+      await runtime.gdsWithdrawalSettings.update({ where: { id: 'global' }, data: { accountVerificationRequired: false } });
+      console.log('GDS_VERIFIED_RUNTIME_PROVIDER_OUTAGE_RECOVERY=PASS');
+
       const { configureGdsWithdrawals, parseArguments } = require('./configure-gds-withdrawals.cjs');
       const { Client } = require('pg');
       const { execFileSync } = require('node:child_process');
