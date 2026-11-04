@@ -84,6 +84,10 @@ jobs:
           npm run test:demo-data -- --runInBand
           gds-payos-inbox-migration.spec.ts
           gds-wallet-capture-migration.spec.ts
+          gds-withdrawals-migration.spec.ts
+
+      - name: GDS withdrawal API and journal retry policy
+        run: npm test -- --runInBand modules/wallet/gds-withdrawal modules/wallet/gds-transaction-retry modules/wallet/gds-revenue-wallet
 
       - name: Commerce lifecycle PostgreSQL regression
         run: >-

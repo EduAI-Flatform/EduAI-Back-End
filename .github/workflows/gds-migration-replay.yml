@@ -8,7 +8,7 @@ on:
 
 jobs:
   production-baseline-to-head:
-    name: Replay 65 production migrations then 12 GDS/revenue migrations
+    name: Replay production baseline then GDS/revenue/withdrawal migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -43,8 +43,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/gds-pending"
           shopt -s nullglob
-          pending=(prisma/migrations/20261102* prisma/migrations/20261103*)
-          test "${#pending[@]}" -eq 12
+          pending=(prisma/migrations/20261102* prisma/migrations/20261103* prisma/migrations/20261104100000_add_gds_withdrawals)
+          test "${#pending[@]}" -eq 13
           for migration in "${pending[@]}"; do
             mv "$migration" "$RUNNER_TEMP/gds-pending/"
           done
@@ -52,7 +52,7 @@ jobs:
           test "$baseline_count" -eq 65
           npm run prisma:migrate:deploy
           npx prisma migrate status
-      - name: Upgrade the same database through all 12 new migrations
+      - name: Upgrade the same database through all 13 new migrations
         shell: bash
         run: |
           set -euo pipefail
@@ -72,3 +72,6 @@ jobs:
 
       - name: Verify production-classified GDS course and membership checkout
         run: GDS_TEST_PRODUCTION=true node scripts/test-gds-checkout-prisma.cjs
+
+      - name: Verify concurrent GDS withdrawals through real Prisma and PostgreSQL
+        run: node scripts/test-gds-withdrawals-prisma.cjs

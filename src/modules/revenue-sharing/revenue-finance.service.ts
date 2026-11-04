@@ -21,6 +21,15 @@ export class RevenueFinanceService {
   /** Acquire before any cart/user/version locks to maintain consistent lock ordering. */
   async lockCheckout(tx: Prisma.TransactionClient) { await lock(tx); }
 
+  /** Wallet caller holds the same finance lock; refresh refund facts before cash-out. */
+  async reconcileWalletPeriod(tx: Prisma.TransactionClient, periodId: string) {
+    const period = await tx.revenueEarningPeriod.findUniqueOrThrow({ where: { id: periodId }, select: { snapshotId: true } });
+    await this.processSnapshot(tx, period.snapshotId, new Date());
+    const snapshot = await tx.revenueOrderSnapshot.findUniqueOrThrow({ where: { id: period.snapshotId }, select: { orderId: true } });
+    const order = await tx.commerceOrder.findUnique({ where: { id: snapshot.orderId }, include: paymentInclude });
+    return !!order && await this.isVerified(tx, order);
+  }
+
   async captureOrder(tx: Prisma.TransactionClient, orderId: string) {
     await lock(tx);
     await this.activateRetailDue(tx);

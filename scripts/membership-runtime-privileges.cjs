@@ -54,6 +54,21 @@ function buildRuntimeGdsPrivilegeStatement(runtimeUrl) {
   return statements.join('; ');
 }
 
+// Separate from legacy grants so pre-withdrawal schemas remain supported.
+function buildRuntimeGdsWithdrawalPrivilegeStatement(runtimeUrl) {
+  const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
+  const tables = ['gds_withdrawal_settings','gds_withdrawals','gds_withdrawal_events','gds_revenue_projections','gds_revenue_effects']
+    .map(name => 'public.' + quoteIdentifier(name)).join(', ');
+  return [
+    'REVOKE ALL PRIVILEGES ON TABLE ' + tables + ' FROM ' + role + ', PUBLIC',
+    'GRANT SELECT ON TABLE ' + tables + ' TO ' + role,
+    'GRANT INSERT ON TABLE public.gds_withdrawals, public.gds_withdrawal_events, public.gds_revenue_projections, public.gds_revenue_effects TO ' + role,
+    'GRANT UPDATE (minimum_minor, maximum_minor, version, admission_enabled, processing_enabled, updated_at) ON public.gds_withdrawal_settings TO ' + role,
+    'GRANT UPDATE (historical_paid_minor, review_required, reviewed_by_id, reviewed_at, review_reason) ON public.gds_revenue_projections TO ' + role,
+    'REVOKE EXECUTE ON FUNCTION public.gds_withdrawal_new(), public.gds_withdrawal_event_apply(), public.gds_extended_journal_apply(), public.gds_revenue_effect_apply() FROM ' + role + ', PUBLIC',
+  ].join('; ');
+}
+
 const LEGACY_RECONCILIATION_MARKER_TABLE =
   'commerce_reconciliation_legacy_acknowledgements';
 
@@ -120,6 +135,8 @@ async function grantRuntimeMembershipPrivileges(
     await client.query(buildRuntimePrivilegeStatement(runtimeUrl));
     await client.query(buildRuntimeRevenuePrivilegeStatement(runtimeUrl));
     await client.query(buildRuntimeGdsPrivilegeStatement(runtimeUrl));
+    const withdrawalSchema = await client.query("SELECT to_regclass('public.gds_withdrawals') IS NOT NULL AS ready");
+    if (withdrawalSchema?.rows?.[0]?.ready) await client.query(buildRuntimeGdsWithdrawalPrivilegeStatement(runtimeUrl));
     await client.query('COMMIT');
     transactionOpen = false;
   } catch {
@@ -161,6 +178,7 @@ module.exports = {
   GDS_RUNTIME_TABLES,
   GDS_RUNTIME_UPDATES,
   buildRuntimeGdsPrivilegeStatement,
+  buildRuntimeGdsWithdrawalPrivilegeStatement,
   MEMBERSHIP_RUNTIME_TABLES,
   REVENUE_APPEND_ONLY_TABLES,
   buildRuntimeRevenuePrivilegeStatement,
