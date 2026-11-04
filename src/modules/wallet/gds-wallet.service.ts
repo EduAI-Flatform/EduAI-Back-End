@@ -1,7 +1,8 @@
 import { gdsWalletCapabilities } from './gds-wallet-capabilities';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { GdsWithdrawalService } from './gds-withdrawal.service';
 
 export type GdsWalletSummary = {
   available: boolean;
@@ -11,6 +12,10 @@ export type GdsWalletSummary = {
   balance: null | { settledMinor: string; reservedMinor: string; availableMinor: string; currency: 'VND' };
   paymentEnabled: boolean; // Separately gated from topups and recovery.
   topupEnabled: boolean; // Creating a QR is never evidence of wallet credit.
+  withdrawalEnabled?: boolean;
+  withdrawalMinimumMinor?: string;
+  withdrawalMaximumMinor?: string;
+  debtMinor?: string;
   activeTopup: null | {
     topupId: string;
     amountMinor: string;
@@ -22,7 +27,7 @@ export type GdsWalletSummary = {
   /** Read-only, newest-first journal entries; never a substitute for provider proof. */
   recentTransactions: Array<{
     id: string;
-    type: 'TOPUP_CREDIT' | 'RESERVE' | 'CAPTURE' | 'RELEASE';
+    type: 'TOPUP_CREDIT' | 'RESERVE' | 'CAPTURE' | 'RELEASE' | 'WITHDRAWAL_RESERVE' | 'WITHDRAWAL_RELEASE' | 'WITHDRAWAL_PAID' | 'REVENUE_CREDIT' | 'REVENUE_REVERSAL';
     amountMinor: string;
     occurredAt: string;
   }>;
@@ -30,7 +35,8 @@ export type GdsWalletSummary = {
 
 @Injectable()
 export class GdsWalletService {
-  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService,
+    @Optional() private readonly withdrawals?: GdsWithdrawalService) {}
 
   async summary(buyerId: string, topupId?: string): Promise<GdsWalletSummary> {
     const disabled: GdsWalletSummary = {
@@ -41,6 +47,7 @@ export class GdsWalletService {
     if (!capabilities.readEnabled) {
       return disabled;
     }
+    const withdrawalSettings = this.withdrawals ? await this.withdrawals.settings() : null;
     if (topupId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(topupId)) {
       throw new BadRequestException('Invalid topup ID');
     }
@@ -57,6 +64,10 @@ export class GdsWalletService {
     }
     const basis = {
       ...disabled, mode: capabilities.mode, activeTopup,
+      withdrawalEnabled: false,
+      withdrawalMinimumMinor: withdrawalSettings?.minimumMinor ?? '50000',
+      withdrawalMaximumMinor: withdrawalSettings?.maximumMinor ?? '10000000',
+      debtMinor: (wallet.debtMinor ?? 0n).toString(),
       topupEnabled: capabilities.topupEnabled &&
         this.config.payos.environment === 'production' &&
         /^https:\/\//.test(this.config.app.publicAppUrl ?? '') &&
@@ -73,7 +84,7 @@ export class GdsWalletService {
       take: 20,
       select: { id: true, kind: true, amountMinor: true, occurredAt: true },
     });
-    const allowed = new Set(['TOPUP_CREDIT', 'RESERVE', 'CAPTURE', 'RELEASE']);
+    const allowed = new Set(['TOPUP_CREDIT', 'RESERVE', 'CAPTURE', 'RELEASE', 'WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID', 'REVENUE_CREDIT', 'REVENUE_REVERSAL']);
     if (journal.some((entry) => !allowed.has(entry.kind) || entry.amountMinor <= 0n ||
         !Number.isFinite(entry.occurredAt.getTime()))) {
       return { ...basis, state: 'RECONCILIATION_REQUIRED' };
@@ -81,6 +92,7 @@ export class GdsWalletService {
     return {
       ...basis, available: true, state: capabilities.mode === 'production' ? 'READY_PRODUCTION' : 'READY_SANDBOX',
       paymentEnabled: capabilities.checkoutEnabled,
+      withdrawalEnabled: withdrawalSettings?.admissionEnabled === true && withdrawalSettings.processingEnabled && (wallet.debtMinor ?? 0n) === 0n,
       balance: {
         settledMinor: (wallet.availableMinor + wallet.heldMinor).toString(),
         reservedMinor: wallet.heldMinor.toString(),

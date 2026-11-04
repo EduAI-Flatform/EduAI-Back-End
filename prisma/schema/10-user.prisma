@@ -1,4 +1,8 @@
 model User {
+  gdsWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalOwner")
+  gdsProcessedWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalProcessor")
+  gdsWithdrawalEvents GdsWithdrawalEvent[] @relation("GdsWithdrawalActor")
+  gdsRevenueReviews GdsRevenueProjection[] @relation("GdsRevenueReviewer")
   gdsInternalWallet GdsInternalWallet? @relation("GdsInternalWalletOwner")
   gdsInternalTopups GdsInternalTopup[] @relation("GdsInternalTopupOwner")
   buyerWalletLink BuyerWalletLink? @relation("BuyerWalletOwner")

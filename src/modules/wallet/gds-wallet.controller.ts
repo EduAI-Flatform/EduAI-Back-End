@@ -16,7 +16,7 @@ import { GdsTopupCancellationService } from './gds-topup-cancellation.service';
 @ApiBearerAuth()
 @Controller('wallet/gds')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(RoleName.student)
+@Roles(RoleName.student, RoleName.instructor)
 export class GdsWalletController {
   constructor(
     private readonly wallet: GdsWalletService,
@@ -57,6 +57,7 @@ export class GdsWalletController {
 
   /** One order = one idempotency identity. No browser payment proof. */
   @Post('orders/:orderId/pay')
+  @Roles(RoleName.student)
   @RateLimit({ identity: 'user', limit: 5, name: 'gds-wallet-checkout', windowSeconds: 60 })
   payOrder(
     @CurrentUser('id') buyerId: string,

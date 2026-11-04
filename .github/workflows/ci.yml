@@ -35,7 +35,7 @@ jobs:
         run: npm ci
 
       - name: Production deployment authorization gate
-        run: node --test scripts/production-deployment-gate.test.cjs scripts/revenue-release-migrations.test.cjs scripts/configure-gds-production-wallet.test.cjs scripts/gds-production-preflight.test.cjs scripts/gds-runtime-privileges.test.cjs
+        run: node --test scripts/production-deployment-gate.test.cjs scripts/revenue-release-migrations.test.cjs scripts/configure-gds-production-wallet.test.cjs scripts/configure-gds-withdrawals.test.cjs scripts/gds-production-preflight.test.cjs scripts/gds-runtime-privileges.test.cjs
 
       - name: Manual bank transfer security tests
         run: npm test -- --runInBand modules/payments/bank-transfer modules/payments/bank-receipt-access modules/access/course-access.service modules/memberships/service-entitlement modules/memberships/membership-continuity modules/memberships/membership-checkout.service
@@ -84,6 +84,10 @@ jobs:
           npm run test:demo-data -- --runInBand
           gds-payos-inbox-migration.spec.ts
           gds-wallet-capture-migration.spec.ts
+          gds-withdrawals-migration.spec.ts
+
+      - name: GDS withdrawal API and journal retry policy
+        run: npm test -- --runInBand modules/wallet/gds-withdrawal modules/wallet/gds-transaction-retry modules/wallet/gds-revenue-wallet
 
       - name: Commerce lifecycle PostgreSQL regression
         run: >-

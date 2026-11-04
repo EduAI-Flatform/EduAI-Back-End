@@ -8,9 +8,17 @@ function fixture() {
   const release = REVIEWED_REVENUE_MIGRATIONS.map(x => row(x.name, x.sha256));
   return { base, release, input: { allowAlreadyApplied: true, localMigrationNames: [...base, ...release].map(x => x.migration_name), localMigrationChecksums: Object.fromEntries([...base, ...release].map(x => [x.migration_name, x.checksum])), migrationRows: base } };
 }
-test('pins all twelve GDS/revenue upgrade artifacts', () => {
-  assert.equal(REVIEWED_REVENUE_MIGRATIONS.length, 12);
+test('pins all thirteen owner-reviewed GDS/revenue/withdrawal upgrade artifacts', () => {
+  assert.equal(REVIEWED_REVENUE_MIGRATIONS.length, 13);
   assert.deepEqual(assertReviewedRevenueMigrationFingerprints(join(__dirname, '..')), Object.fromEntries(REVIEWED_REVENUE_MIGRATIONS.map(x => [x.name, x.sha256])));
+});
+
+test('accepts only the exact approved withdrawal artifact after the existing release', () => {
+  const { input, base, release } = fixture();
+  const withdrawal = release.find(x => x.migration_name === '20261104100000_add_gds_withdrawals');
+  input.migrationRows = [...base, ...release.filter(x => x !== withdrawal)];
+  assert.deepEqual(assertMigrationLedgerState(input).pendingMigrationNames, [withdrawal.migration_name]);
+  assert.throws(() => assertMigrationLedgerState({ ...input, localMigrationChecksums: { ...input.localMigrationChecksums, [withdrawal.migration_name]: '0'.repeat(64) } }));
 });
 test('accepts only the reviewed release after the receipt baseline is applied', () => {
   const { input, release } = fixture();

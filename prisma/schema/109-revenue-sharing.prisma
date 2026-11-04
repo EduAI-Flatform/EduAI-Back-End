@@ -89,6 +89,7 @@ model RevenueEarningPeriod {
   amountMinor BigInt @map("amount_minor")
   snapshot RevenueOrderSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
   entries RevenueLedgerEntry[]
+  gdsProjection GdsRevenueProjection?
   @@unique([snapshotId, courseId, periodIndex])
   @@index([sellerId, dueAt])
   @@index([dueAt])

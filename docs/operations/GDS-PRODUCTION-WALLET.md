@@ -21,6 +21,33 @@ Migration 20261103040000_harden_gds_runtime_projection changes only the canonica
 
 ## Pause/recovery
 
+## Withdrawal release approved 2026-11-04
+
+The owner approved deployment of the additive withdrawal schema and activation
+for testing with minimum **10,000 VND**, maximum **10,000,000 VND**, no fee.
+This extends the earlier topup/checkout-only description above. Neither source
+deployment nor activation authorizes the agent to create a withdrawal or send
+an external bank transfer.
+
+Migration `20261104100000_add_gds_withdrawals` is pinned by the production runner
+to SHA256 `8015F0029726ECFEA645158CF76299FF8BDFEC4E9A4908E3F2FAE6E411CEBF56`.
+The deploy order is migration, bounded runtime grants, build, process restart,
+readiness, then optional withdrawal activation. Use manual backend deployment
+inputs `gds_withdrawal_action=enable`, `gds_withdrawal_minimum=10000`, and
+`gds_withdrawal_maximum=10000000`; existing topup/checkout inputs stay `preserve`.
+Source pushes use withdrawal `preserve`. The activation helper requires explicit
+authorization, exact deployed SHA, production classification, a non-owner runtime
+role and the applied migration checksum, and appends a SYSTEM audit atomically.
+
+Admin settings remain available at `/admin/dashboard/gds-withdrawals`.
+First activation freezes the historical earnings boundary; prior payouts still
+need review before historical earnings enter spendable GDS. For uncertain bank
+outcomes, keep PROCESSING and held funds until the claiming admin reconciles.
+To stop new withdrawals, use `gds_withdrawal_action=disable`; existing processing
+stays enabled. Do not drop schema/history or disable recovery while holds remain.
+
+## Topup/checkout pause and recovery
+
 Set either workflow action to disable to stop that kind of new transaction. Keep the other setting preserve. Existing webhook processing, retries, cancellation of unpaid intents and wallet reads continue. Do not disable the worker or change merchant/HMAC credentials while pending transfers exist. Review mismatches without inventing payment proof. Recovery records and financial history remain append-only.
 
 ## Verification

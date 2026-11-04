@@ -30,6 +30,8 @@ const REVIEWED_RECEIPT_MIGRATIONS = Object.freeze([
 ]);
 // Reviewed GDS/revenue release. Future migrations remain blocked unless separately reviewed.
 const REVIEWED_REVENUE_MIGRATIONS = Object.freeze([
+  // Owner approved schema-first withdrawal release on 2026-11-04.
+  { name: '20261104100000_add_gds_withdrawals', sha256: '8015F0029726ECFEA645158CF76299FF8BDFEC4E9A4908E3F2FAE6E411CEBF56' },
   { name: '20261103040000_harden_gds_runtime_projection', sha256: 'F66F52DF7008F4B9790B836B58F3B7A58E1AB867ADC13DAEA57809AD8789C49B' },
   { name: '20261102010000_add_buyer_wallet_mirror', sha256: '3B1A272D58E148AD7390042C1FCF023AEC21AD6F5342B89DD5DC42BC83B8C092' },
   { name: '20261102020000_add_gds_payos_topup_intents', sha256: 'C0EC3A2EF1DDA6DF30684F3D5FF5460AB654303AB887D71BB134A4394F8A8E11' },

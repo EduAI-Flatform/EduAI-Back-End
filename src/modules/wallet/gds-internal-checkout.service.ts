@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CommerceFulfillmentService } from '../payments/commerce-fulfillment.service';
 import { prepareGdsCommerceCapture } from './gds-commerce-capture.domain';
 import { GdsWalletInvariantError } from './gds-wallet.domain';
+import { isRetryableGdsTransaction } from './gds-transaction-retry';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -169,14 +170,4 @@ export class GdsInternalCheckoutService {
     }
     throw new GdsWalletInvariantError('GDS_CAPTURE_RETRY_EXHAUSTED');
   }
-}
-
-function isRetryableGdsTransaction(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const failure = error as { code?: string; name?: string; cause?: { kind?: string }; meta?: { code?: string; driverAdapterError?: { cause?: { originalCode?: string; kind?: string } } } };
-  if (failure.code === 'P2034' || failure.code === 'P2002') return true;
-  const cause = failure.meta?.driverAdapterError?.cause;
-  return ((failure.code === 'P2010' || failure.code === 'P2039') &&
-    (failure.meta?.code === '40001' || cause?.originalCode === '40001' || cause?.kind === 'TransactionWriteConflict')) ||
-    (failure.name === 'DriverAdapterError' && failure.cause?.kind === 'TransactionWriteConflict');
 }
