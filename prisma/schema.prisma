@@ -201,6 +201,10 @@ enum TmiEntitlementStatus {
 }
 
 model User {
+  gdsWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalOwner")
+  gdsProcessedWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalProcessor")
+  gdsWithdrawalEvents GdsWithdrawalEvent[] @relation("GdsWithdrawalActor")
+  gdsRevenueReviews GdsRevenueProjection[] @relation("GdsRevenueReviewer")
   gdsInternalWallet GdsInternalWallet? @relation("GdsInternalWalletOwner")
   gdsInternalTopups GdsInternalTopup[] @relation("GdsInternalTopupOwner")
   buyerWalletLink BuyerWalletLink? @relation("BuyerWalletOwner")
@@ -1510,6 +1514,8 @@ model GdsInternalWallet {
   topups         GdsInternalTopup[]
   journal        GdsInternalJournal[]
   holds          GdsInternalHold[]
+  withdrawals    GdsWithdrawal[]
+  revenueProjections GdsRevenueProjection[]
 
   @@map("gds_internal_wallets")
 }
@@ -1729,6 +1735,7 @@ model RevenueEarningPeriod {
   amountMinor BigInt @map("amount_minor")
   snapshot RevenueOrderSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
   entries RevenueLedgerEntry[]
+  gdsProjection GdsRevenueProjection?
   @@unique([snapshotId, courseId, periodIndex])
   @@index([sellerId, dueAt])
   @@index([dueAt])
@@ -1791,9 +1798,13 @@ model GdsWithdrawal {
   transferredAt DateTime? @map("transferred_at")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  wallet GdsInternalWallet @relation(fields: [walletId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  owner User @relation("GdsWithdrawalOwner", fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  processingAdmin User? @relation("GdsWithdrawalProcessor", fields: [processingAdminId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  events GdsWithdrawalEvent[]
   @@unique([ownerId, requestKeyHash])
-  @@index([ownerId, createdAt])
-  @@index([status, createdAt])
+  @@index([ownerId, createdAt], map: "gds_withdrawals_owner_created_idx")
+  @@index([status, createdAt], map: "gds_withdrawals_status_created_idx")
   @@map("gds_withdrawals")
 }
 model GdsWithdrawalEvent {
@@ -1806,7 +1817,9 @@ model GdsWithdrawalEvent {
   bankTransactionRef String? @map("bank_transaction_ref") @db.VarChar(160)
   transferredAt DateTime? @map("transferred_at")
   createdAt DateTime @default(now()) @map("created_at")
-  @@index([withdrawalId, createdAt])
+  withdrawal GdsWithdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  actor User @relation("GdsWithdrawalActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@index([withdrawalId, createdAt], map: "gds_withdrawal_events_history_idx")
   @@map("gds_withdrawal_events")
 }
 model GdsRevenueProjection {
@@ -1821,6 +1834,10 @@ model GdsRevenueProjection {
   reviewReason String? @map("review_reason") @db.VarChar(500)
   revision Int @default(0)
   createdAt DateTime @default(now()) @map("created_at")
+  period RevenueEarningPeriod @relation(fields: [periodId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  wallet GdsInternalWallet @relation(fields: [walletId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reviewedBy User? @relation("GdsRevenueReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  effects GdsRevenueEffect[]
   @@map("gds_revenue_projections")
 }
 model GdsRevenueEffect {
@@ -1831,6 +1848,7 @@ model GdsRevenueEffect {
   availableDeltaMinor BigInt @map("available_delta_minor")
   debtDeltaMinor BigInt @map("debt_delta_minor")
   createdAt DateTime @default(now()) @map("created_at")
+  projection GdsRevenueProjection @relation(fields: [projectionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   @@unique([projectionId, revision])
   @@map("gds_revenue_effects")
 }

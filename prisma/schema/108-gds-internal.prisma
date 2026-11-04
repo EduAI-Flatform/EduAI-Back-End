@@ -17,6 +17,8 @@ model GdsInternalWallet {
   topups         GdsInternalTopup[]
   journal        GdsInternalJournal[]
   holds          GdsInternalHold[]
+  withdrawals    GdsWithdrawal[]
+  revenueProjections GdsRevenueProjection[]
 
   @@map("gds_internal_wallets")
 }
