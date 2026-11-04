@@ -1503,6 +1503,7 @@ model GdsInternalWallet {
   status         String                 @default("ACTIVE") @db.VarChar(16)
   availableMinor BigInt                 @default(0) @map("available_minor")
   heldMinor      BigInt                 @default(0) @map("held_minor")
+  debtMinor      BigInt                 @default(0) @map("debt_minor")
   createdAt      DateTime               @default(now()) @map("created_at")
   updatedAt      DateTime               @updatedAt @map("updated_at")
   buyer          User                   @relation("GdsInternalWalletOwner", fields: [buyerId], references: [id], onDelete: Restrict)
@@ -1756,6 +1757,82 @@ model Role {
   users       UserRole[]
 
   @@map("roles")
+}
+
+// GDS withdrawal source implementation; live activation remains a separate gate.
+model GdsWithdrawalSettings {
+  id String @id @default("global") @db.VarChar(16)
+  minimumMinor BigInt @default(50000) @map("minimum_minor")
+  maximumMinor BigInt @default(10000000) @map("maximum_minor")
+  version Int @default(1)
+  admissionEnabled Boolean @default(false) @map("admission_enabled")
+  processingEnabled Boolean @default(false) @map("processing_enabled")
+  revenueCutoffAt DateTime @default(now()) @map("revenue_cutoff_at")
+  revenueActivatedAt DateTime? @map("revenue_activated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("gds_withdrawal_settings")
+}
+model GdsWithdrawal {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  walletId String @map("wallet_id") @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+  requestKeyHash String @map("request_key_hash") @db.VarChar(64)
+  amountMinor BigInt @map("amount_minor")
+  currency String @default("VND") @db.VarChar(3)
+  bankCode String @map("bank_code") @db.VarChar(32)
+  accountNumber String @map("account_number") @db.VarChar(34)
+  accountHolder String @map("account_holder") @db.VarChar(160)
+  settingsVersion Int @map("settings_version")
+  minimumMinor BigInt @map("minimum_minor")
+  maximumMinor BigInt @map("maximum_minor")
+  status String @default("PENDING") @db.VarChar(16)
+  processingAdminId String? @map("processing_admin_id") @db.Uuid
+  bankTransactionRef String? @unique @map("bank_transaction_ref") @db.VarChar(160)
+  transferredAt DateTime? @map("transferred_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@unique([ownerId, requestKeyHash])
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt])
+  @@map("gds_withdrawals")
+}
+model GdsWithdrawalEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  withdrawalId String @map("withdrawal_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  fromStatus String? @map("from_status") @db.VarChar(16)
+  toStatus String @map("to_status") @db.VarChar(16)
+  reason String @db.VarChar(500)
+  bankTransactionRef String? @map("bank_transaction_ref") @db.VarChar(160)
+  transferredAt DateTime? @map("transferred_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([withdrawalId, createdAt])
+  @@map("gds_withdrawal_events")
+}
+model GdsRevenueProjection {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  periodId String @unique @map("period_id") @db.Uuid
+  walletId String @map("wallet_id") @db.Uuid
+  appliedNetMinor BigInt @default(0) @map("applied_net_minor")
+  historicalPaidMinor BigInt @default(0) @map("historical_paid_minor")
+  reviewRequired Boolean @map("review_required")
+  reviewedById String? @map("reviewed_by_id") @db.Uuid
+  reviewedAt DateTime? @map("reviewed_at")
+  reviewReason String? @map("review_reason") @db.VarChar(500)
+  revision Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("gds_revenue_projections")
+}
+model GdsRevenueEffect {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectionId String @map("projection_id") @db.Uuid
+  revision Int
+  deltaMinor BigInt @map("delta_minor")
+  availableDeltaMinor BigInt @map("available_delta_minor")
+  debtDeltaMinor BigInt @map("debt_delta_minor")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([projectionId, revision])
+  @@map("gds_revenue_effects")
 }
 
 model UserRole {

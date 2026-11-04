@@ -10,6 +10,7 @@ model GdsInternalWallet {
   status         String                 @default("ACTIVE") @db.VarChar(16)
   availableMinor BigInt                 @default(0) @map("available_minor")
   heldMinor      BigInt                 @default(0) @map("held_minor")
+  debtMinor      BigInt                 @default(0) @map("debt_minor")
   createdAt      DateTime               @default(now()) @map("created_at")
   updatedAt      DateTime               @updatedAt @map("updated_at")
   buyer          User                   @relation("GdsInternalWalletOwner", fields: [buyerId], references: [id], onDelete: Restrict)
