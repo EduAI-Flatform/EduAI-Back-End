@@ -98,6 +98,12 @@ export interface BackendConfig {
     checkoutEnabled: boolean;
     qrPreviewEnabled: boolean;
   };
+  bankVerification: {
+    enabled: boolean;
+    clientId?: string;
+    apiKey?: string;
+    supportedBins: string[];
+  };
   payos: {
     environment: ValidatedEnv['PAYOS_ENVIRONMENT'];
     clientId?: string;
@@ -223,6 +229,12 @@ export default function configuration(): BackendConfig {
       checkoutEnabled: env.GDS_WALLET_CHECKOUT_ENABLED && env.GDS_WALLET_SANDBOX_ENABLED &&
         env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS === 'uat',
       qrPreviewEnabled: env.GDS_PAYOS_QR_PREVIEW_ENABLED && env.NODE_ENV !== 'production' && env.DEPLOYMENT_CLASS === 'uat',
+    },
+    bankVerification: {
+      enabled: env.GDS_BANK_VERIFICATION_ENABLED,
+      clientId: env.GDS_VIETQR_CLIENT_ID,
+      apiKey: env.GDS_VIETQR_API_KEY,
+      supportedBins: env.GDS_VIETQR_SUPPORTED_BINS,
     },
     payos: {
       environment: env.PAYOS_ENVIRONMENT,

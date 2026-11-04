@@ -74,6 +74,10 @@ export interface ValidatedEnv {
   GDS_WALLET_SANDBOX_ENABLED: boolean;
   GDS_WALLET_CHECKOUT_ENABLED: boolean;
   GDS_PAYOS_QR_PREVIEW_ENABLED: boolean;
+  GDS_BANK_VERIFICATION_ENABLED: boolean;
+  GDS_VIETQR_CLIENT_ID?: string;
+  GDS_VIETQR_API_KEY?: string;
+  GDS_VIETQR_SUPPORTED_BINS: string[];
   PAYOS_ENVIRONMENT: PayosEnvironment;
   PAYOS_CLIENT_ID?: string;
   PAYOS_API_KEY?: string;
@@ -318,6 +322,10 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     GDS_WALLET_SANDBOX_ENABLED: gdsWalletEnabled ?? parseBoolean(config.GDS_WALLET_SANDBOX_ENABLED, false, 'GDS_WALLET_SANDBOX_ENABLED'),
     GDS_WALLET_CHECKOUT_ENABLED: gdsWalletEnabled ?? parseBoolean(config.GDS_WALLET_CHECKOUT_ENABLED, false, 'GDS_WALLET_CHECKOUT_ENABLED'),
     GDS_PAYOS_QR_PREVIEW_ENABLED: gdsWalletEnabled ?? parseBoolean(config.GDS_PAYOS_QR_PREVIEW_ENABLED, false, 'GDS_PAYOS_QR_PREVIEW_ENABLED'),
+    GDS_BANK_VERIFICATION_ENABLED: parseBoolean(config.GDS_BANK_VERIFICATION_ENABLED, false, 'GDS_BANK_VERIFICATION_ENABLED'),
+    GDS_VIETQR_CLIENT_ID: optionalString(config.GDS_VIETQR_CLIENT_ID),
+    GDS_VIETQR_API_KEY: optionalString(config.GDS_VIETQR_API_KEY),
+    GDS_VIETQR_SUPPORTED_BINS: parseBankBins(config.GDS_VIETQR_SUPPORTED_BINS),
     PAYOS_ENVIRONMENT: payosEnvironment,
     PAYOS_CLIENT_ID: optionalString(config.PAYOS_CLIENT_ID),
     PAYOS_API_KEY: optionalString(config.PAYOS_API_KEY),
@@ -354,6 +362,10 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
       60000,
     ),
   };
+
+  if (validated.GDS_BANK_VERIFICATION_ENABLED && (!validated.GDS_VIETQR_CLIENT_ID || !validated.GDS_VIETQR_API_KEY || !validated.GDS_VIETQR_SUPPORTED_BINS.length)) {
+    throw new Error('GDS_VIETQR_CLIENT_ID, GDS_VIETQR_API_KEY and GDS_VIETQR_SUPPORTED_BINS are required when bank verification is enabled');
+  }
 
   if (validated.NODE_ENV === 'production' && validated.AI_PROVIDER === 'mock') {
     throw new Error('AI_PROVIDER=mock is not allowed in production');
@@ -510,6 +522,14 @@ function validateVnPayConfiguration(config: ValidatedEnv): void {
       );
     }
   }
+}
+
+function parseBankBins(value: unknown): string[] {
+  const raw = optionalString(value);
+  if (!raw) return [];
+  const bins = raw.split(',').map((bin) => bin.trim());
+  if (bins.some((bin) => !/^\d{6}$/.test(bin))) throw new Error('GDS_VIETQR_SUPPORTED_BINS must contain comma-separated six-digit BINs');
+  return [...new Set(bins)];
 }
 
 function parseBoolean(value: unknown, fallback: boolean, name: string): boolean {

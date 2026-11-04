@@ -70,6 +70,10 @@ export class AppConfigService {
     return this.getConfigValue('gdsWallet');
   }
 
+  get bankVerification(): BackendConfig['bankVerification'] {
+    return this.getConfigValue('bankVerification');
+  }
+
   get payos(): BackendConfig['payos'] {
     return this.getConfigValue('payos');
   }
