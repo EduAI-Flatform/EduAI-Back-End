@@ -24,6 +24,19 @@ on:
         type: choice
         default: preserve
         options: [preserve, enable, disable]
+      gds_withdrawal_action:
+        description: 'Owner-approved withdrawal admission action after schema and health verification'
+        type: choice
+        default: preserve
+        options: [preserve, enable, disable]
+      gds_withdrawal_minimum:
+        description: 'Minimum VND per withdrawal when enabling'
+        type: string
+        default: '10000'
+      gds_withdrawal_maximum:
+        description: 'Maximum VND per withdrawal when enabling'
+        type: string
+        default: '10000000'
       gds_wallet_checkout:
         description: 'Production wallet checkout admission; existing transfer reconciliation always continues'
         type: choice
@@ -155,6 +168,9 @@ jobs:
 
       - name: Deploy backend
         env:
+          GDS_WITHDRAWAL_ACTION: ${{ inputs.gds_withdrawal_action || 'preserve' }}
+          GDS_WITHDRAWAL_MINIMUM: ${{ inputs.gds_withdrawal_minimum || '10000' }}
+          GDS_WITHDRAWAL_MAXIMUM: ${{ inputs.gds_withdrawal_maximum || '10000000' }}
           GDS_TOPUP_ACTION: ${{ inputs.gds_wallet_topup || 'preserve' }}
           GDS_CHECKOUT_ACTION: ${{ inputs.gds_wallet_checkout || 'preserve' }}
           GDS_UAT_DATABASE_FINGERPRINT: ${{ inputs.gds_wallet_uat_database_fingerprint || '' }}
@@ -162,6 +178,8 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
+          case "$GDS_WITHDRAWAL_ACTION" in preserve|enable|disable) ;; *) exit 1 ;; esac
+          if [[ ! "$GDS_WITHDRAWAL_MINIMUM" =~ ^[1-9][0-9]{0,15}$ || ! "$GDS_WITHDRAWAL_MAXIMUM" =~ ^[1-9][0-9]{0,15}$ ]]; then exit 1; fi
           for wallet_action in "$GDS_TOPUP_ACTION" "$GDS_CHECKOUT_ACTION"; do
             case "$wallet_action" in preserve|enable|disable) ;; *) exit 1 ;; esac
           done
@@ -184,7 +202,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -i ~/.ssh/eduai_deploy \
             -p "$VPS_PORT" \
-            "$VPS_USER@$VPS_HOST" "EXPECTED_DEPLOY_SHA='$GITHUB_SHA' GDS_TOPUP_ACTION='$GDS_TOPUP_ACTION' GDS_CHECKOUT_ACTION='$GDS_CHECKOUT_ACTION' GDS_UAT_DATABASE_FINGERPRINT='$GDS_UAT_DATABASE_FINGERPRINT' bash -s" << 'EOF'
+            "$VPS_USER@$VPS_HOST" "EXPECTED_DEPLOY_SHA='$GITHUB_SHA' GDS_WITHDRAWAL_ACTION='$GDS_WITHDRAWAL_ACTION' GDS_WITHDRAWAL_MINIMUM='$GDS_WITHDRAWAL_MINIMUM' GDS_WITHDRAWAL_MAXIMUM='$GDS_WITHDRAWAL_MAXIMUM' GDS_TOPUP_ACTION='$GDS_TOPUP_ACTION' GDS_CHECKOUT_ACTION='$GDS_CHECKOUT_ACTION' GDS_UAT_DATABASE_FINGERPRINT='$GDS_UAT_DATABASE_FINGERPRINT' bash -s" << 'EOF'
           set -Eeuo pipefail
 
           deployment_stage="initialization"
@@ -437,6 +455,11 @@ jobs:
 
             sleep 5
           done
+
+          deployment_stage="withdrawal-configuration"
+          if [ "$GDS_WITHDRAWAL_ACTION" != "preserve" ]; then
+            node scripts/configure-gds-withdrawals.cjs --action "$GDS_WITHDRAWAL_ACTION" --minimum "$GDS_WITHDRAWAL_MINIMUM" --maximum "$GDS_WITHDRAWAL_MAXIMUM" --expected-sha "$EXPECTED_DEPLOY_SHA" --authorize-production-withdrawals
+          fi
 
           pm2 logs eduai-backend --lines 300 --nostream 2>&1 | node -e '
             let log = "";

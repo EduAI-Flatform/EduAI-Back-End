@@ -98,6 +98,8 @@ async function main() {
       await db.$executeRawUnsafe(statement);
     }
     await db.$executeRawUnsafe(`GRANT SELECT ON revenue_earning_periods, revenue_ledger_entries TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT SELECT(migration_name,checksum,finished_at,rolled_back_at) ON _prisma_migrations TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT INSERT ON audit_logs TO "${role}"`);
     const runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
     try {
       const runtimeRevenue = new GdsRevenueWalletService(runtime, config, new RevenueFinanceService(runtime));
@@ -109,6 +111,16 @@ async function main() {
       await assert.rejects(runtime.gdsInternalWallet.update({ where: { id: f.wallet.id }, data: { debtMinor: 1n } }));
       await assert.rejects(runtime.gdsWithdrawal.update({ where: { id: created.id }, data: { status: 'PAID' } }));
       console.log('GDS_WITHDRAWAL_RESTRICTED_RUNTIME=PASS');
+      const { configureGdsWithdrawals, parseArguments } = require('./configure-gds-withdrawals.cjs');
+      const { Client } = require('pg');
+      const { execFileSync } = require('node:child_process');
+      class RuntimeClient extends Client { constructor(config) { super({ ...config, options: `-c role=${role}` }); } }
+      const sha = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { encoding: 'utf8' }).trim();
+      const activation = await configureGdsWithdrawals(parseArguments(['--action','enable','--minimum','10000','--maximum','10000000','--expected-sha',sha,'--authorize-production-withdrawals']), {
+        environment: { NODE_ENV: 'production', DEPLOYMENT_CLASS: 'production', DATABASE_URL: process.env.DATABASE_URL }, ClientConstructor: RuntimeClient,
+      });
+      assert.equal(activation.minimumMinor, '10000'); assert.equal(activation.admissionEnabled, true);
+      console.log('GDS_WITHDRAWAL_OWNER_APPROVED_ACTIVATION=PASS');
     } finally { await runtime.$disconnect(); }
   } finally { await db.$disconnect(); }
 }

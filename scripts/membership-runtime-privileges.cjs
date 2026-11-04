@@ -136,7 +136,11 @@ async function grantRuntimeMembershipPrivileges(
     await client.query(buildRuntimeRevenuePrivilegeStatement(runtimeUrl));
     await client.query(buildRuntimeGdsPrivilegeStatement(runtimeUrl));
     const withdrawalSchema = await client.query("SELECT to_regclass('public.gds_withdrawals') IS NOT NULL AS ready");
-    if (withdrawalSchema?.rows?.[0]?.ready) await client.query(buildRuntimeGdsWithdrawalPrivilegeStatement(runtimeUrl));
+    if (withdrawalSchema?.rows?.[0]?.ready) {
+      await client.query(buildRuntimeGdsWithdrawalPrivilegeStatement(runtimeUrl));
+      // Activation verifies only the approved migration's public metadata.
+      await client.query('GRANT SELECT (migration_name, checksum, finished_at, rolled_back_at) ON public._prisma_migrations TO ' + quoteIdentifier(runtimeRoleFromUrl(runtimeUrl)));
+    }
     await client.query('COMMIT');
     transactionOpen = false;
   } catch {

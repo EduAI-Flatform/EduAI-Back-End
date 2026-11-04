@@ -44,3 +44,14 @@ test('wallet configuration is repaired before npm ci triggers Prisma postinstall
  assert.ok(deploy.indexOf('node scripts/configure-gds-production-wallet.cjs')<deploy.indexOf('          npm ci'));
  assert.ok(deploy.indexOf('          npm ci')>=0);
 });
+
+test('withdrawal activation is explicit and follows migration, restart and readiness', () => {
+  assert.match(trigger, /gds_withdrawal_action:[\s\S]*?default: preserve/);
+  assert.match(trigger, /gds_withdrawal_minimum:[\s\S]*?default: '10000'/);
+  assert.match(workflow, /inputs.gds_withdrawal_action \|\| 'preserve'/);
+  const activation = workflow.indexOf('deployment_stage="withdrawal-configuration"');
+  assert.ok(activation > workflow.indexOf('npm run prisma:migrate:production'));
+  assert.ok(activation > workflow.indexOf('npm run process:restart:production'));
+  assert.ok(activation > workflow.indexOf('Backend readiness check timed out'));
+  assert.match(workflow, /configure-gds-withdrawals.cjs[\s\S]*?--expected-sha "\$EXPECTED_DEPLOY_SHA" --authorize-production-withdrawals/);
+});
