@@ -11,6 +11,7 @@ import { GdsCreateTopupDto } from './dto/gds-create-topup.dto';
 import { GdsPayosQrPreviewService } from './gds-payos-qr-preview.service';
 import { GdsInternalCheckoutService } from './gds-internal-checkout.service';
 import { GdsTopupCancellationService } from './gds-topup-cancellation.service';
+import { parseHistoryQuery } from './gds-wallet-history';
 
 @ApiTags('GDS Wallet')
 @ApiBearerAuth()
@@ -34,6 +35,16 @@ export class GdsWalletController {
     @CurrentUser('roles') roles?: RoleName[],
   ) {
     return this.wallet.summary(buyerId, topupId, roles);
+  }
+
+  @Get('transactions')
+  @ApiQuery({ name: 'filter', required: false, enum: ['all','incoming','outgoing','payments','withdrawals'] })
+  @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 } })
+  @ApiQuery({ name: 'cursor', required: false, schema: { type: 'string', maxLength: 512 } })
+  @RateLimit({ identity: 'user', limit: 30, name: 'gds-wallet-history', windowSeconds: 60 })
+  transactions(@CurrentUser('id') ownerId: string, @Query('filter') filter?: string,
+    @Query('limit') limit?: string, @Query('cursor') cursor?: string) {
+    return this.wallet.transactions(ownerId, parseHistoryQuery(ownerId, filter, limit, cursor));
   }
 
   @Post('topups/payos')

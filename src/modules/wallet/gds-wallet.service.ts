@@ -1,11 +1,12 @@
 import { gdsWalletCapabilities } from './gds-wallet-capabilities';
-import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Optional } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GdsWithdrawalService } from './gds-withdrawal.service';
 import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { GdsIncomeSummary, GdsWalletTotals, isVndTotal, readIncomeSummary, walletTotalsQuery } from './gds-wallet-metrics';
 import { isRetryableGdsTransaction } from './gds-transaction-retry';
+import { HistoryQuery, readHistoryPage } from './gds-wallet-history';
 
 export type GdsWalletSummary = {
   available: boolean;
@@ -22,6 +23,8 @@ export type GdsWalletSummary = {
   paymentHeldMinor?: string;
   withdrawalHeldMinor?: string;
   totalWithdrawnMinor?: string;
+  totalDepositedMinor?: string;
+  totalPaidMinor?: string;
   income?: GdsIncomeSummary | null;
   activeTopup: null | {
     topupId: string;
@@ -46,6 +49,11 @@ export type GdsWalletSummary = {
 export class GdsWalletService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService,
     @Optional() private readonly withdrawals?: GdsWithdrawalService) {}
+
+  transactions(ownerId: string, query: HistoryQuery) {
+    if (!gdsWalletCapabilities(this.config).readEnabled) throw new ForbiddenException('GDS_WALLET_UNAVAILABLE');
+    return readHistoryPage(this.prisma, ownerId, query);
+  }
 
   async summary(buyerId: string, topupId?: string, roles: readonly RoleName[] = []): Promise<GdsWalletSummary> {
     const disabled: GdsWalletSummary = {
