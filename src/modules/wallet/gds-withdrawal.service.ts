@@ -68,6 +68,7 @@ export class GdsWithdrawalService {
       if (input.verificationId && !proof) throw new ConflictException('GDS_ACCOUNT_VERIFICATION_INVALID_OR_EXPIRED');
       const accountHolder = proof?.accountHolder ?? input.accountHolder?.trim();
       if (!accountHolder) throw new BadRequestException('GDS_ACCOUNT_HOLDER_REQUIRED');
+      if (!proof && !/^[A-Z ]{2,160}$/.test(accountHolder)) throw new BadRequestException('GDS_ACCOUNT_HOLDER_INVALID');
       await this.revenue.syncOwner(tx, ownerId);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM gds_internal_wallets WHERE buyer_id=${ownerId}::uuid FOR UPDATE`);
       const wallet = await tx.gdsInternalWallet.findUnique({ where: { buyerId: ownerId } });

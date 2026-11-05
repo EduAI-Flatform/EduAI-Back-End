@@ -28,6 +28,13 @@ function setup(accounts?: { available: jest.Mock; resolve: jest.Mock; verifyTran
 }
 const input = { amountMinor: '50000', bankCode: 'MB', accountNumber: '123456789', accountHolder: 'NGUYEN VAN A' };
 describe('GDS withdrawal API and service boundaries', () => {
+  it.each(['NGUYEN VAN A123', 'NGUYEN@VAN A', 'NGUYEN 😀', 'Nguyễn Văn An', 'NGUYEN\u200bAN'])('rejects an invalid manually supplied holder before touching funds: %s', async accountHolder => {
+    const { service, tx, revenue } = setup();
+    await expect(service.create('owner', { ...input, accountHolder }, 'unique-request-key-123')).rejects.toThrow('GDS_ACCOUNT_HOLDER_INVALID');
+    expect(revenue.syncOwner).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawal.create).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
   it('requires successful evidence before touching funds when mandatory verification is enabled', async () => {
     const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn().mockRejectedValue(new Error('INVALID_OR_EXPIRED')), verifyTransfer: jest.fn() };
     const { service, tx, revenue } = setup(accounts);
