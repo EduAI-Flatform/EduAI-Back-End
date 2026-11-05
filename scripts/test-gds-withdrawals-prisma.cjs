@@ -96,13 +96,14 @@ async function main() {
     assert.equal(manualQr.accountNumber, input.accountNumber);
     assert.equal(manualQr.amountMinor, input.amountMinor);
     await assert.rejects(manualAccounts.qr(claimed.processingAdminId === admin ? otherAdmin : admin, payable.id), /GDS_WITHDRAWAL_QR_NOT_ALLOWED/);
-    const proof = { reason: 'Synthetic bank statement checked', bankTransactionRef: `ci:${randomUUID()}`, transferredAt: new Date().toISOString() };
+    const proof = { bankTransactionRef: `ci:${randomUUID()}`, transferredAt: new Date().toISOString() };
     await assert.rejects(service.act(e.id, payable.id, 'cancel', { reason: 'Too late' }, true));
     const pays = await settle([service.act(claimed.processingAdminId, payable.id, 'pay', proof), service.act(claimed.processingAdminId, payable.id, 'pay', proof)]);
     assert.equal(pays.filter(r => r.status === 'fulfilled').length, 1);
     assert.equal((await balance(e.id)).availableMinor, 50000n);
     assert.equal((await balance(e.id)).heldMinor, 0n);
     assert.equal(await db.gdsInternalJournal.count({ where: { orderRef: payable.id, kind: 'WITHDRAWAL_PAID' } }), 1);
+    assert.equal((await db.gdsWithdrawalEvent.findFirstOrThrow({ where: { withdrawalId: payable.id, toStatus: 'PAID' } })).reason, 'Admin xác nhận đã chuyển khoản.');
     console.log('GDS_TRANSFER_CLAIM_AND_PAID_RACE=PASS');
 
     // Exercise real Prisma calls under the bounded production-style role.

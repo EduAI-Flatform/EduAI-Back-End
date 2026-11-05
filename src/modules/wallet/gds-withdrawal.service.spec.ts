@@ -4,7 +4,7 @@ import { RoleName } from '../../../generated/prisma/client';
 import { GdsWithdrawalService } from './gds-withdrawal.service';
 import { GdsWithdrawalController, GdsWithdrawalAdminController } from './gds-withdrawal.controller';
 import { GdsWalletController } from './gds-wallet.controller';
-import { GdsConfirmRecipientDto, GdsCreateWithdrawalDto, GdsWithdrawalPageDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
+import { GdsConfirmRecipientDto, GdsCreateWithdrawalDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalPayDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
 
 const pipe = new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true });
 const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true } };
@@ -28,6 +28,24 @@ function setup(accounts?: { available: jest.Mock; resolve: jest.Mock; verifyTran
 }
 const input = { amountMinor: '50000', bankCode: 'MB', accountNumber: '123456789', accountHolder: 'NGUYEN VAN A' };
 describe('GDS withdrawal API and service boundaries', () => {
+  it('permits absent or blank paid notes while retaining payment facts and strict reasons on other actions', async () => {
+    const facts = { bankTransactionRef: 'BANK-REFERENCE', transferredAt: new Date().toISOString() };
+    for (const reason of [undefined, '', '   ']) await expect(pipe.transform({ ...facts, reason }, { type: 'body', metatype: GdsWithdrawalPayDto })).resolves.toMatchObject(facts);
+    await expect(pipe.transform({ reason: 'x'.repeat(501), ...facts }, { type: 'body', metatype: GdsWithdrawalPayDto })).rejects.toThrow();
+    await expect(pipe.transform({}, { type: 'body', metatype: GdsWithdrawalPayDto })).rejects.toThrow();
+    await expect(pipe.transform({}, { type: 'body', metatype: GdsWithdrawalActionDto })).rejects.toThrow();
+  });
+  it('records paid without a note using a truthful system reason, while requiring reasons for rejection/failure', async () => {
+    const { service, tx, row } = setup();
+    tx.gdsWithdrawal.findFirst.mockResolvedValue({ ...row, status: 'PROCESSING', processingAdminId: 'admin' });
+    await service.act('admin', row.id, 'pay', { bankTransactionRef: 'BANK-REFERENCE', transferredAt: new Date().toISOString() });
+    expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ toStatus: 'PAID', reason: 'Admin xác nhận đã chuyển khoản.', bankTransactionRef: 'BANK-REFERENCE' }) });
+    tx.gdsWithdrawalEvent.create.mockClear();
+    await expect(service.act('admin', row.id, 'fail', { reason: '' })).rejects.toThrow('GDS_WITHDRAWAL_REASON_REQUIRED');
+    tx.gdsWithdrawal.findFirst.mockResolvedValue(row);
+    await expect(service.act('admin', row.id, 'reject', { reason: '' })).rejects.toThrow('GDS_WITHDRAWAL_REASON_REQUIRED');
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
   it('accepts the minimal confirmation contract and rejects injected status/actor', async () => {
     await expect(pipe.transform({ confirmed: true }, { type: 'body', metatype: GdsConfirmRecipientDto })).resolves.toMatchObject({ confirmed: true });
     await expect(pipe.transform({ confirmed: true, actorId: 'other', status: 'PAID' }, { type: 'body', metatype: GdsConfirmRecipientDto })).rejects.toThrow();

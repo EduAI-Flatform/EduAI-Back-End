@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { GdsWithdrawal, Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GdsConfirmRecipientDto, GdsCreateWithdrawalDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
+import { GdsConfirmRecipientDto, GdsCreateWithdrawalDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalPayDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
 import { GdsRevenueWalletService, lockGdsFinance } from './gds-revenue-wallet.service';
 import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { nextWithdrawalStatus, validateWithdrawalAmount, WithdrawalAction } from './gds-withdrawal.domain';
@@ -142,7 +142,8 @@ export class GdsWithdrawalService {
     });
   }
 
-  async act(actorId: string, id: string, action: WithdrawalAction, input: GdsWithdrawalActionDto, ownerOnly = false) {
+  async act(actorId: string, id: string, action: WithdrawalAction, input: GdsWithdrawalActionDto | GdsWithdrawalPayDto, ownerOnly = false) {
+    if (action !== 'pay' && !input.reason?.trim()) throw new BadRequestException('GDS_WITHDRAWAL_REASON_REQUIRED');
     if (action === 'process' && this.accounts) {
       const pending = await this.prisma.gdsWithdrawal.findUnique({ where: { id } });
       if (!pending) throw new NotFoundException('GDS_WITHDRAWAL_NOT_FOUND');
@@ -175,7 +176,7 @@ export class GdsWithdrawalService {
         const when = new Date(input.transferredAt);
         if (!Number.isFinite(when.getTime()) || when < row.createdAt || when > new Date()) throw new BadRequestException('GDS_WITHDRAWAL_INVALID_TRANSFER_TIME');
       } else if (input.bankTransactionRef || input.transferredAt) throw new BadRequestException('GDS_WITHDRAWAL_UNEXPECTED_PAYMENT_PROOF');
-      await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: id, actorId, fromStatus: row.status, toStatus: status, reason: input.reason,
+      await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: id, actorId, fromStatus: row.status, toStatus: status, reason: input.reason?.trim() || 'Admin xác nhận đã chuyển khoản.',
         bankTransactionRef: action === 'pay' ? input.bankTransactionRef!.trim() : undefined,
         transferredAt: action === 'pay' ? new Date(input.transferredAt!) : undefined } });
       return { ...withdrawalResponse(await tx.gdsWithdrawal.findUniqueOrThrow({ where: { id } }), true),
