@@ -19,6 +19,38 @@ apply reviewed migrations separately against the isolated Neon TEST database.
 
 ## UAT variables
 
+### Schema-first update for GDS withdrawals (2026-11-05)
+
+Render pulls `dev` source independently of the VPS production deployment. A green
+build does not apply migrations: the build/start commands above intentionally do
+not write database schema. A Render DB must be checked separately from the local
+`.env` database and the production DB.
+
+Before running the new withdrawal code, compare `prisma migrate status` against
+the **confirmed Render TEST database**. Relevant additions after revenue sharing:
+
+- `20261103040000_harden_gds_runtime_projection`
+- `20261104100000_add_gds_withdrawals`
+- `20261104120000_add_gds_account_verifications`
+
+Missing withdrawal tables or `debt_minor` can make `GET /wallet/gds` return 500
+and cause the revenue worker to retry. Prisma `P2021`/`P2022` is logged as
+`DATABASE_SCHEMA_OUTDATED` without exposing banking arguments. The UI cannot
+show withdrawal controls until the wallet summary succeeds.
+
+Apply only reviewed pending migrations to the confirmed isolated TEST database
+with `npm run prisma:migrate:deploy`; do not reset, seed, or copy production data.
+Keep provider lookup and mandatory verification OFF without entitlement/UAT.
+New withdrawal settings default admission/processing OFF. Enable test admission
+and processing explicitly via the existing admin settings with limits
+10,000–10,000,000 VND and verification OFF, only after schema checks pass.
+Do not create a real topup or transfer to verify a schema repair.
+
+Afterwards verify migration status, wallet summary, user withdrawal settings and
+admin settings on the actual Render API used by Vercel. A different local DB
+passing checks does not prove Render is repaired. Apply no production changes
+as part of this test-environment repair.
+
 ```ini
 NODE_ENV=development
 DEPLOYMENT_CLASS=uat

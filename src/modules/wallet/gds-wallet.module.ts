@@ -16,10 +16,14 @@ import { PaymentsModule } from '../payments/payments.module';
 import { GdsWithdrawalController, GdsWithdrawalAdminController } from './gds-withdrawal.controller';
 import { GdsWithdrawalService } from './gds-withdrawal.service';
 import { GdsRevenueWalletService } from './gds-revenue-wallet.service';
+import { GdsBankCatalogueService } from './gds-bank-catalogue.service';
+import { GdsBankLookupProvider } from './gds-bank-provider';
+import { GdsAccountVerificationService } from './gds-account-verification.service';
+import { GdsBankController, GdsBankAdminController, GdsBankLogoController } from './gds-bank.controller';
 
 @Module({
   imports: [AppConfigModule, AuthModule, PrismaModule, PaymentsModule, AuditModule],
-  controllers: [GdsWalletController, GdsWithdrawalController, GdsWithdrawalAdminController],
-  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService, GdsPayosQrPreviewService, GdsInternalCheckoutService, GdsTopupCancellationService, GdsWithdrawalService, GdsRevenueWalletService],
+  controllers: [GdsWalletController, GdsWithdrawalController, GdsWithdrawalAdminController, GdsBankController, GdsBankAdminController, GdsBankLogoController],
+  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService, GdsPayosQrPreviewService, GdsInternalCheckoutService, GdsTopupCancellationService, GdsWithdrawalService, GdsRevenueWalletService, GdsBankCatalogueService, GdsBankLookupProvider, GdsAccountVerificationService],
 })
 export class GdsWalletModule {}

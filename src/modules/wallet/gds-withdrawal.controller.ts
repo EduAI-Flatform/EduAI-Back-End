@@ -6,7 +6,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { GdsCreateWithdrawalDto, GdsRevenueReviewDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
+import { GdsCreateWithdrawalDto, GdsRevenueReviewDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalPayDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
 import { GdsWithdrawalService } from './gds-withdrawal.service';
 import { GdsRevenueWalletService } from './gds-revenue-wallet.service';
 
@@ -36,7 +36,7 @@ export class GdsWithdrawalAdminController {
   @Post('withdrawals/:id/approve') approve(@CurrentUser('id') actor: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsWithdrawalActionDto) { return this.withdrawals.act(actor, id, 'approve', input); }
   @Post('withdrawals/:id/reject') reject(@CurrentUser('id') actor: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsWithdrawalActionDto) { return this.withdrawals.act(actor, id, 'reject', input); }
   @Post('withdrawals/:id/process') process(@CurrentUser('id') actor: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsWithdrawalActionDto) { return this.withdrawals.act(actor, id, 'process', input); }
-  @Post('withdrawals/:id/pay') pay(@CurrentUser('id') actor: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsWithdrawalActionDto) { return this.withdrawals.act(actor, id, 'pay', input); }
+  @Post('withdrawals/:id/pay') pay(@CurrentUser('id') actor: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsWithdrawalPayDto) { return this.withdrawals.act(actor, id, 'pay', input); }
   @Post('withdrawals/:id/fail') fail(@CurrentUser('id') actor: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsWithdrawalActionDto) { return this.withdrawals.act(actor, id, 'fail', input); }
   @Get('revenue-reviews') reviews(@Query() query: GdsWithdrawalPageDto) { return this.revenue.reviews(query); }
   @Post('revenue-reviews/:id/approve') review(@CurrentUser('id') actor: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsRevenueReviewDto) { return this.revenue.approveReview(actor, id, input); }

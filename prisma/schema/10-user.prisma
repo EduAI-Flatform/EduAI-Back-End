@@ -1,4 +1,6 @@
 model User {
+  gdsAccountVerifications GdsAccountVerification[] @relation("AccountVerificationOwner")
+  gdsPerformedAccountVerifications GdsAccountVerification[] @relation("AccountVerificationActor")
   gdsWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalOwner")
   gdsProcessedWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalProcessor")
   gdsWithdrawalEvents GdsWithdrawalEvent[] @relation("GdsWithdrawalActor")

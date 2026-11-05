@@ -69,6 +69,16 @@ function buildRuntimeGdsWithdrawalPrivilegeStatement(runtimeUrl) {
   ].join('; ');
 }
 
+// Applied only after the additive recipient-verification migration exists.
+function buildRuntimeGdsVerificationPrivilegeStatement(runtimeUrl) {
+  const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
+  return [
+    'REVOKE ALL PRIVILEGES ON public.gds_account_verifications FROM ' + role + ', PUBLIC',
+    'GRANT SELECT, INSERT ON public.gds_account_verifications TO ' + role,
+    'GRANT UPDATE (account_verification_required) ON public.gds_withdrawal_settings TO ' + role,
+  ].join('; ');
+}
+
 const LEGACY_RECONCILIATION_MARKER_TABLE =
   'commerce_reconciliation_legacy_acknowledgements';
 
@@ -140,6 +150,10 @@ async function grantRuntimeMembershipPrivileges(
       await client.query(buildRuntimeGdsWithdrawalPrivilegeStatement(runtimeUrl));
       // Activation verifies only the approved migration's public metadata.
       await client.query('GRANT SELECT (migration_name, checksum, finished_at, rolled_back_at) ON public._prisma_migrations TO ' + quoteIdentifier(runtimeRoleFromUrl(runtimeUrl)));
+      const verificationSchema = await client.query("SELECT to_regclass('public.gds_account_verifications') IS NOT NULL AS ready");
+      if (verificationSchema?.rows?.[0]?.ready) {
+        await client.query(buildRuntimeGdsVerificationPrivilegeStatement(runtimeUrl));
+      }
     }
     await client.query('COMMIT');
     transactionOpen = false;
@@ -183,6 +197,7 @@ module.exports = {
   GDS_RUNTIME_UPDATES,
   buildRuntimeGdsPrivilegeStatement,
   buildRuntimeGdsWithdrawalPrivilegeStatement,
+  buildRuntimeGdsVerificationPrivilegeStatement,
   MEMBERSHIP_RUNTIME_TABLES,
   REVENUE_APPEND_ONLY_TABLES,
   buildRuntimeRevenuePrivilegeStatement,

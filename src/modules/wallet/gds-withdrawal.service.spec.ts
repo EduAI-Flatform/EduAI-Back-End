@@ -4,14 +4,14 @@ import { RoleName } from '../../../generated/prisma/client';
 import { GdsWithdrawalService } from './gds-withdrawal.service';
 import { GdsWithdrawalController, GdsWithdrawalAdminController } from './gds-withdrawal.controller';
 import { GdsWalletController } from './gds-wallet.controller';
-import { GdsCreateWithdrawalDto, GdsWithdrawalPageDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
+import { GdsConfirmRecipientDto, GdsCreateWithdrawalDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalPayDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
 
 const pipe = new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true });
 const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true } };
 const makeRow = () => ({ id: 'request-id', ownerId: 'owner', walletId: 'wallet', requestKeyHash: 'private-hash', amountMinor: 50000n,
   bankCode: 'MB', accountNumber: '123456789', accountHolder: 'NGUYEN VAN A', status: 'PENDING',
   minimumMinor: 50000n, maximumMinor: 10000000n, createdAt: new Date('2026-01-01'), processingAdminId: null });
-function setup() {
+function setup(accounts?: { available: jest.Mock; resolve: jest.Mock; verifyTransfer: jest.Mock }) {
   const row = makeRow();
   const tx = {
     $queryRaw: jest.fn(),
@@ -24,10 +24,139 @@ function setup() {
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
   const revenue = { transaction: (fn: (arg: typeof tx) => unknown) => fn(tx), syncOwner: jest.fn() };
-  return { row, tx, revenue, service: new GdsWithdrawalService(tx as never, config as never, revenue as never) };
+  return { row, tx, revenue, service: new GdsWithdrawalService(tx as never, config as never, revenue as never, accounts as never) };
 }
 const input = { amountMinor: '50000', bankCode: 'MB', accountNumber: '123456789', accountHolder: 'NGUYEN VAN A' };
 describe('GDS withdrawal API and service boundaries', () => {
+  it('permits absent or blank paid notes while retaining payment facts and strict reasons on other actions', async () => {
+    const facts = { bankTransactionRef: 'BANK-REFERENCE', transferredAt: new Date().toISOString() };
+    for (const reason of [undefined, '', '   ']) await expect(pipe.transform({ ...facts, reason }, { type: 'body', metatype: GdsWithdrawalPayDto })).resolves.toMatchObject(facts);
+    await expect(pipe.transform({ reason: 'x'.repeat(501), ...facts }, { type: 'body', metatype: GdsWithdrawalPayDto })).rejects.toThrow();
+    await expect(pipe.transform({}, { type: 'body', metatype: GdsWithdrawalPayDto })).rejects.toThrow();
+    await expect(pipe.transform({}, { type: 'body', metatype: GdsWithdrawalActionDto })).rejects.toThrow();
+  });
+  it('records paid without a note using a truthful system reason, while requiring reasons for rejection/failure', async () => {
+    const { service, tx, row } = setup();
+    tx.gdsWithdrawal.findFirst.mockResolvedValue({ ...row, status: 'PROCESSING', processingAdminId: 'admin' });
+    await service.act('admin', row.id, 'pay', { bankTransactionRef: 'BANK-REFERENCE', transferredAt: new Date().toISOString() });
+    expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ toStatus: 'PAID', reason: 'Admin xác nhận đã chuyển khoản.', bankTransactionRef: 'BANK-REFERENCE' }) });
+    tx.gdsWithdrawalEvent.create.mockClear();
+    await expect(service.act('admin', row.id, 'fail', { reason: '' })).rejects.toThrow('GDS_WITHDRAWAL_REASON_REQUIRED');
+    tx.gdsWithdrawal.findFirst.mockResolvedValue(row);
+    await expect(service.act('admin', row.id, 'reject', { reason: '' })).rejects.toThrow('GDS_WITHDRAWAL_REASON_REQUIRED');
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it('accepts the minimal confirmation contract and rejects injected status/actor', async () => {
+    await expect(pipe.transform({ confirmed: true }, { type: 'body', metatype: GdsConfirmRecipientDto })).resolves.toMatchObject({ confirmed: true });
+    await expect(pipe.transform({ confirmed: true, actorId: 'other', status: 'PAID' }, { type: 'body', metatype: GdsConfirmRecipientDto })).rejects.toThrow();
+  });
+  it('uses provider evidence for one-button approval under mandatory verification', async () => {
+    const proof = { id: 'provider-proof', verifiedAt: new Date(), expiresAt: new Date(Date.now() + 900000) };
+    const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn(), verifyTransfer: jest.fn().mockResolvedValue(proof), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), requireTransferProof: jest.fn().mockResolvedValue(proof), recordManual: jest.fn() };
+    const { service, tx } = setup(accounts);
+    const settings = await tx.gdsWithdrawalSettings.findUniqueOrThrow();
+    tx.gdsWithdrawalSettings.findUniqueOrThrow.mockResolvedValue({ ...settings, accountVerificationRequired: true } as never);
+    const result = await service.confirmRecipient('admin', 'request-id', { confirmed: true });
+    expect(accounts.verifyTransfer).toHaveBeenCalledWith('admin', 'request-id');
+    expect(accounts.recordManual).not.toHaveBeenCalled();
+    expect(result.recipientCheck.method).toBe('PROVIDER');
+    expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledTimes(2);
+  });
+  it('approves and claims in one transaction with one explicit confirmation and no re-entered name or note', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(false), resolve: jest.fn(), verifyTransfer: jest.fn(), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), requireTransferProof: jest.fn(), recordManual: jest.fn().mockResolvedValue({ id: 'manual-proof', verifiedAt: new Date(), expiresAt: new Date(Date.now() + 900000) }) };
+    const { service, tx } = setup(accounts);
+    await service.confirmRecipient('admin', 'request-id', { confirmed: true });
+    expect(accounts.recordManual).toHaveBeenCalled();
+    expect(accounts.verifyTransfer).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ fromStatus: 'PENDING', toStatus: 'APPROVED', actorId: 'admin' }) });
+    expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ fromStatus: 'APPROVED', toStatus: 'PROCESSING', actorId: 'admin' }) });
+    expect(accounts.recordManual.mock.calls[0][4]).toBe(input.accountHolder);
+  });
+  it('uses one waiting-for-transfer filter for both stored approved and processing requests', async () => {
+    const { service, tx } = setup();
+    await service.list({ page: 1, pageSize: 20, status: 'AWAITING_TRANSFER' });
+    expect(tx.gdsWithdrawal.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { status: { in: ['APPROVED', 'PROCESSING'] } } }));
+  });
+  it.each(['APPROVED', 'PROCESSING'])('handles legacy or retried %s confirmation without repeating approval or claim events', async status => {
+    const accounts = { available: jest.fn(), resolve: jest.fn(), verifyTransfer: jest.fn(), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), recordManual: jest.fn().mockResolvedValue({ id: 'proof', verifiedAt: new Date(), expiresAt: new Date(Date.now() + 900000) }) };
+    const { service, tx, row } = setup(accounts);
+    tx.gdsWithdrawal.findFirst.mockResolvedValue({ ...row, status, processingAdminId: status === 'PROCESSING' ? 'admin' : null });
+    await service.confirmRecipient('admin', row.id, { confirmed: true });
+    expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledTimes(status === 'PROCESSING' ? 0 : 1);
+    if (status === 'APPROVED') expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ fromStatus: 'APPROVED', toStatus: 'PROCESSING' }) });
+  });
+  it('blocks approval and claim together when the wallet has debt', async () => {
+    const accounts = { available: jest.fn(), resolve: jest.fn(), verifyTransfer: jest.fn(), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), recordManual: jest.fn() };
+    const { service, tx, row } = setup(accounts);
+    tx.gdsInternalWallet.findUniqueOrThrow.mockResolvedValue({ status: 'ACTIVE', debtMinor: 1n });
+    await expect(service.confirmRecipient('admin', row.id, { confirmed: true })).rejects.toThrow('GDS_WITHDRAWAL_WALLET_OR_DEBT_BLOCKED');
+    expect(accounts.recordManual).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it('requires the actual provider when policy mandates automatic verification', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(false), resolve: jest.fn(), verifyTransfer: jest.fn().mockRejectedValue(new Error('GDS_ACCOUNT_VERIFICATION_UNAVAILABLE')), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), recordManual: jest.fn() };
+    const { service, tx } = setup(accounts);
+    const policy = await tx.gdsWithdrawalSettings.findUniqueOrThrow();
+    tx.gdsWithdrawalSettings.findUniqueOrThrow.mockResolvedValue({ ...policy, accountVerificationRequired: true } as never);
+    await expect(service.confirmRecipient('admin', 'request-id', { confirmed: true })).rejects.toThrow('GDS_ACCOUNT_VERIFICATION_UNAVAILABLE');
+    expect(accounts.recordManual).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it.each([{ confirmed: false, actor: 'admin', status: 'PENDING', processingAdminId: null },
+    { confirmed: true, actor: 'owner', status: 'PENDING', processingAdminId: null },
+    { confirmed: true, actor: 'admin', status: 'PAID', processingAdminId: 'admin' },
+    { confirmed: true, actor: 'admin', status: 'PROCESSING', processingAdminId: 'another-admin' }])('rejects unsafe manual confirmations: %j', async ({ confirmed, actor, status, processingAdminId }) => {
+    const accounts = { available: jest.fn(), resolve: jest.fn(), verifyTransfer: jest.fn(), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), recordManual: jest.fn() };
+    const { service, tx, row } = setup(accounts);
+    tx.gdsWithdrawal.findFirst.mockResolvedValue({ ...row, status, processingAdminId });
+    await expect(service.confirmRecipient(actor, row.id, { confirmed, accountHolder: input.accountHolder, reason: 'Checked' })).rejects.toThrow();
+    expect(accounts.recordManual).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it.each(['NGUYEN VAN A123', 'NGUYEN@VAN A', 'NGUYEN 😀', 'Nguyễn Văn An', 'NGUYEN\u200bAN'])('rejects an invalid manually supplied holder before touching funds: %s', async accountHolder => {
+    const { service, tx, revenue } = setup();
+    await expect(service.create('owner', { ...input, accountHolder }, 'unique-request-key-123')).rejects.toThrow('GDS_ACCOUNT_HOLDER_INVALID');
+    expect(revenue.syncOwner).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawal.create).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it('requires successful evidence before touching funds when mandatory verification is enabled', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn().mockRejectedValue(new Error('INVALID_OR_EXPIRED')), verifyTransfer: jest.fn() };
+    const { service, tx, revenue } = setup(accounts);
+    const settings = await tx.gdsWithdrawalSettings.findUniqueOrThrow();
+    tx.gdsWithdrawalSettings.findUniqueOrThrow.mockResolvedValue({ ...settings, accountVerificationRequired: true } as never);
+    await expect(service.create('owner', input, 'unique-request-key-123')).rejects.toThrow('VERIFICATION_REQUIRED');
+    await expect(service.create('owner', { ...input, verificationId: 'proof' }, 'unique-request-key-123')).rejects.toThrow('INVALID_OR_EXPIRED');
+    expect(revenue.syncOwner).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawal.create).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it('uses the verified beneficiary snapshot instead of a forged client name', async () => {
+    const proof = { id: 'proof', accountHolder: 'VERIFIED RECIPIENT', bankBin: '970422', bankName: 'Military Bank', bankShortName: 'MB', verifiedAt: new Date() };
+    const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn().mockResolvedValue(proof), verifyTransfer: jest.fn() };
+    const { service, tx } = setup(accounts);
+    await service.create('owner', { ...input, accountHolder: 'FORGED NAME', verificationId: 'proof' }, 'unique-request-key-123');
+    expect(tx.gdsWithdrawal.create.mock.calls[0][0].data).toMatchObject({ accountHolder: proof.accountHolder, verificationId: proof.id, bankBin: proof.bankBin, accountVerifiedAt: proof.verifiedAt });
+    expect(accounts.resolve).toHaveBeenCalledWith(tx, 'owner', input.bankCode, input.accountNumber, 'proof');
+  });
+  it('replays an already created verified request without checking expired evidence or provider availability', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(false), resolve: jest.fn().mockRejectedValue(new Error('EXPIRED')), verifyTransfer: jest.fn() };
+    const { service, tx, row } = setup(accounts);
+    tx.gdsWithdrawal.findUnique.mockResolvedValue({ ...row, verificationId: 'proof' } as never);
+    await expect(service.create('owner', { ...input, verificationId: 'proof' }, 'unique-request-key-123')).resolves.toMatchObject({ id: row.id });
+    await expect(service.create('owner', { ...input, verificationId: 'other' }, 'unique-request-key-123')).rejects.toThrow('IDEMPOTENCY_CONFLICT');
+    expect(accounts.resolve).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawal.create).not.toHaveBeenCalled();
+  });
+  it('rechecks the beneficiary outside the money transaction and does not claim on provider failure', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(true), resolve: jest.fn(), verifyTransfer: jest.fn().mockRejectedValue(new Error('PROVIDER_UNAVAILABLE')) };
+    const { service, tx, row, revenue } = setup(accounts);
+    tx.gdsWithdrawal.findUnique.mockResolvedValue({ ...row, status: 'APPROVED', verificationId: 'proof' } as never);
+    const transaction = jest.spyOn(revenue, 'transaction');
+    await expect(service.act('admin', row.id, 'process', { reason: 'Check recipient' })).rejects.toThrow('PROVIDER_UNAVAILABLE');
+    expect(transaction).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
   it('allows students/instructors to use their wallet but preserves student-only checkout', () => {
     expect(Reflect.getMetadata('roles', GdsWithdrawalController)).toEqual([RoleName.student, RoleName.instructor]);
     expect(Reflect.getMetadata('roles', GdsWithdrawalAdminController)).toEqual([RoleName.platform_admin]);
