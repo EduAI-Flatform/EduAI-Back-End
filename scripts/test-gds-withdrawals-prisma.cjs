@@ -159,6 +159,15 @@ async function main() {
       assert.equal(runtimeSummary.available, true);
       assert.equal(runtimeSummary.withdrawalHeldMinor, '50000');
       assert.equal(runtimeSummary.income.status, 'READY');
+      assert.equal(runtimeSummary.totalDepositedMinor, '0'); // Opening fixture is not a deposit posting.
+      assert.equal(runtimeSummary.totalPaidMinor, '0');
+      const { readHistoryPage, parseHistoryQuery } = require('../dist/src/modules/wallet/gds-wallet-history.js');
+      const activity = await readHistoryPage(runtime, f.id, parseHistoryQuery(f.id, 'withdrawals'));
+      assert.equal(activity.items.length, 1);
+      assert.equal(activity.items[0].withdrawalId, created.id);
+      assert.equal(activity.items[0].accountNumber, '••••' + input.accountNumber.slice(-4));
+      assert.equal(activity.items[0].status, 'PENDING');
+      assert.equal(JSON.stringify(activity).includes(input.accountNumber), false);
       await runtimeService.act(f.id, created.id, 'cancel', { reason: 'Synthetic runtime recovery' }, true);
       assert.equal((await balance(f.id)).availableMinor, 200000n);
       await assert.rejects(runtime.gdsInternalWallet.update({ where: { id: f.wallet.id }, data: { debtMinor: 1n } }));

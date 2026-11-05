@@ -4,6 +4,8 @@ import { Prisma } from '../../../generated/prisma/client';
 export function walletTotalsQuery(walletId: string, ownerId: string) {
   return Prisma.sql`
     SELECT
+      (SELECT COALESCE(SUM(amount_minor),0)::text FROM gds_internal_journal WHERE wallet_id=${walletId}::uuid AND kind='TOPUP_CREDIT') AS "totalDepositedMinor",
+      (SELECT COALESCE(SUM(amount_minor),0)::text FROM gds_internal_journal WHERE wallet_id=${walletId}::uuid AND kind='CAPTURE') AS "totalPaidMinor",
       (SELECT COALESCE(SUM(amount_minor),0)::text FROM gds_internal_holds
         WHERE wallet_id=${walletId}::uuid AND status='RESERVED') AS "paymentHeldMinor",
       COALESCE(SUM(CASE WHEN status IN ('PENDING','APPROVED','PROCESSING') THEN amount_minor ELSE 0 END),0)::text AS "withdrawalHeldMinor",
@@ -38,6 +40,8 @@ export function incomeTotalsQuery(ownerId: string) {
 }
 
 export type GdsWalletTotals = {
+  totalDepositedMinor: string;
+  totalPaidMinor: string;
   paymentHeldMinor: string;
   withdrawalHeldMinor: string;
   totalWithdrawnMinor: string;
