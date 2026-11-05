@@ -87,7 +87,7 @@ export class GdsWithdrawalService {
 
   async list(query: GdsWithdrawalPageDto, ownerId?: string) {
     this.requireRead();
-    const where = { ...(ownerId ? { ownerId } : {}), ...(query.status ? { status: query.status } : {}) };
+    const where = { ...(ownerId ? { ownerId } : {}), ...(query.status ? { status: query.status === 'AWAITING_TRANSFER' ? { in: ['APPROVED', 'PROCESSING'] } : query.status } : {}) };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.gdsWithdrawal.count({ where }),
       this.prisma.gdsWithdrawal.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
@@ -104,10 +104,18 @@ export class GdsWithdrawalService {
   }
 
   async confirmRecipient(actorId: string, id: string, input: GdsConfirmRecipientDto) {
-    this.requireRead();
-    if (input.confirmed !== true || !input.reason?.trim()) throw new BadRequestException('GDS_MANUAL_CHECK_CONFIRMATION_REQUIRED');
+    this.requireProcessing();
+    if (input.confirmed !== true) throw new BadRequestException('GDS_MANUAL_CHECK_CONFIRMATION_REQUIRED');
     if (!this.accounts) throw new ForbiddenException('GDS_MANUAL_CHECK_NOT_ALLOWED');
+    const pending = await this.prisma.gdsWithdrawal.findFirst({ where: { id } });
+    if (!pending) throw new NotFoundException('GDS_WITHDRAWAL_NOT_FOUND');
+    if (pending.ownerId === actorId) throw new ForbiddenException('GDS_WITHDRAWAL_SELF_PROCESSING_FORBIDDEN');
+    if (!['PENDING', 'APPROVED', 'PROCESSING'].includes(pending.status)) throw new ConflictException('GDS_WITHDRAWAL_INVALID_TRANSITION');
+    if (pending.status === 'PROCESSING' && pending.processingAdminId !== actorId) throw new ForbiddenException('GDS_WITHDRAWAL_CLAIMED_BY_ANOTHER_ADMIN');
+    const policy = await this.prisma.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
+    if (policy.accountVerificationRequired || pending.verificationId) await this.accounts.verifyTransfer(actorId, id);
     const bank = await this.accounts.prepareManual(actorId, id); // Catalogue I/O stays outside financial locks.
+    const reason = input.reason?.trim() || 'Admin xác nhận đã đối chiếu đúng ngân hàng, số tài khoản và người nhận; duyệt chờ chuyển khoản.';
     return this.revenue.transaction(async tx => {
       await lockGdsFinance(tx);
       const row = await tx.gdsWithdrawal.findFirst({ where: { id } });
@@ -116,13 +124,21 @@ export class GdsWithdrawalService {
       if (!['PENDING', 'APPROVED', 'PROCESSING'].includes(row.status)) throw new ConflictException('GDS_WITHDRAWAL_INVALID_TRANSITION');
       if (row.status === 'PROCESSING' && row.processingAdminId !== actorId) throw new ForbiddenException('GDS_WITHDRAWAL_CLAIMED_BY_ANOTHER_ADMIN');
       const settings = await tx.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
-      if (settings.accountVerificationRequired || row.verificationId) throw new ForbiddenException('GDS_MANUAL_CHECK_NOT_ALLOWED');
-      const proof = await this.accounts!.recordManual(tx, actorId, row, bank, input.accountHolder);
-      await tx.auditLog.create({ data: { actorId, action: 'gds.withdrawal.recipient.manually_checked', targetType: 'gds_withdrawal', targetId: id,
-        metadataJson: { verificationId: proof.id, method: 'MANUAL', reason: input.reason.trim() } } });
-      if (row.status === 'PENDING') await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: id, actorId, fromStatus: 'PENDING', toStatus: 'APPROVED', reason: input.reason.trim() } });
+      if (!settings.processingEnabled) throw new ForbiddenException('GDS_WITHDRAWAL_PROCESSING_DISABLED');
+      if (row.status !== 'PROCESSING') {
+        await this.revenue.syncOwner(tx, row.ownerId);
+        const wallet = await tx.gdsInternalWallet.findUniqueOrThrow({ where: { id: row.walletId } });
+        if (wallet.status !== 'ACTIVE' || wallet.debtMinor !== 0n) throw new ConflictException('GDS_WITHDRAWAL_WALLET_OR_DEBT_BLOCKED');
+      }
+      const automatic = settings.accountVerificationRequired || !!row.verificationId;
+      const proof = automatic ? await this.accounts!.requireTransferProof(tx, actorId, row, true)
+        : await this.accounts!.recordManual(tx, actorId, row, bank, input.accountHolder ?? row.accountHolder);
+      await tx.auditLog.create({ data: { actorId, action: automatic ? 'gds.withdrawal.recipient.provider_checked' : 'gds.withdrawal.recipient.manually_checked', targetType: 'gds_withdrawal', targetId: id,
+        metadataJson: { verificationId: proof.id, method: automatic ? 'PROVIDER' : 'MANUAL', reason } } });
+      if (row.status === 'PENDING') await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: id, actorId, fromStatus: 'PENDING', toStatus: 'APPROVED', reason } });
+      if (row.status !== 'PROCESSING') await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: id, actorId, fromStatus: 'APPROVED', toStatus: 'PROCESSING', reason: 'Admin duyệt và nhận trách nhiệm chuyển khoản.' } });
       const next = await tx.gdsWithdrawal.findUniqueOrThrow({ where: { id } });
-      return { ...withdrawalResponse(next, true), recipientCheck: { method: 'MANUAL' as const, actorId, verifiedAt: proof.verifiedAt.toISOString(), expiresAt: proof.expiresAt.toISOString() } };
+      return { ...withdrawalResponse(next, true), recipientCheck: { method: automatic ? 'PROVIDER' as const : 'MANUAL' as const, actorId, verifiedAt: proof.verifiedAt.toISOString(), expiresAt: proof.expiresAt.toISOString() } };
     });
   }
 

@@ -17,7 +17,7 @@ export class GdsVerifyAccountDto {
 export class GdsWithdrawalPageDto {
   @Type(() => Number) @IsInt() @Min(1) page = 1;
   @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize = 20;
-  @IsOptional() @IsIn(WITHDRAWAL_STATUSES) status?: string;
+  @IsOptional() @IsIn([...WITHDRAWAL_STATUSES, 'AWAITING_TRANSFER']) status?: string;
 }
 export class GdsWithdrawalSettingsDto {
   @IsString() @Matches(/^[1-9]\d{0,15}$/) minimumMinor!: string;
@@ -35,9 +35,9 @@ export class GdsWithdrawalActionDto {
 }
 export class GdsConfirmRecipientDto {
   @IsBoolean() confirmed!: boolean;
-  @IsString() @Length(2, 160) @Matches(/^[^\x00-\x1f\x7f]+$/) accountHolder!: string;
+  @IsOptional() @IsString() @Length(2, 160) @Matches(/^[^\x00-\x1f\x7f]+$/) accountHolder?: string;
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
-  @IsString() @Length(1, 500) reason!: string;
+  @IsOptional() @IsString() @Length(1, 500) reason?: string;
 }
 export class GdsRevenueReviewDto {
   @IsString() @Matches(/^(0|[1-9]\d{0,15})$/) paidMinor!: string;

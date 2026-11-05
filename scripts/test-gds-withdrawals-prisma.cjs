@@ -83,11 +83,14 @@ async function main() {
     const payable = await service.create(e.id, input, randomUUID());
     await assert.rejects(service.confirmRecipient(admin, payable.id, { confirmed: true, accountHolder: 'WRONG NAME', reason: 'Synthetic mismatch' }), /GDS_ACCOUNT_HOLDER_MISMATCH/);
     assert.equal(await db.gdsAccountVerification.count({ where: { withdrawalId: payable.id } }), 0);
-    await service.confirmRecipient(admin, payable.id, { confirmed: true, accountHolder: input.accountHolder, reason: 'Synthetic bank app checked' });
-    await service.confirmRecipient(otherAdmin, payable.id, { confirmed: true, accountHolder: input.accountHolder, reason: 'Synthetic other admin bank app checked' });
-    const claims = await settle([service.act(admin, payable.id, 'process', { reason: 'Claim' }), service.act(otherAdmin, payable.id, 'process', { reason: 'Claim' })]);
+    const claims = await settle([service.confirmRecipient(admin, payable.id, { confirmed: true }), service.confirmRecipient(otherAdmin, payable.id, { confirmed: true })]);
     assert.equal(claims.filter(r => r.status === 'fulfilled').length, 1);
     const claimed = await db.gdsWithdrawal.findUniqueOrThrow({ where: { id: payable.id } });
+    assert.equal(claimed.status, 'PROCESSING');
+    assert.equal(await db.gdsWithdrawalEvent.count({ where: { withdrawalId: payable.id, toStatus: 'APPROVED' } }), 1);
+    assert.equal(await db.gdsWithdrawalEvent.count({ where: { withdrawalId: payable.id, toStatus: 'PROCESSING' } }), 1);
+    await service.confirmRecipient(claimed.processingAdminId, payable.id, { confirmed: true });
+    assert.equal(await db.gdsWithdrawalEvent.count({ where: { withdrawalId: payable.id, toStatus: 'PROCESSING' } }), 1);
     const manualQr = await manualAccounts.qr(claimed.processingAdminId, payable.id);
     assert.equal(manualQr.verificationMethod, 'MANUAL');
     assert.equal(manualQr.accountNumber, input.accountNumber);
