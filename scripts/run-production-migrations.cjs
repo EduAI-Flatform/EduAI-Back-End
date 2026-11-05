@@ -30,6 +30,9 @@ const REVIEWED_RECEIPT_MIGRATIONS = Object.freeze([
 ]);
 // Reviewed GDS/revenue release. Future migrations remain blocked unless separately reviewed.
 const REVIEWED_REVENUE_MIGRATIONS = Object.freeze([
+  // Owner authorized bank-selection/manual-review production rollout on 2026-11-05.
+  { name: '20261104120000_add_gds_account_verifications', sha256: 'BA7DB8420F48CAB21F67BC0D2B11965E4B647B5A8C684DD03F2B9FCE3DE29327' },
+  { name: '20261105040000_add_gds_manual_recipient_checks', sha256: '6D46022B0B753701A32856EF050081C6DD77541DA788CC94013FAC54D83B71B4' },
   // Owner approved schema-first withdrawal release on 2026-11-04.
   { name: '20261104100000_add_gds_withdrawals', sha256: '8015F0029726ECFEA645158CF76299FF8BDFEC4E9A4908E3F2FAE6E411CEBF56' },
   { name: '20261103040000_harden_gds_runtime_projection', sha256: 'F66F52DF7008F4B9790B836B58F3B7A58E1AB867ADC13DAEA57809AD8789C49B' },
