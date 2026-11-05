@@ -77,7 +77,7 @@ describe('GDS wallet learner API projection', () => {
     });
     expect(db.gdsInternalJournal.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { walletId: 'wallet-1' }, take: 20,
-      select: { id: true, kind: true, amountMinor: true, occurredAt: true },
+      select: { id: true, kind: true, amountMinor: true, occurredAt: true, orderRef: true },
     }));
   });
 
@@ -109,6 +109,25 @@ describe('GDS wallet learner API projection', () => {
       occurredAt: '2026-11-02T12:00:00.000Z',
     }]);
     expect(JSON.stringify(result)).not.toContain('private-bank-transfer');
+  });
+
+  it('links withdrawal postings to one request without exposing other order references', async () => {
+    config.gdsWallet.sandboxEnabled = true;
+    db.gdsInternalWallet.findUnique.mockResolvedValue({ id: 'wallet-1', status: 'ACTIVE', availableMinor: 100000n, heldMinor: 0n });
+    const requestId = '10000000-0000-4000-8000-000000000001';
+    const kinds = ['WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID', 'RESERVE', 'TOPUP_CREDIT'];
+    db.gdsInternalJournal.findMany.mockResolvedValue(kinds.map((kind, index) => ({
+      id: `journal-${index}`, kind, amountMinor: 10000n, occurredAt: new Date('2026-11-05T01:00:00Z'),
+      orderRef: kind.startsWith('WITHDRAWAL_') ? requestId : '20000000-0000-4000-8000-000000000002',
+    })));
+    const result = await service.summary(buyerId);
+    expect(result.recentTransactions.slice(0, 3).map(entry => entry.withdrawalId)).toEqual([requestId, requestId, requestId]);
+    expect(result.recentTransactions.slice(3).every(entry => !('withdrawalId' in entry))).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('20000000-0000-4000-8000-000000000002');
+    expect(JSON.stringify(result)).not.toContain('orderRef');
+    expect(db.gdsInternalJournal.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { walletId: 'wallet-1' }, take: 20, select: expect.objectContaining({ orderRef: true }),
+    }));
   });
 
   it('fails closed on an unknown or malformed journal posting', async () => {

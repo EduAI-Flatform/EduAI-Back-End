@@ -30,6 +30,8 @@ export type GdsWalletSummary = {
     type: 'TOPUP_CREDIT' | 'RESERVE' | 'CAPTURE' | 'RELEASE' | 'WITHDRAWAL_RESERVE' | 'WITHDRAWAL_RELEASE' | 'WITHDRAWAL_PAID' | 'REVENUE_CREDIT' | 'REVENUE_REVERSAL';
     amountMinor: string;
     occurredAt: string;
+    /** Owner-scoped request link; lets clients group withdrawal lifecycle postings. */
+    withdrawalId?: string;
   }>;
 };
 
@@ -82,7 +84,7 @@ export class GdsWalletService {
       where: { walletId: wallet.id },
       orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
       take: 20,
-      select: { id: true, kind: true, amountMinor: true, occurredAt: true },
+      select: { id: true, kind: true, amountMinor: true, occurredAt: true, orderRef: true },
     });
     const allowed = new Set(['TOPUP_CREDIT', 'RESERVE', 'CAPTURE', 'RELEASE', 'WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID', 'REVENUE_CREDIT', 'REVENUE_REVERSAL']);
     if (journal.some((entry) => !allowed.has(entry.kind) || entry.amountMinor <= 0n ||
@@ -103,6 +105,9 @@ export class GdsWalletService {
         type: entry.kind as GdsWalletSummary['recentTransactions'][number]['type'],
         amountMinor: entry.amountMinor.toString(),
         occurredAt: entry.occurredAt.toISOString(),
+        ...(['WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID'].includes(entry.kind) && entry.orderRef &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.orderRef)
+          ? { withdrawalId: entry.orderRef } : {}),
       })),
     };
   }
