@@ -117,6 +117,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 
   private getFailureClass(exception: unknown): string {
+    if (this.isObjectRecord(exception) && typeof exception.code === 'string' && ['P2021', 'P2022'].includes(exception.code)) {
+      // Fixed classification only: Prisma messages/meta can contain private query facts.
+      return 'DATABASE_SCHEMA_OUTDATED';
+    }
     if (!this.isObjectRecord(exception) || exception.code !== 'P2002') {
       return 'APPLICATION_RUNTIME_ERROR';
     }

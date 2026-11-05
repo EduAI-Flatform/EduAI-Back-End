@@ -2,6 +2,17 @@ import { ArgumentsHost } from '@nestjs/common';
 import { GlobalExceptionFilter } from './global-exception.filter';
 
 describe('GlobalExceptionFilter', () => {
+  it.each(['P2021', 'P2022'])('classifies schema drift (%s) without exposing banking arguments', code => {
+    const logger = { error: jest.fn() }, json = jest.fn();
+    const host = { switchToHttp: () => ({
+      getRequest: () => ({ method: 'GET', originalUrl: '/api/v1/wallet/gds' }),
+      getResponse: () => ({ status: jest.fn().mockReturnThis(), json }),
+    }) } as unknown as ArgumentsHost;
+    const error = Object.assign(new Error('Prisma arguments: 00123456789 PRIVATE NAME'), { code, meta: { table: 'private_table' } });
+    new GlobalExceptionFilter('development', logger as never).catch(error, host);
+    expect(logger.error).toHaveBeenCalledWith('critical request error', 'Banking request failed; details redacted', 'GlobalExceptionFilter', expect.objectContaining({ failureClass: 'DATABASE_SCHEMA_OUTDATED' }));
+    expect(JSON.stringify([logger.error.mock.calls, json.mock.calls])).not.toMatch(/00123456789|PRIVATE NAME|private_table/);
+  });
   it('redacts banking database error details from logs and development responses', () => {
     const logger = { error: jest.fn() }, json = jest.fn();
     const host = { switchToHttp: () => ({
