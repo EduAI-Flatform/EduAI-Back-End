@@ -10,6 +10,14 @@ const config = {
 
 describe('GDS wallet learner API projection', () => {
   const db = { gdsInternalWallet: { findUnique: jest.fn(), createMany: jest.fn(), findUniqueOrThrow: jest.fn() }, gdsInternalJournal: { findMany: jest.fn() }, buyerWalletLink: { findUnique: jest.fn() } };
+  Object.assign(db, {
+    $transaction: async (read: (tx: unknown) => Promise<unknown>) => read(db),
+    $queryRaw: async () => {
+      const wallet = await db.gdsInternalWallet.findUnique.mock.results.at(-1)?.value ??
+        await db.gdsInternalWallet.findUniqueOrThrow.mock.results.at(-1)?.value;
+      return [{ paymentHeldMinor: (wallet?.heldMinor ?? 0n).toString(), withdrawalHeldMinor: '0', totalWithdrawnMinor: '0' }];
+    },
+  });
   const service = new GdsWalletService(db as never, config as never);
   beforeEach(() => { db.gdsInternalWallet.findUnique.mockReset(); db.gdsInternalWallet.createMany.mockReset().mockResolvedValue({count:1}); db.gdsInternalWallet.findUniqueOrThrow.mockReset().mockResolvedValue({id:"zero-wallet",status:"ACTIVE",availableMinor:0n,heldMinor:0n}); db.gdsInternalJournal.findMany.mockReset().mockResolvedValue([]); db.buyerWalletLink.findUnique.mockReset(); config.gdsWallet.sandboxEnabled = false; config.gdsWallet.checkoutEnabled = false; config.gdsWallet.qrPreviewEnabled = false; });
 
@@ -161,6 +169,7 @@ describe('GDS wallet learner API projection', () => {
 describe('zero wallet initialization',()=>{
  it('creates an absent wallet without posting money, and never updates a funded wallet',async()=>{
  const db={gdsInternalWallet:{findUnique:jest.fn().mockResolvedValueOnce(null).mockResolvedValue({id:'wallet',status:'ACTIVE',availableMinor:5000n,heldMinor:0n}),createMany:jest.fn().mockResolvedValue({count:1}),findUniqueOrThrow:jest.fn().mockResolvedValue({id:'wallet',status:'ACTIVE',availableMinor:0n,heldMinor:0n})},gdsInternalJournal:{findMany:jest.fn().mockResolvedValue([])}};
+ Object.assign(db, { $transaction: async (read: (tx: unknown) => Promise<unknown>) => read(db), $queryRaw: async () => [{paymentHeldMinor:'0',withdrawalHeldMinor:'0',totalWithdrawnMinor:'0'}] });
  const c={...config,app:{...config.app,nodeEnv:'test',deploymentClass:'uat'},gdsWallet:{sandboxEnabled:true}};const service=new GdsWalletService(db as never,c as never);
  expect((await service.summary(buyerId)).balance?.availableMinor).toBe('0');
  expect((await service.summary(buyerId)).balance?.availableMinor).toBe('5000');

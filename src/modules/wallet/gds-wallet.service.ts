@@ -3,6 +3,9 @@ import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GdsWithdrawalService } from './gds-withdrawal.service';
+import { Prisma, RoleName } from '../../../generated/prisma/client';
+import { GdsIncomeSummary, GdsWalletTotals, isVndTotal, readIncomeSummary, walletTotalsQuery } from './gds-wallet-metrics';
+import { isRetryableGdsTransaction } from './gds-transaction-retry';
 
 export type GdsWalletSummary = {
   available: boolean;
@@ -16,6 +19,10 @@ export type GdsWalletSummary = {
   withdrawalMinimumMinor?: string;
   withdrawalMaximumMinor?: string;
   debtMinor?: string;
+  paymentHeldMinor?: string;
+  withdrawalHeldMinor?: string;
+  totalWithdrawnMinor?: string;
+  income?: GdsIncomeSummary | null;
   activeTopup: null | {
     topupId: string;
     amountMinor: string;
@@ -40,10 +47,10 @@ export class GdsWalletService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService,
     @Optional() private readonly withdrawals?: GdsWithdrawalService) {}
 
-  async summary(buyerId: string, topupId?: string): Promise<GdsWalletSummary> {
+  async summary(buyerId: string, topupId?: string, roles: readonly RoleName[] = []): Promise<GdsWalletSummary> {
     const disabled: GdsWalletSummary = {
       available: false, mode: 'disabled', state: 'UNAVAILABLE', balance: null,
-      paymentEnabled: false, topupEnabled: false, recentTransactions: [], activeTopup: null,
+      paymentEnabled: false, topupEnabled: false, recentTransactions: [], activeTopup: null, income: null,
     };
     const capabilities = gdsWalletCapabilities(this.config);
     if (!capabilities.readEnabled) {
@@ -53,67 +60,84 @@ export class GdsWalletService {
     if (topupId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(topupId)) {
       throw new BadRequestException('Invalid topup ID');
     }
-    // Read completion before the balance. A completed intent must never be
-    // returned alongside a balance read before its atomic journal posting.
-    const activeTopup = topupId ? await this.topupStatus(buyerId, topupId) : null;
-    // PAYW-04I changes the preferred model: this reads the isolated internal
-    // prepaid journal projection, never the earlier partner-wallet mirror.
-    let wallet = await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId } });
-    if (!wallet) {
-      // Atomic conflict-ignore initialization never rewrites an existing balance or status.
-      await this.prisma.gdsInternalWallet.createMany({ data: [{ buyerId }], skipDuplicates: true });
-      wallet = await this.prisma.gdsInternalWallet.findUniqueOrThrow({ where: { buyerId } });
+    const read = () => this.prisma.$transaction<GdsWalletSummary>(async (tx) => {
+      // Read completion before the balance. A completed intent must never be
+      // returned alongside a balance read before its atomic journal posting.
+      const activeTopup = topupId ? await this.topupStatus(tx, buyerId, topupId) : null;
+      // PAYW-04I changes the preferred model: this reads the isolated internal
+      // prepaid journal projection, never the earlier partner-wallet mirror.
+      let wallet = await tx.gdsInternalWallet.findUnique({ where: { buyerId } });
+      if (!wallet) {
+        // Atomic conflict-ignore initialization never rewrites an existing balance or status.
+        await tx.gdsInternalWallet.createMany({ data: [{ buyerId }], skipDuplicates: true });
+        wallet = await tx.gdsInternalWallet.findUniqueOrThrow({ where: { buyerId } });
+      }
+      const basis = {
+        ...disabled, mode: capabilities.mode, activeTopup,
+        withdrawalEnabled: false,
+        withdrawalMinimumMinor: withdrawalSettings?.minimumMinor ?? '50000',
+        withdrawalMaximumMinor: withdrawalSettings?.maximumMinor ?? '10000000',
+        debtMinor: (wallet.debtMinor ?? 0n).toString(),
+        topupEnabled: capabilities.topupEnabled &&
+          this.config.payos.environment === 'production' &&
+          /^https:\/\//.test(this.config.app.publicAppUrl ?? '') &&
+          Boolean(this.config.commerce.idempotencySecret),
+      };
+      if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED', topupEnabled: false };
+      if (typeof wallet.availableMinor !== 'bigint' || typeof wallet.heldMinor !== 'bigint' ||
+          wallet.availableMinor < 0n || wallet.heldMinor < 0n) {
+        return { ...basis, state: 'RECONCILIATION_REQUIRED', topupEnabled: false };
+      }
+      const [totals] = await tx.$queryRaw<GdsWalletTotals[]>(walletTotalsQuery(wallet.id, buyerId));
+      if (!totals || ![totals.paymentHeldMinor, totals.withdrawalHeldMinor, totals.totalWithdrawnMinor].every(isVndTotal) ||
+          BigInt(totals.paymentHeldMinor) + BigInt(totals.withdrawalHeldMinor) !== wallet.heldMinor) {
+        return { ...basis, state: 'RECONCILIATION_REQUIRED', topupEnabled: false };
+      }
+      const journal = await tx.gdsInternalJournal.findMany({
+        where: { walletId: wallet.id },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        take: 20,
+        select: { id: true, kind: true, amountMinor: true, occurredAt: true, orderRef: true },
+      });
+      const allowed = new Set(['TOPUP_CREDIT', 'RESERVE', 'CAPTURE', 'RELEASE', 'WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID', 'REVENUE_CREDIT', 'REVENUE_REVERSAL']);
+      if (journal.some((entry) => !allowed.has(entry.kind) || entry.amountMinor <= 0n ||
+          !Number.isFinite(entry.occurredAt.getTime()))) {
+        return { ...basis, state: 'RECONCILIATION_REQUIRED' };
+      }
+      return {
+        ...basis, available: true, state: capabilities.mode === 'production' ? 'READY_PRODUCTION' : 'READY_SANDBOX',
+        ...totals,
+        income: roles.includes(RoleName.instructor) ? await readIncomeSummary(tx, buyerId) : null,
+        paymentEnabled: capabilities.checkoutEnabled,
+        withdrawalEnabled: withdrawalSettings?.admissionEnabled === true && withdrawalSettings.processingEnabled && (wallet.debtMinor ?? 0n) === 0n,
+        balance: {
+          settledMinor: (wallet.availableMinor + wallet.heldMinor).toString(),
+          reservedMinor: wallet.heldMinor.toString(),
+          availableMinor: wallet.availableMinor.toString(), currency: 'VND',
+        },
+        recentTransactions: journal.map((entry) => ({
+          id: entry.id,
+          type: entry.kind as GdsWalletSummary['recentTransactions'][number]['type'],
+          amountMinor: entry.amountMinor.toString(),
+          occurredAt: entry.occurredAt.toISOString(),
+          ...(['WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID'].includes(entry.kind) && entry.orderRef &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.orderRef)
+            ? { withdrawalId: entry.orderRef } : {}),
+        })),
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+    // Concurrent first visits can race the conflict-ignore zero-wallet insert.
+    // Retry the whole snapshot rather than mixing pre/post-commit reads.
+    for (let attempt = 0; ; attempt += 1) {
+      try { return await read(); }
+      catch (error) {
+        if (attempt >= 2 || !isRetryableGdsTransaction(error)) throw error;
+      }
     }
-    const basis = {
-      ...disabled, mode: capabilities.mode, activeTopup,
-      withdrawalEnabled: false,
-      withdrawalMinimumMinor: withdrawalSettings?.minimumMinor ?? '50000',
-      withdrawalMaximumMinor: withdrawalSettings?.maximumMinor ?? '10000000',
-      debtMinor: (wallet.debtMinor ?? 0n).toString(),
-      topupEnabled: capabilities.topupEnabled &&
-        this.config.payos.environment === 'production' &&
-        /^https:\/\//.test(this.config.app.publicAppUrl ?? '') &&
-        Boolean(this.config.commerce.idempotencySecret),
-    };
-    if (wallet.status !== 'ACTIVE') return { ...basis, state: 'SUSPENDED', topupEnabled: false };
-    if (typeof wallet.availableMinor !== 'bigint' || typeof wallet.heldMinor !== 'bigint' ||
-        wallet.availableMinor < 0n || wallet.heldMinor < 0n) {
-      return { ...basis, state: 'RECONCILIATION_REQUIRED', topupEnabled: false };
-    }
-    const journal = await this.prisma.gdsInternalJournal.findMany({
-      where: { walletId: wallet.id },
-      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-      take: 20,
-      select: { id: true, kind: true, amountMinor: true, occurredAt: true, orderRef: true },
-    });
-    const allowed = new Set(['TOPUP_CREDIT', 'RESERVE', 'CAPTURE', 'RELEASE', 'WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID', 'REVENUE_CREDIT', 'REVENUE_REVERSAL']);
-    if (journal.some((entry) => !allowed.has(entry.kind) || entry.amountMinor <= 0n ||
-        !Number.isFinite(entry.occurredAt.getTime()))) {
-      return { ...basis, state: 'RECONCILIATION_REQUIRED' };
-    }
-    return {
-      ...basis, available: true, state: capabilities.mode === 'production' ? 'READY_PRODUCTION' : 'READY_SANDBOX',
-      paymentEnabled: capabilities.checkoutEnabled,
-      withdrawalEnabled: withdrawalSettings?.admissionEnabled === true && withdrawalSettings.processingEnabled && (wallet.debtMinor ?? 0n) === 0n,
-      balance: {
-        settledMinor: (wallet.availableMinor + wallet.heldMinor).toString(),
-        reservedMinor: wallet.heldMinor.toString(),
-        availableMinor: wallet.availableMinor.toString(), currency: 'VND',
-      },
-      recentTransactions: journal.map((entry) => ({
-        id: entry.id,
-        type: entry.kind as GdsWalletSummary['recentTransactions'][number]['type'],
-        amountMinor: entry.amountMinor.toString(),
-        occurredAt: entry.occurredAt.toISOString(),
-        ...(['WITHDRAWAL_RESERVE', 'WITHDRAWAL_RELEASE', 'WITHDRAWAL_PAID'].includes(entry.kind) && entry.orderRef &&
-          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.orderRef)
-          ? { withdrawalId: entry.orderRef } : {}),
-      })),
-    };
   }
 
-  private async topupStatus(buyerId: string, topupId: string): Promise<GdsWalletSummary['activeTopup']> {
-    const topup = await this.prisma.gdsInternalTopup.findFirst({
+  private async topupStatus(tx: Prisma.TransactionClient, buyerId: string, topupId: string): Promise<GdsWalletSummary['activeTopup']> {
+    const topup = await tx.gdsInternalTopup.findFirst({
       where: { id: topupId, buyerId },
       select: {
         id: true, amountMinor: true, currency: true, status: true, expiresAt: true,

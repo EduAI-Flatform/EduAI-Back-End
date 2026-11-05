@@ -86,9 +86,10 @@ jobs:
           gds-wallet-capture-migration.spec.ts
           gds-withdrawals-migration.spec.ts
           gds-account-verifications-migration.spec.ts
+          gds-wallet-metrics.spec.ts
 
       - name: GDS withdrawal API and journal retry policy
-        run: npm test -- --runInBand modules/wallet/gds-withdrawal modules/wallet/gds-wallet.service.spec.ts modules/wallet/gds-transaction-retry modules/wallet/gds-revenue-wallet modules/wallet/gds-bank modules/wallet/gds-account-verification common/filters/global-exception.filter.spec.ts
+        run: npm test -- --runInBand modules/wallet/gds-withdrawal modules/wallet/gds-wallet.service.spec.ts modules/wallet/gds-wallet-reporting.spec.ts modules/wallet/gds-transaction-retry modules/wallet/gds-revenue-wallet modules/wallet/gds-bank modules/wallet/gds-account-verification common/filters/global-exception.filter.spec.ts
 
       - name: Commerce lifecycle PostgreSQL regression
         run: >-
