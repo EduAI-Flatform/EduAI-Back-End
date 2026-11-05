@@ -79,4 +79,23 @@ describe('GDS owner-scoped lifetime metrics SQL', () => {
       await db.exec('ROLLBACK');
     }
   });
+
+  it('needs only withdrawal SELECT for the checkout zero-wallet reporting fixture', async () => {
+    await db.exec(`CREATE ROLE checkout_reporting_probe NOLOGIN;
+      GRANT USAGE ON SCHEMA public TO checkout_reporting_probe;
+      GRANT SELECT ON gds_internal_holds TO checkout_reporting_probe;
+      SET ROLE checkout_reporting_probe;`);
+    try {
+      await expect(run(walletTotalsQuery(wallet, owner))).rejects.toThrow(/permission denied for table gds_withdrawals/);
+      await db.exec(`RESET ROLE;
+        GRANT SELECT ON TABLE public.gds_withdrawals TO checkout_reporting_probe;
+        SET ROLE checkout_reporting_probe;`);
+      expect(await run(walletTotalsQuery(wallet, owner))).toEqual({ paymentHeldMinor: '0', withdrawalHeldMinor: '0', totalWithdrawnMinor: '0' });
+      await expect(db.exec(`INSERT INTO gds_withdrawals(wallet_id,owner_id,amount_minor,status) VALUES ('${wallet}','${owner}',1,'PAID')`)).rejects.toThrow(/permission denied/);
+      await expect(db.exec("UPDATE gds_withdrawals SET status='PAID'")).rejects.toThrow(/permission denied/);
+      await expect(db.exec('DELETE FROM gds_withdrawals')).rejects.toThrow(/permission denied/);
+    } finally {
+      await db.exec('RESET ROLE');
+    }
+  });
 });
