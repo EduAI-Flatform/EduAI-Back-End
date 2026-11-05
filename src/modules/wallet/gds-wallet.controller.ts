@@ -31,8 +31,9 @@ export class GdsWalletController {
   summary(
     @CurrentUser('id') buyerId: string,
     @Query('topupId', new ParseUUIDPipe({ version: '4', optional: true })) topupId?: string,
+    @CurrentUser('roles') roles?: RoleName[],
   ) {
-    return this.wallet.summary(buyerId, topupId);
+    return this.wallet.summary(buyerId, topupId, roles);
   }
 
   @Post('topups/payos')

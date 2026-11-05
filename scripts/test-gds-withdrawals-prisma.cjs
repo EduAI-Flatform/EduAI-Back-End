@@ -15,6 +15,7 @@ async function main() {
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
   const { GdsWithdrawalService } = require('../dist/src/modules/wallet/gds-withdrawal.service.js');
+  const { GdsWalletService } = require('../dist/src/modules/wallet/gds-wallet.service.js');
   const { GdsAccountVerificationService } = require('../dist/src/modules/wallet/gds-account-verification.service.js');
   const { buildRuntimeGdsPrivilegeStatement, buildRuntimeGdsWithdrawalPrivilegeStatement, buildRuntimeGdsVerificationPrivilegeStatement } = require('./membership-runtime-privileges.cjs');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
@@ -38,6 +39,37 @@ async function main() {
   try {
     await db.user.createMany({ data: [admin, otherAdmin].map(id => ({ id, email: `${id}@synthetic.invalid`, fullName: 'Synthetic GDS operator' })) });
     await db.gdsWithdrawalSettings.update({ where: { id: 'global' }, data: { minimumMinor: 50000n, maximumMinor: 10000000n, admissionEnabled: true, processingEnabled: true } });
+
+    // Commit a withdrawal after the wallet is read but before its hold totals.
+    // Repeatable-read must return one coherent pre-write snapshot, then refresh.
+    const reportingOwner = await user();
+    let concurrentRequest;
+    const snapshotClient = {
+      $transaction: (read, options) => db.$transaction(async tx => read(new Proxy(tx, {
+        get(target, key) {
+          if (key !== 'gdsInternalWallet') return typeof target[key] === 'function' ? target[key].bind(target) : target[key];
+          return new Proxy(target.gdsInternalWallet, { get(model, operation) {
+            if (operation !== 'findUnique') return typeof model[operation] === 'function' ? model[operation].bind(model) : model[operation];
+            return async query => {
+              const row = await model.findUnique(query);
+              concurrentRequest = await service.create(reportingOwner.id, { ...input, amountMinor: '50000' }, randomUUID());
+              return row;
+            };
+          } });
+        },
+      })), options),
+    };
+    const beforeWithdrawal = await new GdsWalletService(snapshotClient, config, service).summary(reportingOwner.id);
+    assert.equal(beforeWithdrawal.available, true);
+    assert.equal(beforeWithdrawal.balance.availableMinor, '200000');
+    assert.equal(beforeWithdrawal.withdrawalHeldMinor, '0');
+    const afterWithdrawal = await new GdsWalletService(db, config, service).summary(reportingOwner.id);
+    assert.equal(afterWithdrawal.balance.availableMinor, '150000');
+    assert.equal(afterWithdrawal.withdrawalHeldMinor, '50000');
+    assert.equal(afterWithdrawal.paymentHeldMinor, '0');
+    assert.equal(afterWithdrawal.totalWithdrawnMinor, '0');
+    await service.act(reportingOwner.id, concurrentRequest.id, 'cancel', { reason: 'Synthetic reporting cleanup' }, true);
+    console.log('GDS_WALLET_REPORTING_REPEATABLE_SNAPSHOT=PASS');
 
     const a = await user();
     const raced = await settle([service.create(a.id, input, randomUUID()), service.create(a.id, input, randomUUID())]);
@@ -123,6 +155,10 @@ async function main() {
       const runtimeService = new GdsWithdrawalService(runtime, config, runtimeRevenue);
       const f = await user();
       const created = await runtimeService.create(f.id, { ...input, amountMinor: '50000' }, randomUUID());
+      const runtimeSummary = await new GdsWalletService(runtime, config, runtimeService).summary(f.id, undefined, ['student', 'instructor']);
+      assert.equal(runtimeSummary.available, true);
+      assert.equal(runtimeSummary.withdrawalHeldMinor, '50000');
+      assert.equal(runtimeSummary.income.status, 'READY');
       await runtimeService.act(f.id, created.id, 'cancel', { reason: 'Synthetic runtime recovery' }, true);
       assert.equal((await balance(f.id)).availableMinor, 200000n);
       await assert.rejects(runtime.gdsInternalWallet.update({ where: { id: f.wallet.id }, data: { debtMinor: 1n } }));

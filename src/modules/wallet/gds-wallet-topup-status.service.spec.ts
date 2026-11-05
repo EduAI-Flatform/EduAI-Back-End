@@ -28,6 +28,8 @@ describe('GDS owned topup status in read-only wallet summary', () => {
       receivingAccountHash: 'private-receiver-hash', paymentLinkId: 'private-provider-link',
     };
     db = {
+      $transaction: async (read: (tx: unknown) => Promise<unknown>) => read(db),
+      $queryRaw: async () => [{ paymentHeldMinor: '0', withdrawalHeldMinor: '0', totalWithdrawnMinor: '0' }],
       gdsInternalWallet: { findUnique: jest.fn().mockResolvedValue({
         id: 'wallet-owned', status: 'ACTIVE', availableMinor: 30_000n, heldMinor: 0n,
       }) },

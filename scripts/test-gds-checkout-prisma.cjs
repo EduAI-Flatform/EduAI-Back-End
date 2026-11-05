@@ -45,6 +45,9 @@ async function main() {
       const { buildRuntimeGdsPrivilegeStatement }=require('./membership-runtime-privileges.cjs');
       // pg accepts one statement per prepared query; these trusted generated grants contain no values.
       for (const sql of buildRuntimeGdsPrivilegeStatement('postgresql://'+runtimeRole+'@localhost/test').split(';').filter(x=>x.trim())) await db.$executeRawUnsafe(sql);
+      // This fixture exercises only zero-wallet reporting, not withdrawal writes.
+      // Production grants the same SELECT via buildRuntimeGdsWithdrawalPrivilegeStatement.
+      await db.$executeRawUnsafe('GRANT SELECT ON TABLE public.gds_withdrawals TO '+quoted);
       const runtime=new PrismaClient({adapter:new PrismaPg({connectionString:process.env.DATABASE_URL,options:'-c role='+runtimeRole})});
       try {
         const probe=randomUUID();
@@ -59,6 +62,13 @@ async function main() {
         const summary=new GdsWalletService(runtime,zeroConfig);
         const zero=await Promise.all([summary.summary(legacy),summary.summary(legacy)]);
         assert.ok(zero.every(x=>x.state==='READY_PRODUCTION'&&x.balance.availableMinor==='0'));
+        assert.ok(zero.every(x=>x.paymentHeldMinor==='0'&&x.withdrawalHeldMinor==='0'&&x.totalWithdrawnMinor==='0'));
+        const [withdrawalRights]=await runtime.$queryRawUnsafe(`SELECT
+          has_table_privilege(current_user,'public.gds_withdrawals','SELECT') AS can_read,
+          has_table_privilege(current_user,'public.gds_withdrawals','INSERT') AS can_insert,
+          has_table_privilege(current_user,'public.gds_withdrawals','UPDATE') AS can_update,
+          has_table_privilege(current_user,'public.gds_withdrawals','DELETE') AS can_delete`);
+        assert.deepEqual(withdrawalRights,{can_read:true,can_insert:false,can_update:false,can_delete:false});
         assert.equal(await runtime.gdsInternalWallet.count({where:{buyerId:legacy}}),1);
         assert.equal(await runtime.gdsInternalJournal.count({where:{wallet:{buyerId:legacy}}}),0);
         const signedUp=randomUUID();
