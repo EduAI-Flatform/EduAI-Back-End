@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import * as QRCode from 'qrcode';
-import { Prisma } from '../../../generated/prisma/client';
+import { GdsWithdrawal, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createVietQrPayload } from '../payments/bank-transfer-policy';
 import { GdsBankCatalogueService } from './gds-bank-catalogue.service';
@@ -11,6 +11,39 @@ import { normalizeBankAccountName, sameBankAccountName, verificationMatches } fr
 export class GdsAccountVerificationService {
   constructor(private readonly prisma: PrismaService, private readonly banks: GdsBankCatalogueService, private readonly provider: GdsBankLookupProvider) {}
   available() { return this.provider.isAvailable(); }
+
+  async prepareManual(actorId: string, id: string) {
+    const row = await this.prisma.gdsWithdrawal.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('GDS_WITHDRAWAL_NOT_FOUND');
+    if (row.ownerId === actorId) throw new ForbiddenException('GDS_WITHDRAWAL_SELF_PROCESSING_FORBIDDEN');
+    this.requireQrAccount(row.accountNumber);
+    return this.banks.get(row.bankBin ?? row.bankCode);
+  }
+
+  async recordManual(tx: Prisma.TransactionClient, actorId: string, row: GdsWithdrawal, bank: Awaited<ReturnType<GdsBankCatalogueService['get']>>, observedHolder: string) {
+    if (!sameBankAccountName(row.accountHolder, observedHolder)) throw new ConflictException('GDS_ACCOUNT_HOLDER_MISMATCH');
+    const verifiedAt = new Date();
+    return tx.gdsAccountVerification.create({ data: {
+      ownerId: row.ownerId, actorId, bankCode: row.bankCode, bankBin: bank.bin, bankName: bank.name, bankShortName: bank.shortName,
+      accountNumber: row.accountNumber, accountHolder: observedHolder.trim(), normalizedAccountHolder: normalizeBankAccountName(observedHolder),
+      provider: 'admin_manual', purpose: 'TRANSFER', withdrawalId: row.id, verifiedAt, expiresAt: new Date(verifiedAt.getTime() + 15 * 60_000),
+    } });
+  }
+
+  async requireTransferProof(tx: Pick<Prisma.TransactionClient, 'gdsAccountVerification'>, actorId: string, row: GdsWithdrawal, mandatory: boolean) {
+    const proof = await tx.gdsAccountVerification.findFirst({ where: {
+      withdrawalId: row.id, actorId, ownerId: row.ownerId, bankCode: row.bankCode, accountNumber: row.accountNumber,
+      purpose: 'TRANSFER', expiresAt: { gt: new Date() },
+      ...(mandatory || row.verificationId ? { provider: 'vietqr' } : {}),
+    }, orderBy: [{ verifiedAt: 'desc' }, { id: 'desc' }] });
+    if (!proof || !sameBankAccountName(proof.accountHolder, row.accountHolder)) throw new ConflictException('GDS_ACCOUNT_VERIFICATION_REQUIRED');
+    return proof;
+  }
+
+  async transferCheck(id: string, tx: Pick<Prisma.TransactionClient, 'gdsAccountVerification'> = this.prisma) {
+    const proof = await tx.gdsAccountVerification.findFirst({ where: { withdrawalId: id, purpose: 'TRANSFER' }, orderBy: [{ verifiedAt: 'desc' }, { id: 'desc' }] });
+    return proof ? { method: proof.provider === 'admin_manual' ? 'MANUAL' as const : 'PROVIDER' as const, actorId: proof.actorId, verifiedAt: proof.verifiedAt.toISOString(), expiresAt: proof.expiresAt.toISOString() } : null;
+  }
 
   async verify(ownerId: string, bankCode: string, accountNumber: string) {
     this.requireQrAccount(accountNumber);
@@ -58,11 +91,8 @@ export class GdsAccountVerificationService {
     const row = await this.prisma.gdsWithdrawal.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('GDS_WITHDRAWAL_NOT_FOUND');
     if (row.status !== 'PROCESSING' || row.processingAdminId !== actorId || row.ownerId === actorId) throw new ForbiddenException('GDS_WITHDRAWAL_QR_NOT_ALLOWED');
-    const proof = await this.prisma.gdsAccountVerification.findFirst({ where: {
-      withdrawalId: id, actorId, ownerId: row.ownerId, bankCode: row.bankCode, accountNumber: row.accountNumber,
-      purpose: 'TRANSFER', expiresAt: { gt: new Date() },
-    }, orderBy: [{ verifiedAt: 'desc' }, { id: 'desc' }] });
-    if (!proof || !sameBankAccountName(proof.accountHolder, row.accountHolder)) throw new ConflictException('GDS_ACCOUNT_VERIFICATION_REQUIRED');
+    const settings = await this.prisma.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
+    const proof = await this.requireTransferProof(this.prisma, actorId, row, settings.accountVerificationRequired);
     // Existing QR encoder accepts 6..19 digits; do not silently truncate longer destinations.
     if (!/^\d{6,19}$/.test(row.accountNumber)) throw new ConflictException('GDS_ACCOUNT_QR_UNSUPPORTED');
     const transferContent = `GDSW${id.replace(/-/g,'').slice(0,21).toUpperCase()}`;
@@ -71,9 +101,11 @@ export class GdsAccountVerificationService {
     // Recheck status after encoding so stale tabs never get a terminal request's QR.
     const fresh = await this.prisma.gdsWithdrawal.findUniqueOrThrow({ where: { id } });
     if (fresh.status !== 'PROCESSING' || fresh.processingAdminId !== actorId || proof.expiresAt <= new Date()) throw new ConflictException('GDS_WITHDRAWAL_QR_EXPIRED');
+    const freshSettings = await this.prisma.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
+    if (proof.provider === 'admin_manual' && (freshSettings.accountVerificationRequired || fresh.verificationId)) throw new ConflictException('GDS_ACCOUNT_VERIFICATION_REQUIRED');
     return { withdrawalId: id, bankCode: row.bankCode, bankBin: proof.bankBin, bankName: proof.bankName,
       accountNumber: row.accountNumber, accountHolder: proof.accountHolder, amountMinor: row.amountMinor.toString(), currency: 'VND',
-      transferContent, qrCodeDataUrl, verifiedAt: proof.verifiedAt.toISOString(), expiresAt: proof.expiresAt.toISOString() };
+      transferContent, qrCodeDataUrl, verificationMethod: proof.provider === 'admin_manual' ? 'MANUAL' as const : 'PROVIDER' as const, verifiedAt: proof.verifiedAt.toISOString(), expiresAt: proof.expiresAt.toISOString() };
   }
   private requireQrAccount(accountNumber: string) {
     if (!/^[0-9]{6,19}$/.test(accountNumber)) throw new BadRequestException('GDS_ACCOUNT_QR_UNSUPPORTED');

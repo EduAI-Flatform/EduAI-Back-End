@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { GdsWithdrawal, Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GdsCreateWithdrawalDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
+import { GdsConfirmRecipientDto, GdsCreateWithdrawalDto, GdsWithdrawalActionDto, GdsWithdrawalPageDto, GdsWithdrawalSettingsDto } from './dto/gds-withdrawal.dto';
 import { GdsRevenueWalletService, lockGdsFinance } from './gds-revenue-wallet.service';
 import { gdsWalletCapabilities } from './gds-wallet-capabilities';
 import { nextWithdrawalStatus, validateWithdrawalAmount, WithdrawalAction } from './gds-withdrawal.domain';
@@ -100,7 +100,30 @@ export class GdsWithdrawalService {
     const row = await this.prisma.gdsWithdrawal.findFirst({ where: { id, ...(ownerId ? { ownerId } : {}) } });
     if (!row) throw new NotFoundException('GDS_WITHDRAWAL_NOT_FOUND');
     const events = await this.prisma.gdsWithdrawalEvent.findMany({ where: { withdrawalId: id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
-    return { ...withdrawalResponse(row, true), events };
+    return { ...withdrawalResponse(row, true), events, ...(!ownerId && this.accounts?.transferCheck ? { recipientCheck: await this.accounts.transferCheck(id) } : {}) };
+  }
+
+  async confirmRecipient(actorId: string, id: string, input: GdsConfirmRecipientDto) {
+    this.requireRead();
+    if (input.confirmed !== true || !input.reason?.trim()) throw new BadRequestException('GDS_MANUAL_CHECK_CONFIRMATION_REQUIRED');
+    if (!this.accounts) throw new ForbiddenException('GDS_MANUAL_CHECK_NOT_ALLOWED');
+    const bank = await this.accounts.prepareManual(actorId, id); // Catalogue I/O stays outside financial locks.
+    return this.revenue.transaction(async tx => {
+      await lockGdsFinance(tx);
+      const row = await tx.gdsWithdrawal.findFirst({ where: { id } });
+      if (!row) throw new NotFoundException('GDS_WITHDRAWAL_NOT_FOUND');
+      if (row.ownerId === actorId) throw new ForbiddenException('GDS_WITHDRAWAL_SELF_PROCESSING_FORBIDDEN');
+      if (!['PENDING', 'APPROVED', 'PROCESSING'].includes(row.status)) throw new ConflictException('GDS_WITHDRAWAL_INVALID_TRANSITION');
+      if (row.status === 'PROCESSING' && row.processingAdminId !== actorId) throw new ForbiddenException('GDS_WITHDRAWAL_CLAIMED_BY_ANOTHER_ADMIN');
+      const settings = await tx.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
+      if (settings.accountVerificationRequired || row.verificationId) throw new ForbiddenException('GDS_MANUAL_CHECK_NOT_ALLOWED');
+      const proof = await this.accounts!.recordManual(tx, actorId, row, bank, input.accountHolder);
+      await tx.auditLog.create({ data: { actorId, action: 'gds.withdrawal.recipient.manually_checked', targetType: 'gds_withdrawal', targetId: id,
+        metadataJson: { verificationId: proof.id, method: 'MANUAL', reason: input.reason.trim() } } });
+      if (row.status === 'PENDING') await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: id, actorId, fromStatus: 'PENDING', toStatus: 'APPROVED', reason: input.reason.trim() } });
+      const next = await tx.gdsWithdrawal.findUniqueOrThrow({ where: { id } });
+      return { ...withdrawalResponse(next, true), recipientCheck: { method: 'MANUAL' as const, actorId, verifiedAt: proof.verifiedAt.toISOString(), expiresAt: proof.expiresAt.toISOString() } };
+    });
   }
 
   async act(actorId: string, id: string, action: WithdrawalAction, input: GdsWithdrawalActionDto, ownerOnly = false) {
@@ -124,6 +147,8 @@ export class GdsWithdrawalService {
         if (!settings.processingEnabled) throw new ForbiddenException('GDS_WITHDRAWAL_PROCESSING_DISABLED');
       }
       if (action === 'process') {
+        const policy = await tx.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
+        if (this.accounts) await this.accounts.requireTransferProof(tx, actorId, row, policy.accountVerificationRequired);
         await this.revenue.syncOwner(tx, row.ownerId);
         const wallet = await tx.gdsInternalWallet.findUniqueOrThrow({ where: { id: row.walletId } });
         if (wallet.status !== 'ACTIVE' || wallet.debtMinor !== 0n) throw new ConflictException('GDS_WITHDRAWAL_WALLET_OR_DEBT_BLOCKED');
@@ -137,7 +162,8 @@ export class GdsWithdrawalService {
       await tx.gdsWithdrawalEvent.create({ data: { withdrawalId: id, actorId, fromStatus: row.status, toStatus: status, reason: input.reason,
         bankTransactionRef: action === 'pay' ? input.bankTransactionRef!.trim() : undefined,
         transferredAt: action === 'pay' ? new Date(input.transferredAt!) : undefined } });
-      return withdrawalResponse(await tx.gdsWithdrawal.findUniqueOrThrow({ where: { id } }), true);
+      return { ...withdrawalResponse(await tx.gdsWithdrawal.findUniqueOrThrow({ where: { id } }), true),
+        ...(!ownerOnly && this.accounts?.transferCheck ? { recipientCheck: await this.accounts.transferCheck(id, tx) } : {}) };
     });
   }
   private requireRead() { if (!gdsWalletCapabilities(this.config).readEnabled) throw new ForbiddenException('GDS_WALLET_UNAVAILABLE'); }

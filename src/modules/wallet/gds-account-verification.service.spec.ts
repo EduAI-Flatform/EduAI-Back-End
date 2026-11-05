@@ -11,6 +11,7 @@ function setup() {
   const proof = { id: 'proof-id', ownerId: row.ownerId, actorId: 'admin', bankCode: row.bankCode, bankBin: bank.bin, bankName: bank.name, bankShortName: bank.shortName,
     accountNumber: row.accountNumber, accountHolder: 'NGUYEN VAN A', verifiedAt: now, expiresAt: new Date(now.getTime() + 15 * 60_000), purpose: 'TRANSFER', withdrawalId: requestId };
   const prisma = { gdsWithdrawal: { findUnique: jest.fn().mockResolvedValue(row), findUniqueOrThrow: jest.fn().mockResolvedValue(row) },
+    gdsWithdrawalSettings: { findUniqueOrThrow: jest.fn().mockResolvedValue({ accountVerificationRequired: false }) },
     gdsAccountVerification: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: 'new-proof', ...data })), findUnique: jest.fn().mockResolvedValue({ ...proof, actorId: 'owner', purpose: 'CREATE', withdrawalId: null }), findFirst: jest.fn().mockResolvedValue(proof) } };
   const banks = { get: jest.fn().mockResolvedValue(bank) };
   const provider = { isAvailable: jest.fn().mockReturnValue(true), available: jest.fn().mockReturnValue(true), lookup: jest.fn().mockResolvedValue({ accountHolder: 'NGUYEN VAN A', provider: 'vietqr' }) };
@@ -33,6 +34,24 @@ function tlv(input: string): Record<string, string> {
 describe('GDS account verification service trust boundaries', () => {
   beforeEach(() => { jest.useFakeTimers().setSystemTime(now); jest.clearAllMocks(); });
   afterEach(() => jest.useRealTimers());
+  it('records manual checks with a distinct method and never calls an external lookup', async () => {
+    const { service, row, prisma, provider, banks } = setup();
+    const bank = await banks.get();
+    await service.recordManual(prisma as never, 'admin', row as never, bank as never, 'NGUYEN VAN A');
+    expect(prisma.gdsAccountVerification.create).toHaveBeenCalledWith({ data: expect.objectContaining({ provider: 'admin_manual', purpose: 'TRANSFER', actorId: 'admin', withdrawalId: row.id }) });
+    expect(provider.lookup).not.toHaveBeenCalled();
+  });
+  it('rejects a mismatched manual recipient before saving evidence', async () => {
+    const { service, row, prisma, banks } = setup();
+    await expect(service.recordManual(prisma as never, 'admin', row as never, await banks.get() as never, 'ANOTHER NAME')).rejects.toThrow('GDS_ACCOUNT_HOLDER_MISMATCH');
+    expect(prisma.gdsAccountVerification.create).not.toHaveBeenCalled();
+  });
+  it('does not accept manual transfer evidence when policy requires a provider lookup', async () => {
+    const { service, row, prisma } = setup();
+    prisma.gdsAccountVerification.findFirst.mockResolvedValue(null);
+    await expect(service.requireTransferProof(prisma as never, 'admin', row as never, true)).rejects.toThrow('GDS_ACCOUNT_VERIFICATION_REQUIRED');
+    expect(prisma.gdsAccountVerification.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ provider: 'vietqr', actorId: 'admin', expiresAt: { gt: now } }) }));
+  });
 
   it('stores canonical bank facts and provider name with exactly fifteen minutes validity', async () => {
     const { service, prisma, provider } = setup();

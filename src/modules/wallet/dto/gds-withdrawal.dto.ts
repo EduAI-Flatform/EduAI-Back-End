@@ -33,6 +33,12 @@ export class GdsWithdrawalActionDto {
   @IsOptional() @IsString() @Length(1, 160) @Matches(/^[^\x00-\x1f\x7f]+$/) bankTransactionRef?: string;
   @IsOptional() @IsISO8601({ strict: true }) transferredAt?: string;
 }
+export class GdsConfirmRecipientDto {
+  @IsBoolean() confirmed!: boolean;
+  @IsString() @Length(2, 160) @Matches(/^[^\x00-\x1f\x7f]+$/) accountHolder!: string;
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @Length(1, 500) reason!: string;
+}
 export class GdsRevenueReviewDto {
   @IsString() @Matches(/^(0|[1-9]\d{0,15})$/) paidMinor!: string;
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)

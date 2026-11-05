@@ -11,7 +11,7 @@ import { Roles } from '../auth/roles.decorator';
 import { GdsBankCatalogueService } from './gds-bank-catalogue.service';
 import { GdsAccountVerificationService } from './gds-account-verification.service';
 import { GdsWithdrawalService } from './gds-withdrawal.service';
-import { GdsVerifyAccountDto } from './dto/gds-withdrawal.dto';
+import { GdsConfirmRecipientDto, GdsVerifyAccountDto } from './dto/gds-withdrawal.dto';
 
 @ApiTags('GDS Bank Verification') @ApiBearerAuth()
 @Controller('wallet/gds') @UseGuards(JwtAuthGuard, RolesGuard) @Roles(RoleName.student, RoleName.instructor)
@@ -28,6 +28,9 @@ export class GdsBankController {
 @Controller('admin/wallet/gds') @UseGuards(JwtAuthGuard, RolesGuard) @Roles(RoleName.platform_admin)
 export class GdsBankAdminController {
   constructor(private readonly banks: GdsBankCatalogueService, private readonly accounts: GdsAccountVerificationService, private readonly withdrawals: GdsWithdrawalService) {}
+  @Post('withdrawals/:id/confirm-recipient') @Header('Cache-Control', 'no-store')
+  @RateLimit({ identity: 'user', limit: 10, name: 'gds-admin-manual-recipient', windowSeconds: 60 })
+  confirmRecipient(@CurrentUser('id') actorId: string, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() input: GdsConfirmRecipientDto) { return this.withdrawals.confirmRecipient(actorId, id, input); }
   @Get('banks') @RateLimit({ identity: 'user', limit: 30, name: 'gds-admin-banks-list', windowSeconds: 60 })
   async list() { return this.banks.list((await this.withdrawals.settings()).accountVerificationRequired); }
   @Post('withdrawals/:id/verify-account') @Header('Cache-Control', 'no-store')

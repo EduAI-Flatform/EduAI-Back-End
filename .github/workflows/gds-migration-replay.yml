@@ -43,8 +43,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/gds-pending"
           shopt -s nullglob
-          pending=(prisma/migrations/20261102* prisma/migrations/20261103* prisma/migrations/20261104100000_add_gds_withdrawals prisma/migrations/20261104120000_add_gds_account_verifications)
-          test "${#pending[@]}" -eq 14
+          pending=(prisma/migrations/20261102* prisma/migrations/20261103* prisma/migrations/20261104100000_add_gds_withdrawals prisma/migrations/20261104120000_add_gds_account_verifications prisma/migrations/20261105040000_add_gds_manual_recipient_checks)
+          test "${#pending[@]}" -eq 15
           for migration in "${pending[@]}"; do
             mv "$migration" "$RUNNER_TEMP/gds-pending/"
           done

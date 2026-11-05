@@ -67,14 +67,14 @@ describe('GDS recipient verification PostgreSQL invariants (synthetic data only)
   async function balance() {
     return (await db.query('SELECT available_minor::text AS available,held_minor::text AS held FROM gds_internal_wallets WHERE id=$1', [wallet])).rows[0];
   }
-  async function proof(options: Partial<Destination> & { purpose?: string; withdrawal?: string; actor?: string; expiresInMs?: number } = {}): Promise<Proof> {
+  async function proof(options: Partial<Destination> & { purpose?: string; withdrawal?: string; actor?: string; expiresInMs?: number; provider?: string } = {}): Promise<Proof> {
     const d = { ...destination(), ...options };
     const id = randomUUID();
     const row = await db.query<{ verifiedAt: string }>(`INSERT INTO gds_account_verifications(id,owner_id,actor_id,bank_code,bank_bin,bank_name,bank_short_name,
       account_number,account_holder,normalized_account_holder,provider,purpose,withdrawal_id,verified_at,expires_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::text,gds_normalize_bank_name($9::text),'vietqr',$10,$11,
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::text,gds_normalize_bank_name($9::text),$13,$10,$11,
         clock_timestamp()-INTERVAL '1 second',clock_timestamp()+($12::int*INTERVAL '1 millisecond')) RETURNING verified_at::text AS "verifiedAt"`,
-    [id, d.owner, options.actor ?? d.owner, d.bank, d.bin, d.bankName, d.shortName, d.account, d.name, options.purpose ?? 'CREATE', options.withdrawal ?? null, options.expiresInMs ?? 600000]);
+    [id, d.owner, options.actor ?? d.owner, d.bank, d.bin, d.bankName, d.shortName, d.account, d.name, options.purpose ?? 'CREATE', options.withdrawal ?? null, options.expiresInMs ?? 600000, options.provider ?? 'vietqr']);
     return { ...d, id, verifiedAt: row.rows[0].verifiedAt };
   }
   async function request(p?: Proof, overrides: Partial<Destination> = {}) {
@@ -97,6 +97,38 @@ describe('GDS recipient verification PostgreSQL invariants (synthetic data only)
     const id = await request();
     expect((await db.query('SELECT verification_id,bank_bin,bank_name,bank_short_name,account_verified_at FROM gds_withdrawals WHERE id=$1', [id])).rows)
       .toEqual([{ verification_id: null, bank_bin: null, bank_name: null, bank_short_name: null, account_verified_at: null }]);
+  });
+  it('preserves balances and request snapshots while adding explicit manual checks', async () => {
+    const id = await approved();
+    const previous = (await db.query('SELECT to_jsonb(r) AS snapshot FROM gds_withdrawals r WHERE id=$1', [id])).rows;
+    const before = await balance();
+    await db.exec(migration('20261105040000_add_gds_manual_recipient_checks'));
+    expect((await db.query('SELECT to_jsonb(r) AS snapshot FROM gds_withdrawals r WHERE id=$1', [id])).rows).toEqual(previous);
+    await rejected(() => event(id, 'APPROVED', 'PROCESSING'), /requires fresh matching verification/);
+    await proof({ provider: 'admin_manual', purpose: 'TRANSFER', withdrawal: id, actor: admin });
+    await rejected(() => event(id, 'APPROVED', 'PROCESSING', other), /requires fresh matching verification/);
+    await event(id, 'APPROVED', 'PROCESSING');
+    expect(await balance()).toEqual(before);
+    await rejected(() => proof({ provider: 'admin_manual', purpose: 'TRANSFER', withdrawal: id, actor: other }), /request mismatch/);
+    await event(id, 'PROCESSING', 'FAILED');
+    expect(await balance()).toEqual({ available: '200000', held: '0' });
+  });
+  it('never accepts a manual check as CREATE evidence or as a substitute for mandatory lookup', async () => {
+    await db.exec(migration('20261105040000_add_gds_manual_recipient_checks'));
+    await rejected(() => proof({ provider: 'admin_manual' }), /check constraint/);
+    const id = await approved();
+    await mandatory();
+    await rejected(() => proof({ provider: 'admin_manual', purpose: 'TRANSFER', withdrawal: id, actor: admin }), /request mismatch/);
+    await proof({ purpose: 'TRANSFER', withdrawal: id, actor: admin });
+    await event(id, 'APPROVED', 'PROCESSING');
+  });
+  it('does not allow an earlier manual check after mandatory policy is switched on', async () => {
+    await db.exec(migration('20261105040000_add_gds_manual_recipient_checks'));
+    const id = await approved();
+    await proof({ provider: 'admin_manual', purpose: 'TRANSFER', withdrawal: id, actor: admin });
+    await mandatory();
+    await rejected(() => event(id, 'APPROVED', 'PROCESSING'), /requires fresh matching verification/);
+    expect(await balance()).toEqual({ available: '150000', held: '50000' });
   });
   it('preserves an existing reserved withdrawal and journal unchanged when applying the additive migration', async () => {
     const legacyDb = new PGlite();

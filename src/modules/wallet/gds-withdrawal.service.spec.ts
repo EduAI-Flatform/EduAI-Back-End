@@ -28,6 +28,34 @@ function setup(accounts?: { available: jest.Mock; resolve: jest.Mock; verifyTran
 }
 const input = { amountMinor: '50000', bankCode: 'MB', accountNumber: '123456789', accountHolder: 'NGUYEN VAN A' };
 describe('GDS withdrawal API and service boundaries', () => {
+  it('atomically approves a pending manually checked recipient without pretending to call a provider', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(false), resolve: jest.fn(), verifyTransfer: jest.fn(), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), recordManual: jest.fn().mockResolvedValue({ id: 'manual-proof', verifiedAt: new Date(), expiresAt: new Date(Date.now() + 900000) }) };
+    const { service, tx } = setup(accounts);
+    await service.confirmRecipient('admin', 'request-id', { confirmed: true, accountHolder: 'NGUYEN VAN A', reason: 'Đối chiếu trong ngân hàng' });
+    expect(accounts.recordManual).toHaveBeenCalled();
+    expect(accounts.verifyTransfer).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ fromStatus: 'PENDING', toStatus: 'APPROVED', actorId: 'admin' }) });
+  });
+  it('does not allow a manual check to replace mandatory automatic verification', async () => {
+    const accounts = { available: jest.fn().mockReturnValue(false), resolve: jest.fn(), verifyTransfer: jest.fn(), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), recordManual: jest.fn() };
+    const { service, tx } = setup(accounts);
+    const policy = await tx.gdsWithdrawalSettings.findUniqueOrThrow();
+    tx.gdsWithdrawalSettings.findUniqueOrThrow.mockResolvedValue({ ...policy, accountVerificationRequired: true } as never);
+    await expect(service.confirmRecipient('admin', 'request-id', { confirmed: true, accountHolder: 'NGUYEN VAN A', reason: 'Checked' })).rejects.toThrow('MANUAL_CHECK_NOT_ALLOWED');
+    expect(accounts.recordManual).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
+  it.each([{ confirmed: false, actor: 'admin', status: 'PENDING', processingAdminId: null },
+    { confirmed: true, actor: 'owner', status: 'PENDING', processingAdminId: null },
+    { confirmed: true, actor: 'admin', status: 'PAID', processingAdminId: 'admin' },
+    { confirmed: true, actor: 'admin', status: 'PROCESSING', processingAdminId: 'another-admin' }])('rejects unsafe manual confirmations: %j', async ({ confirmed, actor, status, processingAdminId }) => {
+    const accounts = { available: jest.fn(), resolve: jest.fn(), verifyTransfer: jest.fn(), prepareManual: jest.fn().mockResolvedValue({ bin: '970422' }), recordManual: jest.fn() };
+    const { service, tx, row } = setup(accounts);
+    tx.gdsWithdrawal.findFirst.mockResolvedValue({ ...row, status, processingAdminId });
+    await expect(service.confirmRecipient(actor, row.id, { confirmed, accountHolder: input.accountHolder, reason: 'Checked' })).rejects.toThrow();
+    expect(accounts.recordManual).not.toHaveBeenCalled();
+    expect(tx.gdsWithdrawalEvent.create).not.toHaveBeenCalled();
+  });
   it.each(['NGUYEN VAN A123', 'NGUYEN@VAN A', 'NGUYEN 😀', 'Nguyễn Văn An', 'NGUYEN\u200bAN'])('rejects an invalid manually supplied holder before touching funds: %s', async accountHolder => {
     const { service, tx, revenue } = setup();
     await expect(service.create('owner', { ...input, accountHolder }, 'unique-request-key-123')).rejects.toThrow('GDS_ACCOUNT_HOLDER_INVALID');

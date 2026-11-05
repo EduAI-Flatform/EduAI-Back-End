@@ -20,7 +20,10 @@ async function main() {
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true } };
   const revenue = new GdsRevenueWalletService(db, config, new RevenueFinanceService(db));
-  const service = new GdsWithdrawalService(db, config, revenue);
+  const manualAccounts = new GdsAccountVerificationService(db,
+    { async get(code) { assert.ok(['MB', '970422'].includes(code)); return { code: 'MB', bin: '970422', name: 'Synthetic CI Bank', shortName: 'MB', lookupSupported: false }; } },
+    { isAvailable: () => false, available: () => false, async lookup() { throw new Error('Manual check must never call provider'); } });
+  const service = new GdsWithdrawalService(db, config, revenue, manualAccounts);
   const input = { amountMinor: '150000', bankCode: 'MB', accountNumber: '123456789', accountHolder: 'SYNTHETIC TEST ONLY' };
   const admin = randomUUID(), otherAdmin = randomUUID();
   async function user(opening = 200000n) {
@@ -78,10 +81,18 @@ async function main() {
 
     const e = await user();
     const payable = await service.create(e.id, input, randomUUID());
-    await service.act(admin, payable.id, 'approve', { reason: 'Synthetic account checked' });
+    await assert.rejects(service.confirmRecipient(admin, payable.id, { confirmed: true, accountHolder: 'WRONG NAME', reason: 'Synthetic mismatch' }), /GDS_ACCOUNT_HOLDER_MISMATCH/);
+    assert.equal(await db.gdsAccountVerification.count({ where: { withdrawalId: payable.id } }), 0);
+    await service.confirmRecipient(admin, payable.id, { confirmed: true, accountHolder: input.accountHolder, reason: 'Synthetic bank app checked' });
+    await service.confirmRecipient(otherAdmin, payable.id, { confirmed: true, accountHolder: input.accountHolder, reason: 'Synthetic other admin bank app checked' });
     const claims = await settle([service.act(admin, payable.id, 'process', { reason: 'Claim' }), service.act(otherAdmin, payable.id, 'process', { reason: 'Claim' })]);
     assert.equal(claims.filter(r => r.status === 'fulfilled').length, 1);
     const claimed = await db.gdsWithdrawal.findUniqueOrThrow({ where: { id: payable.id } });
+    const manualQr = await manualAccounts.qr(claimed.processingAdminId, payable.id);
+    assert.equal(manualQr.verificationMethod, 'MANUAL');
+    assert.equal(manualQr.accountNumber, input.accountNumber);
+    assert.equal(manualQr.amountMinor, input.amountMinor);
+    await assert.rejects(manualAccounts.qr(claimed.processingAdminId === admin ? otherAdmin : admin, payable.id), /GDS_WITHDRAWAL_QR_NOT_ALLOWED/);
     const proof = { reason: 'Synthetic bank statement checked', bankTransactionRef: `ci:${randomUUID()}`, transferredAt: new Date().toISOString() };
     await assert.rejects(service.act(e.id, payable.id, 'cancel', { reason: 'Too late' }, true));
     const pays = await settle([service.act(claimed.processingAdminId, payable.id, 'pay', proof), service.act(claimed.processingAdminId, payable.id, 'pay', proof)]);
