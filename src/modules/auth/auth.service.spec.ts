@@ -213,6 +213,9 @@ describe('AuthService.login', () => {
       user.passwordHash,
     );
     expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
+    const refreshPayload = (jwtService.signAsync as jest.Mock).mock.calls[1][0];
+    expect(refreshPayload.jti).toEqual(expect.any(String));
+    expect(Object.keys(refreshPayload)[0]).toBe('jti');
     expect(passwordService.hashPassword).toHaveBeenCalledWith('refresh-token');
     expect(prisma.refreshToken.create).toHaveBeenCalledWith({
       data: {
@@ -273,6 +276,7 @@ describe('AuthService.refresh', () => {
       },
       refreshToken: {
         update: jest.fn().mockResolvedValue({ id: 'refresh-token-id' }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         create: jest.fn().mockResolvedValue({ id: 'new-refresh-token-id' }),
       },
     };
@@ -358,8 +362,8 @@ describe('AuthService.refresh', () => {
       'old-refresh-token',
       'stored-refresh-token-hash',
     );
-    expect(tx.refreshToken.update).toHaveBeenCalledWith({
-      where: { id: 'refresh-token-id' },
+    expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { id: 'refresh-token-id', revokedAt: null, expiresAt: { gt: expect.any(Date) } },
       data: { revokedAt: expect.any(Date) },
     });
     expect(passwordService.hashPassword).toHaveBeenCalledWith(
@@ -372,6 +376,13 @@ describe('AuthService.refresh', () => {
         userId: user.id,
       },
     });
+  });
+
+  it('does not issue replacement tokens after another request consumed the token', async () => {
+    const { service, tx } = createService();
+    tx.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.refresh(refreshInput)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(tx.refreshToken.create).not.toHaveBeenCalled();
   });
 });
 

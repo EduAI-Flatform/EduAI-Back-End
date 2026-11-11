@@ -9,6 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { randomUUID } from 'node:crypto';
 import {
   AuthProvider,
   RoleName,
@@ -440,10 +441,14 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
-      await tx.refreshToken.update({
-        where: { id: storedToken.id },
+      const consumed = await tx.refreshToken.updateMany({
+        where: { id: storedToken.id, revokedAt: null, expiresAt: { gt: new Date() } },
         data: { revokedAt: new Date() },
       });
+
+      if (consumed.count !== 1) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
 
       return this.issueTokenResponse(user, tx);
     });
@@ -669,7 +674,9 @@ export class AuthService {
       expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       secret: this.getRequiredJwtSecret('accessSecret'),
     });
-    const refreshToken = await this.jwtService.signAsync(payload, {
+    // Put entropy first: bcrypt compares only the first 72 UTF-8 bytes, so
+    // otherwise JWTs for the same user can match another device's stored hash.
+    const refreshToken = await this.jwtService.signAsync({ jti: randomUUID(), ...payload }, {
       expiresIn: REFRESH_TOKEN_EXPIRES_IN_SECONDS,
       secret: this.getRequiredJwtSecret('refreshSecret'),
     });
