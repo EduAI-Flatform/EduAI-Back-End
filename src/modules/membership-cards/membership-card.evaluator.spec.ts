@@ -36,7 +36,7 @@ describe('membership card evaluation', () => {
     const source = order('a', 100n);
     source.refunds = [{ id: 'r', settlementId: 's-a', currency: 'VND', status: 'recorded', amountMinor: 101n, recordedAt: at }];
     expect(evaluateMembershipCard(policy, 'v', [source], at)).toMatchObject({ status: 'unavailable', reason: 'REFUND_EXCEEDS_SETTLED_SPEND' });
-    expect(evaluateMembershipCard({ ...policy, basis: 'topup' }, 'v', [], at)).toMatchObject({ status: 'unavailable', reason: 'TOPUP_SOURCE_NOT_APPROVED' });
+    expect(evaluateMembershipCard({ ...policy, basis: 'topup' }, 'v', [], at)).toMatchObject({ status: 'unavailable', reason: 'TOPUP_SOURCE_NOT_LOADED' });
     expect(evaluateMembershipCard({ ...policy, enabled: false }, null, [], at)).toMatchObject({ status: 'disabled', tier: null });
   });
 });

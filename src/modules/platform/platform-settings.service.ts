@@ -226,9 +226,6 @@ export class PlatformSettingsService {
   private activationBlockers(group: PlatformGroup, content: unknown): string[] {
     const c = content as Record<string, unknown>;
     if (["membership", "points", "affiliate"].includes(group) && c.enabled === false) return [];
-    if (group === "membership" && c.basis === "topup") {
-      return ["TOPUP_SOURCE_NOT_APPROVED"];
-    }
     if (group === "affiliate" && c.subAffiliateEnabled) {
       return ["SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED"];
     }

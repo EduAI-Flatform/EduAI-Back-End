@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { evaluateVerifiedTopups, type MembershipTopup } from './membership-topup.evaluator';
 
 export interface MembershipCardTier {
   code: string; name: { vi: string; en: string }; threshold: number;
@@ -28,7 +29,7 @@ export function rollingWindowStart(at: Date, months: number): Date {
 }
 
 export function evaluateMembershipCard(policy: MembershipCardPolicy, policyRevisionId: string | null,
-  orders: MembershipSpendOrder[], at = new Date()) {
+  orders: MembershipSpendOrder[], at = new Date(), topups?: MembershipTopup[]) {
   const validWindow = Number.isInteger(policy.cycleMonths) && policy.cycleMonths >= 1 && policy.cycleMonths <= 120 && Number.isFinite(at.getTime());
   const startsAt = validWindow ? rollingWindowStart(at, policy.cycleMonths) : null;
   const base = {
@@ -36,7 +37,7 @@ export function evaluateMembershipCard(policy: MembershipCardPolicy, policyRevis
     evaluatedAt: Number.isFinite(at.getTime()) ? at.toISOString() : null,
     windowStartsAt: startsAt?.toISOString() ?? null, windowEndsAt: Number.isFinite(at.getTime()) ? at.toISOString() : null,
     preservesPurchasedAccess: true, qualifyingAmountMinor: null as string | null,
-    tier: null as MembershipCardTier | null, eligibleOrderCount: 0, excludedCurrencyCount: 0, sourceDigest: null as string | null,
+    tier: null as MembershipCardTier | null, eligibleOrderCount: 0, eligibleTopupCount: 0, excludedCurrencyCount: 0, sourceDigest: null as string | null,
   };
   const unavailable = (reason: string) => ({ ...base, status: 'unavailable' as const, reason });
   if (!policy.enabled) return { ...base, status: 'disabled' as const, reason: 'POLICY_DISABLED' };
@@ -46,9 +47,11 @@ export function evaluateMembershipCard(policy: MembershipCardPolicy, policyRevis
     || policy.tiers.some((tier, index) => !Number.isSafeInteger(tier.threshold) || tier.threshold < 0
       || (index > 0 && tier.threshold <= policy.tiers[index - 1].threshold))
     || new Set(policy.tiers.map(tier => tier.code)).size !== policy.tiers.length) return unavailable('INVALID_POLICY');
-  if (policy.basis === 'topup') return unavailable('TOPUP_SOURCE_NOT_APPROVED');
+  if (policy.basis === 'topup' && !topups) return unavailable('TOPUP_SOURCE_NOT_LOADED');
 
-  const spend = evaluateSettledSpend(orders, policy.currency, at, startsAt);
+  const spend = policy.basis === 'topup'
+    ? evaluateVerifiedTopups(topups!, policy.currency, at, startsAt!)
+    : evaluateSettledSpend(orders, policy.currency, at, startsAt);
   if (spend.status === 'unavailable') return unavailable(spend.reason);
   const total = BigInt(spend.qualifyingAmountMinor);
   const tier = [...policy.tiers].reverse().find(item => total >= BigInt(item.threshold)) ?? null;
