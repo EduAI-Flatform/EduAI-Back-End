@@ -14,13 +14,15 @@ async function main() {
   const { PrismaClient } = require('../dist/generated/prisma/client.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
+  const { AffiliateWalletService } = require('../dist/src/modules/wallet/affiliate-wallet.service.js');
   const { GdsWithdrawalService } = require('../dist/src/modules/wallet/gds-withdrawal.service.js');
   const { GdsWalletService } = require('../dist/src/modules/wallet/gds-wallet.service.js');
   const { GdsAccountVerificationService } = require('../dist/src/modules/wallet/gds-account-verification.service.js');
   const { buildRuntimeGdsPrivilegeStatement, buildRuntimeGdsWithdrawalPrivilegeStatement, buildRuntimeGdsVerificationPrivilegeStatement } = require('./membership-runtime-privileges.cjs');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true } };
-  const revenue = new GdsRevenueWalletService(db, config, new RevenueFinanceService(db));
+  const finance = new RevenueFinanceService(db);
+  const revenue = new GdsRevenueWalletService(db, config, finance, new AffiliateWalletService(finance));
   const manualAccounts = new GdsAccountVerificationService(db,
     { async get(code) { assert.ok(['MB', '970422'].includes(code)); return { code: 'MB', bin: '970422', name: 'Synthetic CI Bank', shortName: 'MB', lookupSupported: false }; } },
     { isAvailable: () => false, available: () => false, async lookup() { throw new Error('Manual check must never call provider'); } });
@@ -147,11 +149,13 @@ async function main() {
       await db.$executeRawUnsafe(statement);
     }
     await db.$executeRawUnsafe(`GRANT SELECT ON revenue_earning_periods, revenue_ledger_entries TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT SELECT ON affiliate_attributions, affiliate_identities TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT SELECT(migration_name,checksum,finished_at,rolled_back_at) ON _prisma_migrations TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT INSERT ON audit_logs TO "${role}"`);
     const runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
     try {
-      const runtimeRevenue = new GdsRevenueWalletService(runtime, config, new RevenueFinanceService(runtime));
+      const runtimeFinance = new RevenueFinanceService(runtime);
+      const runtimeRevenue = new GdsRevenueWalletService(runtime, config, runtimeFinance, new AffiliateWalletService(runtimeFinance));
       const runtimeService = new GdsWithdrawalService(runtime, config, runtimeRevenue);
       const f = await user();
       const created = await runtimeService.create(f.id, { ...input, amountMinor: '50000' }, randomUUID());
