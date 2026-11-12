@@ -14,6 +14,7 @@ function setup() {
     user: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     commerceOrder: { findMany: jest.fn().mockResolvedValue([]) },
     gdsInternalTopup: { findMany: jest.fn().mockResolvedValue([]) },
+    enrollment: { findMany: jest.fn().mockResolvedValue([]) },
     platformPolicyRevision: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue(null),
@@ -33,6 +34,19 @@ function setup() {
   };
 }
 describe("versioned platform policies", () => {
+  it('previews point policy impact without awarding or rewriting prior completions', async () => {
+    const { service, revision, tx } = setup();
+    revision.group = 'points';
+    revision.content = { ...DEFAULT_PLATFORM_SETTINGS.points, enabled: true,
+      rules: [{ event: 'course.completed', points: 80 }] } as never;
+    tx.enrollment.findMany.mockResolvedValue([{ id: 'completion', userId: 'learner', completedAt: new Date() }] as never);
+    expect(await service.preview('revision')).toMatchObject({ pointsImpact: { status: 'evaluated', simulationOnly: true,
+      sampledEvents: 1, beforePoints: 0, afterPoints: 80, historicalAwardsPreserved: true,
+      beforeRevisionId: null, afterRevisionId: 'revision' }, preservesPurchasedAccess: true });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect((await service.state()).pointCapabilities.supportedEvents).toEqual(['course.completed']);
+    expect(await service.publicSettings()).not.toHaveProperty('pointCapabilities');
+  });
   it("publishes only effective scheduled settings and excludes private financial rules", async () => {
     const { service, tx } = setup();
     tx.platformPolicyRevision.findMany.mockResolvedValue([

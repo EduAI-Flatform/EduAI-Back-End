@@ -15,6 +15,8 @@ import { validatePlatformSettings } from "./platform-settings.validation";
 import { PLATFORM_REQUEST_HANDLERS } from "../platform-requests/platform-requests.readiness";
 import { computeMembershipCardImpact } from "../membership-cards/membership-card-source";
 import type { MembershipCardPolicy } from "../membership-cards/membership-card.evaluator";
+import { computeActivityPointImpact } from '../tmi/activity-point-impact';
+import { SUPPORTED_POINT_EVENTS, type ActivityPointPolicy } from '../tmi/activity-point-policy';
 
 const publicGroups = [
   "branding",
@@ -66,7 +68,10 @@ export class PlatformSettingsService {
         take: 100,
       }),
     ]);
-    return { ...current, revisions, groups: PLATFORM_GROUPS };
+    return { ...current, revisions, groups: PLATFORM_GROUPS, pointCapabilities: {
+      supportedEvents: [...SUPPORTED_POINT_EVENTS], historicalAwardsPreserved: true,
+      reprocessesHistoricalEvents: false, impactWindowDays: 30,
+    } };
   }
 
   async create(actorId: string, group: string, content: unknown) {
@@ -123,6 +128,12 @@ export class PlatformSettingsService {
           { beforePolicy: current.settings.membership as MembershipCardPolicy, beforeRevisionId: current.versions.membership },
         ), { isolationLevel: "RepeatableRead" })
       : null;
+    const pointsImpact = row.group === 'points'
+      ? await this.prisma.$transaction(async tx => ({ ...await computeActivityPointImpact(tx,
+          current.settings.points as ActivityPointPolicy, row.content as unknown as ActivityPointPolicy),
+          beforeRevisionId: current.versions.points ?? null, afterRevisionId: row.id }),
+        { isolationLevel: 'RepeatableRead' })
+      : null;
     const blockers = this.activationBlockers(
       row.group as PlatformGroup,
       row.content,
@@ -138,6 +149,7 @@ export class PlatformSettingsService {
       blockers,
       preservesPurchasedAccess: true,
       membershipImpact,
+      pointsImpact,
     };
   }
 
