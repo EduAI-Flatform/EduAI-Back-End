@@ -19,6 +19,7 @@ model GdsInternalWallet {
   holds          GdsInternalHold[]
   withdrawals    GdsWithdrawal[]
   revenueProjections GdsRevenueProjection[]
+  affiliateEffects AffiliateWalletEffect[]
 
   @@map("gds_internal_wallets")
 }

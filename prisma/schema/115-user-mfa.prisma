@@ -1,0 +1,15 @@
+model UserMfa {
+  userId String @id @map("user_id") @db.Uuid
+  revision Int @default(0)
+  enabled Boolean @default(false)
+  secretEncrypted String? @map("secret_encrypted")
+  pendingSecretEncrypted String? @map("pending_secret_encrypted")
+  pendingExpiresAt DateTime? @map("pending_expires_at")
+  lastUsedStep Int? @map("last_used_step")
+  recoveryCodeHashes String[] @default([]) @map("recovery_code_hashes")
+  enabledAt DateTime? @map("enabled_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_mfa")
+}

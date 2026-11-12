@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AffiliateWalletService } from './affiliate-wallet.service';
 import { AppConfigModule } from '../../config/app-config.module';
 import { AuthModule } from '../auth/auth.module';
 import { PrismaModule } from '../../prisma/prisma.module';
@@ -24,6 +25,7 @@ import { GdsBankController, GdsBankAdminController, GdsBankLogoController } from
 @Module({
   imports: [AppConfigModule, AuthModule, PrismaModule, PaymentsModule, AuditModule],
   controllers: [GdsWalletController, GdsWithdrawalController, GdsWithdrawalAdminController, GdsBankController, GdsBankAdminController, GdsBankLogoController],
-  providers: [GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService, GdsPayosQrPreviewService, GdsInternalCheckoutService, GdsTopupCancellationService, GdsWithdrawalService, GdsRevenueWalletService, GdsBankCatalogueService, GdsBankLookupProvider, GdsAccountVerificationService],
+  exports: [GdsRevenueWalletService, AffiliateWalletService, GdsWithdrawalService],
+  providers: [AffiliateWalletService, GdsWalletService, GdsInternalJournalService, GdsInternalSpendingService, GdsInternalTopupPreparationService, GdsInternalTopupLinkService, GdsPayosQrPreviewService, GdsInternalCheckoutService, GdsTopupCancellationService, GdsWithdrawalService, GdsRevenueWalletService, GdsBankCatalogueService, GdsBankLookupProvider, GdsAccountVerificationService],
 })
 export class GdsWalletModule {}

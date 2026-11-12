@@ -28,6 +28,7 @@ import { UploadRateLimit } from '../../common/security/rate-limit.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   MAX_AVATAR_FILE_SIZE_BYTES,
+  MAX_COVER_FILE_SIZE_BYTES,
   MAX_PORTFOLIO_IMAGE_SIZE_BYTES,
 } from './avatar-storage.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
@@ -143,6 +144,19 @@ export class ProfileController {
     @UploadedFile() file?: UploadedAvatarFile,
   ): Promise<AvatarUploadResponse> {
     return this.profileService.uploadAvatar(userId, file);
+  }
+
+  @Post('cover')
+  @UploadRateLimit()
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_COVER_FILE_SIZE_BYTES } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiCreatedResponse({ description: 'Cover image uploaded for the authenticated user.' })
+  @ApiBadRequestResponse({ description: 'PNG, JPEG or WebP up to 5MB is required.' })
+  uploadCover(
+    @CurrentUser('id') userId: string,
+    @UploadedFile() file?: UploadedAvatarFile,
+  ): Promise<{ coverUrl: string }> {
+    return this.profileService.uploadCover(userId, file);
   }
 
   @Get('skills')

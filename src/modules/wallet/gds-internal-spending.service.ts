@@ -5,6 +5,8 @@ import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GdsInternalBalance } from './gds-internal-journal.service';
 import { GdsWalletInvariantError } from './gds-wallet.domain';
+import { GdsRevenueWalletService, lockGdsFinance } from './gds-revenue-wallet.service';
+import { isRetryableGdsTransaction } from './gds-transaction-retry';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -16,7 +18,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
  */
 @Injectable()
 export class GdsInternalSpendingService {
-  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly revenue: GdsRevenueWalletService) {}
 
   private assertSpendingAndIdentity(buyerId: string, orderId: string, recovery = false): void {
     const capabilities = gdsWalletCapabilities(this.config);
@@ -34,6 +36,8 @@ export class GdsInternalSpendingService {
   async reserveForUnpaidCommerceOrder(buyerId: string, orderId: string): Promise<GdsInternalBalance> {
     this.assertSpendingAndIdentity(buyerId, orderId);
     return this.retrySerializable(async (tx) => {
+      await lockGdsFinance(tx);
+      await this.revenue.syncBeforeSpend(tx, buyerId);
       // Serialize all decisions on this order with other Commerce transitions.
       await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${orderId}::uuid FOR UPDATE`);
       const order = await tx.commerceOrder.findUnique({ where: { id: orderId },
@@ -60,6 +64,7 @@ export class GdsInternalSpendingService {
       if (!wallet || wallet.status !== 'ACTIVE') {
         throw new GdsWalletInvariantError('GDS_HOLD_WALLET_UNAVAILABLE');
       }
+      if ((wallet.debtMinor ?? 0n) !== 0n) throw new GdsWalletInvariantError('GDS_HOLD_DEBT_BLOCKED');
       const existingHold = await tx.gdsInternalHold.findUnique({ where: { orderRef: orderId } });
       if (existingHold) {
         if (existingHold.walletId !== wallet.id || existingHold.amountMinor !== order.payableAmountMinor ||
@@ -93,6 +98,7 @@ export class GdsInternalSpendingService {
   async releaseForFinalUnpaidOrder(buyerId: string, orderId: string): Promise<GdsInternalBalance> {
     this.assertSpendingAndIdentity(buyerId, orderId, true);
     return this.retrySerializable(async (tx) => {
+      await lockGdsFinance(tx);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${orderId}::uuid FOR UPDATE`);
       const order = await tx.commerceOrder.findUnique({ where: { id: orderId },
         select: { buyerId: true, status: true, payableAmountMinor: true, currency: true },
@@ -139,8 +145,7 @@ export class GdsInternalSpendingService {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 10_000,
         });
       } catch (error) {
-        if (error && typeof error === 'object' && 'code' in error &&
-            (error.code === 'P2034' || error.code === 'P2002') && attempt < 2) continue;
+        if (isRetryableGdsTransaction(error) && attempt < 2) continue;
         throw error;
       }
     }

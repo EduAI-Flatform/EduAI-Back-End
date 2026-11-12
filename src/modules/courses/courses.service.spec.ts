@@ -868,6 +868,14 @@ describe('CoursesService', () => {
     });
   });
 
+  it('restricts draft preview to the owning instructor or platform administrator', async () => {
+    const { service } = createService();
+    await expect(service.getCoursePreview(course.id, instructor)).resolves.toMatchObject({ id: course.id });
+    await expect(service.getCoursePreview(course.id, admin)).resolves.toMatchObject({ id: course.id });
+    await expect(service.getCoursePreview(course.id, { ...instructor, id: 'other-instructor' })).rejects.toThrow(NotFoundException);
+    await expect(service.getCoursePreview(course.id, student)).rejects.toThrow(NotFoundException);
+  });
+
   it('returns published public courses without authentication', async () => {
     const { service } = createService({
       storedCourse: {

@@ -86,7 +86,7 @@ export class CommerceController {
 
   @Get('orders')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(RoleName.student)
+  @Roles(RoleName.student, RoleName.instructor, RoleName.platform_admin)
   @ApiOkResponse({ type: OrderHistoryPageResponseDto })
   listOrders(
     @CurrentUser('id') learnerId: string,
@@ -97,7 +97,7 @@ export class CommerceController {
 
   @Get('orders/:orderId')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(RoleName.student)
+  @Roles(RoleName.student, RoleName.instructor, RoleName.platform_admin)
   @ApiOkResponse({ type: OrderHistoryItemResponseDto })
   getOrder(
     @CurrentUser('id') learnerId: string,

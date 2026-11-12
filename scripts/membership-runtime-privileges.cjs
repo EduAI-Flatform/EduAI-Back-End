@@ -79,6 +79,16 @@ function buildRuntimeGdsVerificationPrivilegeStatement(runtimeUrl) {
   ].join('; ');
 }
 
+// Kept additive so grant recovery still supports schemas before affiliate posting.
+function buildRuntimeAffiliateWalletPrivilegeStatement(runtimeUrl) {
+  const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
+  return [
+    'REVOKE ALL PRIVILEGES ON public.affiliate_wallet_effects FROM ' + role + ', PUBLIC',
+    'GRANT SELECT, INSERT ON public.affiliate_wallet_effects TO ' + role,
+    'REVOKE EXECUTE ON FUNCTION public.affiliate_wallet_apply(), public.affiliate_wallet_lock(), public.gds_spending_debt_guard() FROM ' + role + ', PUBLIC',
+  ].join('; ');
+}
+
 const LEGACY_RECONCILIATION_MARKER_TABLE =
   'commerce_reconciliation_legacy_acknowledgements';
 
@@ -155,6 +165,10 @@ async function grantRuntimeMembershipPrivileges(
         await client.query(buildRuntimeGdsVerificationPrivilegeStatement(runtimeUrl));
       }
     }
+    const affiliateSchema = await client.query("SELECT to_regclass('public.affiliate_wallet_effects') IS NOT NULL AS ready");
+    if (affiliateSchema?.rows?.[0]?.ready) {
+      await client.query(buildRuntimeAffiliateWalletPrivilegeStatement(runtimeUrl));
+    }
     await client.query('COMMIT');
     transactionOpen = false;
   } catch {
@@ -193,6 +207,7 @@ async function revokeRuntimeLegacyMarkerPrivileges(
 }
 
 module.exports = {
+  buildRuntimeAffiliateWalletPrivilegeStatement,
   GDS_RUNTIME_TABLES,
   GDS_RUNTIME_UPDATES,
   buildRuntimeGdsPrivilegeStatement,

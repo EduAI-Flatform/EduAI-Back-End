@@ -51,9 +51,10 @@ export class ProfileService {
   ) {}
 
   async getCurrentProfile(userId: string): Promise<ProfileResponse | null> {
-    return this.prisma.userProfile.findUnique({
+    const profile = await this.prisma.userProfile.findUnique({
       where: { userId },
     });
+    return profile ? this.toProfileResponse(profile) : null;
   }
 
   async updateCurrentProfile(
@@ -62,7 +63,7 @@ export class ProfileService {
   ): Promise<ProfileResponse> {
     const data = this.removeUndefinedFields(input);
 
-    return this.prisma.userProfile.upsert({
+    const profile = await this.prisma.userProfile.upsert({
       where: { userId },
       create: {
         userId,
@@ -70,6 +71,32 @@ export class ProfileService {
       },
       update: data,
     });
+    return this.toProfileResponse(profile);
+  }
+
+  async uploadCover(userId: string, file?: UploadedAvatarFile): Promise<{ coverUrl: string }> {
+    if (!file) throw new BadRequestException('Cover image file is required');
+    const previous = await this.prisma.userProfile.findUnique({
+      where: { userId }, select: { coverStorageKey: true },
+    });
+    const stored = await this.avatarStorage.uploadCover(file);
+    try {
+      await this.prisma.userProfile.upsert({
+        where: { userId },
+        create: { userId, coverUrl: stored.url, coverStorageKey: stored.key },
+        update: { coverUrl: stored.url, coverStorageKey: stored.key },
+      });
+    } catch (error) {
+      await this.deleteBestEffort(stored.key);
+      throw error;
+    }
+    if (previous?.coverStorageKey) await this.deleteBestEffort(previous.coverStorageKey);
+    return { coverUrl: stored.url };
+  }
+
+  private toProfileResponse(profile: ProfileResponse & { coverStorageKey?: string | null }): ProfileResponse {
+    const { coverStorageKey: _storageKey, ...response } = profile;
+    return response;
   }
 
   async addSkill(userId: string, input: CreateSkillDto): Promise<SkillResponse> {

@@ -21,10 +21,12 @@ describe('GDS sandbox internal Commerce holds (no HTTP and no capture/entitlemen
     gdsInternalJournal: { create: jest.fn() },
   };
   const db = { $transaction: jest.fn() };
-  const service = new GdsInternalSpendingService(db as never, config as never);
+  const revenue = { syncBeforeSpend: jest.fn() };
+  const service = new GdsInternalSpendingService(db as never, config as never, revenue as never);
 
   beforeEach(() => {
     jest.clearAllMocks();
+    revenue.syncBeforeSpend.mockReset();
     config.app.nodeEnv = 'test'; config.app.deploymentClass = 'uat';
     config.gdsWallet.sandboxEnabled = true;
     tx.$queryRaw.mockResolvedValue([{ id: orderId }]);
@@ -62,12 +64,25 @@ describe('GDS sandbox internal Commerce holds (no HTTP and no capture/entitlemen
       .toEqual({ availableMinor: '30000', heldMinor: '70000', currency: 'VND' });
     expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function),
       expect.objectContaining({ isolationLevel: 'Serializable' }));
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     expect(tx.gdsInternalJournal.create).toHaveBeenCalledWith({ data: {
       walletId, eventKey: `gds:reserve:${orderId}`, kind: 'RESERVE',
       amountMinor: 70_000n, availableDeltaMinor: -70_000n,
       heldDeltaMinor: 70_000n, clearingDeltaMinor: 0n, orderRef: orderId,
     } });
+  });
+  it('blocks a new reservation while refund recovery debt exists', async () => {
+    tx.gdsInternalWallet.findUnique.mockResolvedValue({ ...wallet(), debtMinor: 1n });
+    await expect(service.reserveForUnpaidCommerceOrder(buyerId, orderId)).rejects.toThrow('GDS_HOLD_DEBT_BLOCKED');
+    expect(tx.gdsInternalJournal.create).not.toHaveBeenCalled();
+  });
+  it('refreshes affiliate refund debt before a new hold even before the recovery worker runs', async () => {
+    revenue.syncBeforeSpend.mockImplementation(async () => {
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      tx.gdsInternalWallet.findUnique.mockResolvedValue({ ...wallet(), debtMinor: 100n });
+    });
+    await expect(service.reserveForUnpaidCommerceOrder(buyerId, orderId)).rejects.toThrow('GDS_HOLD_DEBT_BLOCKED');
+    expect(tx.gdsInternalJournal.create).not.toHaveBeenCalled();
   });
 
   it('idempotently returns an existing matching reservation but refuses terminal replay', async () => {
@@ -140,8 +155,8 @@ describe('GDS sandbox internal Commerce holds (no HTTP and no capture/entitlemen
     expect(tx.gdsInternalJournal.create).not.toHaveBeenCalled();
   });
 
-  it('retries serialization conflicts but never ignores negative-balance failures', async () => {
-    db.$transaction.mockRejectedValueOnce({ code: 'P2034' });
+  it.each([{ code: 'P2034' }, { code: 'P2010', meta: { code: '40001' } }])('retries serialization conflicts but never ignores negative-balance failures (%j)', async failure => {
+    db.$transaction.mockRejectedValueOnce(failure);
     await service.reserveForUnpaidCommerceOrder(buyerId, orderId);
     expect(db.$transaction).toHaveBeenCalledTimes(2);
     db.$transaction.mockRejectedValueOnce(new Error('gds_internal_wallets_nonnegative_check'));

@@ -201,6 +201,9 @@ enum TmiEntitlementStatus {
 }
 
 model User {
+  platformSupportTickets PlatformSupportTicket[] @relation("PlatformSupportOwner")
+  platformSupportReplies PlatformSupportReply[] @relation("PlatformSupportReplyAuthor")
+  platformPartnerApplications PlatformPartnerApplication[] @relation("PlatformPartnerApplicant")
   gdsAccountVerifications GdsAccountVerification[] @relation("AccountVerificationOwner")
   gdsPerformedAccountVerifications GdsAccountVerification[] @relation("AccountVerificationActor")
   gdsWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalOwner")
@@ -235,6 +238,7 @@ model User {
   externalIdentities ExternalIdentity[]
   refreshTokens RefreshToken[]
   profile       UserProfile?
+  mfa           UserMfa?
   learningProfile LearningProfile?
   skills        UserSkill[]
   portfolios    Portfolio[]
@@ -306,6 +310,11 @@ model User {
   membershipCheckoutIntents MembershipCheckoutIntent[]
   courseAccessGrants CourseAccessGrant[]
   membershipRemovedCourseSnapshots MembershipRemovedCourseSnapshot[]
+
+  platformPoliciesCreated PlatformPolicyRevision[] @relation("PlatformPolicyCreator")
+  affiliateIdentities AffiliateIdentity[] @relation("AffiliateIdentityOwner")
+  affiliateAttributions AffiliateAttribution[] @relation("AffiliateAttributionBuyer")
+  platformPoliciesApproved PlatformPolicyRevision[] @relation("PlatformPolicyApprover")
 
   @@index([status])
   @@index([deletedAt])
@@ -525,6 +534,8 @@ model CommerceCartLine {
 }
 
 model CommerceOrder {
+  invoiceRequest PlatformSupportTicket? @relation("PlatformInvoiceOrder")
+  affiliateAttribution AffiliateAttribution?
   buyerWalletReservation BuyerWalletReservation? @relation("BuyerWalletOrderReservation")
   receiptAccessGenerations CommerceReceiptAccessGeneration[]
   bankReceiptClaims CommerceBankReceiptClaim[]
@@ -1518,6 +1529,7 @@ model GdsInternalWallet {
   holds          GdsInternalHold[]
   withdrawals    GdsWithdrawal[]
   revenueProjections GdsRevenueProjection[]
+  affiliateEffects AffiliateWalletEffect[]
 
   @@map("gds_internal_wallets")
 }
@@ -1889,6 +1901,212 @@ model GdsAccountVerification {
   @@map("gds_account_verifications")
 }
 
+enum PlatformPolicyStatus {
+  draft
+  approved
+  scheduled
+  cancelled
+
+  @@map("platform_policy_status")
+}
+
+model PlatformPolicyRevision {
+  affiliateVisits AffiliateVisit[] @relation("AffiliateVisitPolicy")
+  affiliateAttributions AffiliateAttribution[] @relation("AffiliateAttributionPolicy")
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  group         String
+  version       Int
+  status        PlatformPolicyStatus @default(draft)
+  content       Json
+  createdById   String @map("created_by_id") @db.Uuid
+  approvedById  String? @map("approved_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  approvedAt    DateTime? @map("approved_at")
+  effectiveAt   DateTime? @map("effective_at")
+  creator User @relation("PlatformPolicyCreator", fields: [createdById], references: [id], onDelete: Restrict, map: "platform_policy_creator_fk")
+  approver User? @relation("PlatformPolicyApprover", fields: [approvedById], references: [id], onDelete: Restrict, map: "platform_policy_approver_fk")
+
+  @@unique([group, version])
+  @@index([group, status, effectiveAt])
+  @@map("platform_policy_revisions")
+}
+
+enum PlatformSupportStatus {
+  open
+  in_progress
+  resolved
+  closed
+
+  @@map("platform_support_status")
+}
+
+enum PlatformPartnerCategory {
+  school
+  business
+  scholarship
+  digital
+
+  @@map("platform_partner_category")
+}
+
+enum PlatformPartnerStatus {
+  submitted
+  reviewing
+  contacted
+  accepted
+  rejected
+
+  @@map("platform_partner_status")
+}
+
+model PlatformSupportTicket {
+  id        String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId   String                @map("owner_id") @db.Uuid
+  title     String
+  content   String
+  requestType String @default("support") @map("request_type")
+  orderId String? @unique @map("order_id") @db.Uuid
+  attachmentData Bytes? @map("attachment_data")
+  attachmentSize Int? @map("attachment_size")
+  invoiceDetails Json? @map("invoice_details")
+  order CommerceOrder? @relation("PlatformInvoiceOrder", fields: [orderId], references: [id], onDelete: Restrict, map: "platform_invoice_order_fk")
+  status    PlatformSupportStatus @default(open)
+  createdAt DateTime              @default(now()) @map("created_at")
+  updatedAt DateTime              @updatedAt @map("updated_at")
+  owner     User                  @relation("PlatformSupportOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  replies   PlatformSupportReply[]
+
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt])
+  @@map("platform_support_tickets")
+}
+
+model PlatformSupportReply {
+  id        String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId  String                @map("ticket_id") @db.Uuid
+  authorId  String                @map("author_id") @db.Uuid
+  content   String
+  isStaff   Boolean               @default(false) @map("is_staff")
+  createdAt DateTime              @default(now()) @map("created_at")
+  ticket    PlatformSupportTicket @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  author    User                  @relation("PlatformSupportReplyAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@index([authorId])
+  @@map("platform_support_replies")
+}
+
+model PlatformPartnerApplication {
+  id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  submittedById String?                 @map("submitted_by_id") @db.Uuid
+  category      PlatformPartnerCategory
+  name          String
+  organization  String
+  phone         String
+  email         String
+  content       String
+  consentAt     DateTime                @map("consent_at")
+  policyId      String?                 @map("policy_id") @db.Uuid
+  status        PlatformPartnerStatus   @default(submitted)
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
+  submittedBy   User?                   @relation("PlatformPartnerApplicant", fields: [submittedById], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([submittedById])
+  @@map("platform_partner_applications")
+}
+
+model UserMfa {
+  userId String @id @map("user_id") @db.Uuid
+  revision Int @default(0)
+  enabled Boolean @default(false)
+  secretEncrypted String? @map("secret_encrypted")
+  pendingSecretEncrypted String? @map("pending_secret_encrypted")
+  pendingExpiresAt DateTime? @map("pending_expires_at")
+  lastUsedStep Int? @map("last_used_step")
+  recoveryCodeHashes String[] @default([]) @map("recovery_code_hashes")
+  enabledAt DateTime? @map("enabled_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_mfa")
+}
+
+model AffiliateIdentity {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+  kind String @db.VarChar(16)
+  code String @unique @db.VarChar(40)
+  status String @default("active") @db.VarChar(16)
+  createdAt DateTime @default(now()) @map("created_at")
+  owner User @relation("AffiliateIdentityOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  visits AffiliateVisit[]
+  attributions AffiliateAttribution[]
+  @@unique([ownerId, kind])
+  @@map("affiliate_identities")
+}
+model AffiliateVisit {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+  identityId String @map("identity_id") @db.Uuid
+  policyRevisionId String @map("policy_revision_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  identity AffiliateIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  policy PlatformPolicyRevision @relation("AffiliateVisitPolicy", fields: [policyRevisionId], references: [id], onDelete: Restrict)
+  attributions AffiliateAttribution[]
+  @@index([expiresAt])
+  @@map("affiliate_visits")
+}
+model AffiliateAttribution {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId String @unique @map("order_id") @db.Uuid
+  identityId String @map("identity_id") @db.Uuid
+  buyerId String @map("buyer_id") @db.Uuid
+  visitId String @map("visit_id") @db.Uuid
+  policyRevisionId String @map("policy_revision_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  order CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  identity AffiliateIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  buyer User @relation("AffiliateAttributionBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  visit AffiliateVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  policy PlatformPolicyRevision @relation("AffiliateAttributionPolicy", fields: [policyRevisionId], references: [id], onDelete: Restrict)
+  accruals AffiliateAccrual[]
+  @@index([identityId, createdAt])
+  @@map("affiliate_attributions")
+}
+model AffiliateAccrual {
+  walletEffect AffiliateWalletEffect?
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  attributionId String @map("attribution_id") @db.Uuid
+  sourceDigest String @map("source_digest") @db.VarChar(64)
+  deltaMinor BigInt @map("delta_minor")
+  qualifyingAmountMinor BigInt @map("qualifying_amount_minor")
+  commissionBps Int @map("commission_bps")
+  currency String @db.VarChar(3)
+  holdUntil DateTime @map("hold_until")
+  createdAt DateTime @default(now()) @map("created_at")
+  attribution AffiliateAttribution @relation(fields: [attributionId], references: [id], onDelete: Restrict)
+  @@unique([attributionId, sourceDigest])
+  @@index([attributionId, createdAt])
+  @@map("affiliate_accruals")
+}
+
+// Projection receipts into the existing GDS wallet, not a second balance ledger.
+model AffiliateWalletEffect {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accrualId String @unique @map("accrual_id") @db.Uuid
+  walletId String @map("wallet_id") @db.Uuid
+  deltaMinor BigInt @map("delta_minor")
+  availableDeltaMinor BigInt @map("available_delta_minor")
+  debtDeltaMinor BigInt @map("debt_delta_minor")
+  createdAt DateTime @default(now()) @map("created_at")
+  accrual AffiliateAccrual @relation(fields: [accrualId], references: [id], onDelete: Restrict)
+  wallet GdsInternalWallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  @@map("affiliate_wallet_effects")
+}
+
 model UserRole {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
@@ -1942,6 +2160,8 @@ model UserProfile {
   phoneNumber String?   @map("phone_number")
   dateOfBirth DateTime? @map("date_of_birth") @db.Date
   bio         String?
+  coverUrl    String?   @map("cover_url")
+  coverStorageKey String? @map("cover_storage_key")
   headline    String?
   location    String?
   websiteUrl  String?   @map("website_url")

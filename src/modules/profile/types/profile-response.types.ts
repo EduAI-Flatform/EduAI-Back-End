@@ -4,6 +4,7 @@ export interface ProfileResponse {
   phoneNumber: string | null;
   dateOfBirth: Date | null;
   bio: string | null;
+  coverUrl?: string | null;
   headline: string | null;
   location: string | null;
   websiteUrl: string | null;

@@ -5,6 +5,8 @@ import { RedisModule } from '../../config/redis.module';
 import { AuditModule } from '../../common/audit/audit.module';
 import { FirebaseAdminModule } from '../firebase/firebase-admin.module';
 import { AuthController } from './auth.controller';
+import { MfaController } from './mfa.controller';
+import { MfaService } from './mfa.service';
 import { AuthService } from './auth.service';
 import { OAuthController } from './oauth/oauth.controller';
 import { OAuthProviderService } from './oauth/oauth-provider.service';
@@ -23,9 +25,10 @@ import { PasswordService } from './password.service';
     FirebaseAdminModule,
     JwtModule.register({}),
   ],
-  controllers: [AuthController, OAuthController],
+  controllers: [AuthController, OAuthController, MfaController],
   providers: [
     AuthService,
+    MfaService,
     OAuthProviderService,
     OAuthService,
     OAuthTransactionStore,

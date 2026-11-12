@@ -4,4 +4,7 @@ export interface AuthenticatedUser {
   id: string;
   email?: string;
   roles: RoleName[];
+  mfaRevision?: number;
+  mfaVerified?: boolean;
+  authTime?: number;
 }

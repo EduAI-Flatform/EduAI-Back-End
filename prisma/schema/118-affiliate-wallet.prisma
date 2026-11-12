@@ -1,0 +1,13 @@
+// Projection receipts into the existing GDS wallet, not a second balance ledger.
+model AffiliateWalletEffect {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accrualId String @unique @map("accrual_id") @db.Uuid
+  walletId String @map("wallet_id") @db.Uuid
+  deltaMinor BigInt @map("delta_minor")
+  availableDeltaMinor BigInt @map("available_delta_minor")
+  debtDeltaMinor BigInt @map("debt_delta_minor")
+  createdAt DateTime @default(now()) @map("created_at")
+  accrual AffiliateAccrual @relation(fields: [accrualId], references: [id], onDelete: Restrict)
+  wallet GdsInternalWallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  @@map("affiliate_wallet_effects")
+}

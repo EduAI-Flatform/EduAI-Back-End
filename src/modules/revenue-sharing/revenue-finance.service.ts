@@ -21,6 +21,12 @@ export class RevenueFinanceService {
   /** Acquire before any cart/user/version locks to maintain consistent lock ordering. */
   async lockCheckout(tx: Prisma.TransactionClient) { await lock(tx); }
 
+  /** Affiliate credits use the same canonical bank/provider/capture proof as seller earnings. */
+  async verifyAffiliateOrder(tx: Prisma.TransactionClient, orderId: string) {
+    const order = await tx.commerceOrder.findUnique({ where: { id: orderId }, include: paymentInclude });
+    return !!order && await this.isVerified(tx, order);
+  }
+
   /** Wallet caller holds the same finance lock; refresh refund facts before cash-out. */
   async reconcileWalletPeriod(tx: Prisma.TransactionClient, periodId: string) {
     const period = await tx.revenueEarningPeriod.findUniqueOrThrow({ where: { id: periodId }, select: { snapshotId: true } });

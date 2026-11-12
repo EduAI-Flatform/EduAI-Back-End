@@ -1,4 +1,9 @@
 import { RevenueSharingModule } from './modules/revenue-sharing/revenue-sharing.module';
+import { PlatformModule } from './modules/platform/platform.module';
+import { PlatformRequestsModule } from './modules/platform-requests/platform-requests.module';
+import { AuthSecurityModule } from './modules/auth/auth-security.module';
+import { MembershipCardsModule } from './modules/membership-cards/membership-cards.module';
+import { AffiliateModule } from './modules/affiliate/affiliate.module';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AppConfigModule } from './config/app-config.module';
@@ -44,11 +49,16 @@ import { GdsWalletModule } from './modules/wallet/gds-wallet.module';
     MonitoringModule,
     PrismaModule,
     RevenueSharingModule,
+    PlatformModule,
+    PlatformRequestsModule,
+    MembershipCardsModule,
+    AffiliateModule,
     AccessModule,
     AuditModule,
     RedisModule,
     HealthModule,
     AuthModule,
+    AuthSecurityModule,
     AdminModule,
     ProfileModule,
     CoursesModule,

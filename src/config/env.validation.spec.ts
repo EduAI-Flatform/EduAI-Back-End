@@ -7,6 +7,12 @@ describe('validateEnv', () => {
     JWT_REFRESH_SECRET: 'refresh-secret',
   };
 
+  it('keeps MFA unavailable by default and validates optional encryption material', () => {
+    expect(validateEnv(paymentBase).GDS_MFA_ENCRYPTION_KEY).toBeUndefined();
+    expect(validateEnv({ ...paymentBase, GDS_MFA_ENCRYPTION_KEY: 'ab'.repeat(32) }).GDS_MFA_ENCRYPTION_KEY).toBe('ab'.repeat(32));
+    expect(() => validateEnv({ ...paymentBase, GDS_MFA_ENCRYPTION_KEY: 'invalid' })).toThrow('GDS_MFA_ENCRYPTION_KEY');
+  });
+
   it('keeps PayOS disabled by default without requiring provider secrets', () => {
     expect(validateEnv(paymentBase)).toMatchObject({
       GDS_WALLET_SANDBOX_ENABLED: false,

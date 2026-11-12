@@ -4,6 +4,8 @@ model UserProfile {
   phoneNumber String?   @map("phone_number")
   dateOfBirth DateTime? @map("date_of_birth") @db.Date
   bio         String?
+  coverUrl    String?   @map("cover_url")
+  coverStorageKey String? @map("cover_storage_key")
   headline    String?
   location    String?
   websiteUrl  String?   @map("website_url")

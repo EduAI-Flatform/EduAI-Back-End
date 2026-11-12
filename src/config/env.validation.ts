@@ -21,6 +21,7 @@ export interface ValidatedEnv {
   DATABASE_URL: string;
   REDIS_URL?: string;
   JWT_ACCESS_SECRET?: string;
+  GDS_MFA_ENCRYPTION_KEY?: string;
   JWT_REFRESH_SECRET?: string;
   FIREBASE_PROJECT_ID?: string;
   FIREBASE_CLIENT_EMAIL?: string;
@@ -228,6 +229,7 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
     CORS_ALLOWED_ORIGINS: parseCorsOrigins(config.CORS_ALLOWED_ORIGINS),
     DATABASE_URL: requiredString(config.DATABASE_URL, 'DATABASE_URL'),
     REDIS_URL: optionalString(config.REDIS_URL),
+    GDS_MFA_ENCRYPTION_KEY: optionalString(config.GDS_MFA_ENCRYPTION_KEY),
     JWT_ACCESS_SECRET: requiredString(
       config.JWT_ACCESS_SECRET,
       'JWT_ACCESS_SECRET',
@@ -442,6 +444,10 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
   }
 
   validateVnPayConfiguration(validated);
+
+  if (validated.GDS_MFA_ENCRYPTION_KEY && !/^[0-9a-fA-F]{64}$/.test(validated.GDS_MFA_ENCRYPTION_KEY)) {
+    throw new Error('GDS_MFA_ENCRYPTION_KEY must contain exactly 64 hexadecimal characters');
+  }
 
   return validated;
 }

@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
+import { AffiliateWalletService } from './affiliate-wallet.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,7 +18,9 @@ export class GdsRevenueWalletService implements OnApplicationBootstrap, OnApplic
   private timer?: NodeJS.Timeout;
   private running = false;
   private cursor?: string;
-  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly finance: RevenueFinanceService) {}
+  private affiliateCursor?: string;
+  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly finance: RevenueFinanceService,
+    private readonly affiliate: AffiliateWalletService) {}
   onApplicationBootstrap() {
     void this.runBatch();
     this.timer = setInterval(() => void this.runBatch(), 60000);
@@ -41,14 +44,27 @@ export class GdsRevenueWalletService implements OnApplicationBootstrap, OnApplic
         } catch { this.logger.warn('GDS revenue projection requires retry; no financial source was changed.'); }
       }
       this.cursor = periods.length === 100 ? periods[periods.length - 1].id : undefined;
+      const identities = await this.prisma.affiliateIdentity.findMany({
+        where: this.affiliateCursor ? { id: { gt: this.affiliateCursor } } : {}, orderBy: { id: 'asc' }, take: 50, select: { id: true, ownerId: true },
+      });
+      for (const identity of identities) {
+        try { await this.transaction(async tx => { await lockGdsFinance(tx); await this.affiliate.syncOwner(tx, identity.ownerId); }); }
+        catch { this.logger.warn('Affiliate wallet projection requires retry; source facts preserved.'); }
+      }
+      this.affiliateCursor = identities.length === 50 ? identities[49].id : undefined;
     } catch { this.logger.warn('GDS revenue worker requires retry.'); }
     finally { this.running = false; }
   }
 
   /** Caller holds finance lock before any wallet lock. Reconcile refunds before cash-out decisions. */
+  async syncBeforeSpend(tx: Prisma.TransactionClient, ownerId: string) {
+    return this.affiliate.syncOwner(tx, ownerId, true);
+  }
+
   async syncOwner(tx: Prisma.TransactionClient, ownerId: string) {
     const settings = await tx.gdsWithdrawalSettings.findUniqueOrThrow({ where: { id: 'global' } });
     if (!settings.processingEnabled) return;
+    await this.affiliate.syncOwner(tx, ownerId);
     const periods = await tx.revenueEarningPeriod.findMany({
       where: { sellerId: ownerId, entries: { some: { kind: 'recognized' } } }, orderBy: { id: 'asc' }, select: { id: true, snapshotId: true },
     });
