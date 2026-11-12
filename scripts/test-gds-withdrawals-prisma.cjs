@@ -180,7 +180,7 @@ async function main() {
           id: topupId, buyerId: applicationOwner.id, walletId: applicationOwner.wallet.id,
           requestKeyHash: qrHash, amountMinor: 85000n, payosOrderCode: topupOrderCode,
           transferMemo: 'G00000001', receivingAccountHash: qrHash, paymentLinkId: paymentLink,
-          status: 'PENDING_PAYOS', expiresAt: new Date(Date.now() + 3600000),
+          status: 'PENDING_PAYOS', createdAt: new Date(signedAt.getTime() - 1000), expiresAt: new Date(Date.now() + 3600000),
         } });
         await tx.gdsInternalPayosInbox.create({ data: {
           id: inboxId, topupId, providerEventIdentity: collection, payosOrderCode: topupOrderCode,
