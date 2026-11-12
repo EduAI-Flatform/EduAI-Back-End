@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { isISO8601 } from 'class-validator';
 import {
   DEFAULT_PLATFORM_SETTINGS,
   PLATFORM_GROUPS,
@@ -71,7 +72,8 @@ function validateShape(value: unknown, template: unknown, path: string) {
   else if (typeof value === "string") {
     if (path.includes(".colors.") && !/^#[0-9a-f]{6}$/i.test(value)) fail(path);
     if (key === "kind" && !["event", "competition"].includes(value)) fail(path);
-    if (key === "startsAt" && value && !Number.isFinite(Date.parse(value)))
+    if (key === "startsAt" && value && (!isISO8601(value, { strict: true, strictSeparator: true })
+      || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))))
       fail(path);
     if (value.length > 2000 || /[\u0000-\u0008]/.test(value)) fail(path);
     if (/url$|path$/i.test(key)) validatePlatformUrl(value, path);
@@ -98,6 +100,8 @@ export function validatePlatformSettings(
     group,
   );
   const c = content as Record<string, any>;
+  if (group === 'operations' && c.activities.some((activity: any) => activity.enabled && !activity.title.vi.trim()))
+    fail('activity Vietnamese title is required when published');
   if (group === "affiliate" && (c.currency !== "VND" || c.commissionBase !== "net_paid_after_recorded_refunds" || c.attributionModel !== "first_touch" || c.subAffiliateEnabled))
     fail("affiliate supported currency/base/attribution scope");
   if (group === "affiliate" && (!['unconfigured', 'platform_fee'].includes(c.fundingSource) || c.allocationPrecedence !== 'seller_entitlements_first'))
