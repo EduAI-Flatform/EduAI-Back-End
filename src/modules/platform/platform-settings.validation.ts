@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { isISO8601 } from 'class-validator';
+import { SUPPORTED_POINT_EVENTS } from '../tmi/activity-point-policy';
 import {
   DEFAULT_PLATFORM_SETTINGS,
   PLATFORM_GROUPS,
@@ -144,7 +145,7 @@ export function validatePlatformSettings(
   if (group === "points") {
     const events = new Set();
     for (const r of c.rules) {
-      if (!r.event.trim() || events.has(r.event)) fail("point event");
+      if (!SUPPORTED_POINT_EVENTS.some(event => event === r.event) || events.has(r.event)) fail("point event");
       events.add(r.event);
     }
   }

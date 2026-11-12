@@ -44,6 +44,7 @@ async function main() {
     await db.$executeRawUnsafe(`GRANT UPDATE(redeemed_count,updated_at) ON tmi_rewards TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT UPDATE(status,revoked_at) ON tmi_entitlements TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT INSERT ON tmi_redemptions,tmi_entitlements,audit_logs TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT SELECT(id) ON audit_logs TO "${role}"`);
     runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
     const audit = new AuditService(runtime), ledger = new PointLedgerService(audit);
     const awards = new ActivityPointService(runtime, audit);
