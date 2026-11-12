@@ -18,7 +18,8 @@ async function main() {
   const { GdsWithdrawalService } = require('../dist/src/modules/wallet/gds-withdrawal.service.js');
   const { GdsWalletService } = require('../dist/src/modules/wallet/gds-wallet.service.js');
   const { GdsAccountVerificationService } = require('../dist/src/modules/wallet/gds-account-verification.service.js');
-  const { buildRuntimeGdsPrivilegeStatement, buildRuntimeGdsWithdrawalPrivilegeStatement, buildRuntimeGdsVerificationPrivilegeStatement } = require('./membership-runtime-privileges.cjs');
+  const { buildRuntimeGdsPrivilegeStatement, buildRuntimeGdsWithdrawalPrivilegeStatement, buildRuntimeGdsVerificationPrivilegeStatement,
+    PLATFORM_RUNTIME_TABLES, PLATFORM_RUNTIME_SCHEMA_QUERY, buildRuntimePlatformPrivilegeStatement } = require('./membership-runtime-privileges.cjs');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true } };
   const finance = new RevenueFinanceService(db);
@@ -153,8 +154,81 @@ async function main() {
     await db.$executeRawUnsafe(`GRANT SELECT ON affiliate_attributions, affiliate_identities, platform_policy_revisions, affiliate_accruals, commerce_orders, commerce_settlements, commerce_refunds TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT SELECT(migration_name,checksum,finished_at,rolled_back_at) ON _prisma_migrations TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT INSERT ON audit_logs TO "${role}"`);
+    const applicationTables = await db.$queryRawUnsafe(PLATFORM_RUNTIME_SCHEMA_QUERY, 'public', PLATFORM_RUNTIME_TABLES);
+    assert.equal(applicationTables.length, 9, 'All additive application tables must exist in the disposable replay');
+    for (const statement of buildRuntimePlatformPrivilegeStatement(`postgresql://${role}@localhost/test`, applicationTables).split(';').filter(value => value.trim())) {
+      await db.$executeRawUnsafe(statement);
+    }
     const runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
     try {
+      // Real Prisma persistence under the bounded role covers private application
+      // tables, including native upsert behavior and encrypted MFA-state reads.
+      const applicationOwner = await user(0n);
+      const applicationBuyer = await user(0n);
+      const applicationOrder = await db.commerceOrder.create({ data: {
+        buyerId: applicationBuyer.id, orderNumber: 'GDS-RUNTIME-' + randomUUID().replaceAll('-', '').slice(0, 20),
+        subtotalAmountMinor: 0n, payableAmountMinor: 0n, pricingPolicyVersion: 'synthetic-runtime',
+      } });
+      const lastApplicationPolicy = await db.platformPolicyRevision.aggregate({ where: { group: 'branding' }, _max: { version: true } });
+      const applicationPolicy = await runtime.platformPolicyRevision.create({ data: {
+        group: 'branding', version: (lastApplicationPolicy._max.version ?? 0) + 1,
+        content: {}, createdById: applicationOwner.id,
+      } });
+      await runtime.platformPolicyRevision.update({ where: { id: applicationPolicy.id }, data: {
+        status: 'approved', approvedById: applicationOwner.id, approvedAt: new Date(),
+      } });
+      await runtime.platformPolicyRevision.update({ where: { id: applicationPolicy.id }, data: { status: 'scheduled', effectiveAt: new Date() } });
+      const applicationTicket = await runtime.platformSupportTicket.create({ data: {
+        ownerId: applicationOwner.id, title: 'Synthetic runtime support', content: 'Synthetic content',
+        attachmentData: Buffer.from('synthetic-image-bytes'), attachmentSize: 21,
+      } });
+      await runtime.platformSupportTicket.update({ where: { id: applicationTicket.id }, data: { status: 'in_progress' } });
+      const applicationReply = await runtime.platformSupportReply.create({ data: {
+        ticketId: applicationTicket.id, authorId: applicationOwner.id, content: 'Synthetic reply',
+      } });
+      const applicationPartner = await runtime.platformPartnerApplication.create({ data: {
+        category: 'school', name: 'Synthetic', organization: 'Synthetic school', phone: '0000000000',
+        email: 'runtime@synthetic.invalid', content: 'Synthetic request', consentAt: new Date(),
+      } });
+      await runtime.platformPartnerApplication.update({ where: { id: applicationPartner.id }, data: { status: 'reviewing' } });
+      await runtime.userMfa.upsert({ where: { userId: applicationOwner.id }, create: { userId: applicationOwner.id }, update: {} });
+      await runtime.userMfa.upsert({ where: { userId: applicationOwner.id }, create: { userId: applicationOwner.id }, update: {} });
+      await runtime.userMfa.update({ where: { userId: applicationOwner.id }, data: {
+        enabled: true, revision: 1, secretEncrypted: 'synthetic-encrypted-state', enabledAt: new Date(),
+        pendingSecretEncrypted: null, pendingExpiresAt: null, lastUsedStep: 1, recoveryCodeHashes: ['synthetic-hash'],
+      } });
+      assert.equal((await runtime.userMfa.findUniqueOrThrow({ where: { userId: applicationOwner.id } })).secretEncrypted, 'synthetic-encrypted-state');
+      const identityArguments = {
+        where: { ownerId_kind: { ownerId: applicationOwner.id, kind: 'general' } },
+        create: { ownerId: applicationOwner.id, kind: 'general', code: randomUUID().replaceAll('-', '') }, update: {},
+      };
+      const applicationIdentity = await runtime.affiliateIdentity.upsert(identityArguments);
+      assert.equal((await runtime.affiliateIdentity.upsert(identityArguments)).id, applicationIdentity.id);
+      const applicationVisit = await runtime.affiliateVisit.create({ data: {
+        tokenHash: randomUUID().replaceAll('-', '').repeat(2), identityId: applicationIdentity.id,
+        policyRevisionId: applicationPolicy.id, expiresAt: new Date(Date.now() + 86400000),
+      } });
+      const applicationAttribution = await runtime.affiliateAttribution.create({ data: {
+        orderId: applicationOrder.id, identityId: applicationIdentity.id, buyerId: applicationBuyer.id,
+        visitId: applicationVisit.id, policyRevisionId: applicationPolicy.id,
+      } });
+      const applicationAccrual = await runtime.affiliateAccrual.create({ data: {
+        attributionId: applicationAttribution.id, sourceDigest: randomUUID(), deltaMinor: 0n,
+        qualifyingAmountMinor: 0n, commissionBps: 0, currency: 'VND', holdUntil: new Date(),
+      } });
+      for (const model of ['platformPolicyRevision', 'platformSupportTicket', 'platformSupportReply', 'platformPartnerApplication', 'userMfa',
+        'affiliateIdentity', 'affiliateVisit', 'affiliateAttribution', 'affiliateAccrual']) assert.ok(await runtime[model].count() >= 1);
+      await assert.rejects(runtime.platformPolicyRevision.update({ where: { id: applicationPolicy.id }, data: { content: { forged: true } } }), /permission denied/);
+      await assert.rejects(runtime.platformSupportTicket.update({ where: { id: applicationTicket.id }, data: { content: 'forged' } }), /permission denied/);
+      await assert.rejects(runtime.platformPartnerApplication.update({ where: { id: applicationPartner.id }, data: { email: 'forged@synthetic.invalid' } }), /permission denied/);
+      await assert.rejects(runtime.userMfa.update({ where: { userId: applicationOwner.id }, data: { userId: applicationBuyer.id } }), /permission denied/);
+      await assert.rejects(runtime.userMfa.delete({ where: { userId: applicationOwner.id } }), /permission denied/);
+      await assert.rejects(runtime.platformSupportReply.update({ where: { id: applicationReply.id }, data: { content: 'forged' } }), /permission denied/);
+      await assert.rejects(runtime.affiliateIdentity.update({ where: { id: applicationIdentity.id }, data: { code: 'forged' } }), /permission denied/);
+      await assert.rejects(runtime.affiliateVisit.update({ where: { id: applicationVisit.id }, data: { tokenHash: 'forged' } }), /permission denied/);
+      await assert.rejects(runtime.affiliateAttribution.update({ where: { id: applicationAttribution.id }, data: { buyerId: applicationOwner.id } }), /permission denied/);
+      await assert.rejects(runtime.affiliateAccrual.update({ where: { id: applicationAccrual.id }, data: { deltaMinor: 1n } }), /permission denied/);
+      console.log('GDS_PLATFORM_RESTRICTED_RUNTIME_MATRIX=PASS');
       const { affiliateOrderSelect } = require('../dist/src/modules/affiliate/affiliate-source.js');
       assert.deepEqual(await runtime.affiliateAttribution.findMany({ where: { identity: { ownerId: randomUUID() } },
         include: { policy: true, order: { select: affiliateOrderSelect }, accruals: true } }), []);
