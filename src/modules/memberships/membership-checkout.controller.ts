@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, GoneException, Headers, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiGoneResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -25,10 +25,12 @@ export class MembershipCheckoutController {
   current(@CurrentUser('id') learnerId: string) { return this.checkout.current(learnerId); }
 
   @Post('checkout')
-  @ApiCreatedResponse({ description: 'Pending membership order and immutable checkout intent.' })
+  @ApiGoneResponse({ description: 'Package sales are retired. Use the GDS membership card endpoint.' })
   checkoutMembership(
     @CurrentUser('id') learnerId: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() input: CreateMembershipCheckoutDto,
-  ) { return this.checkout.createCheckout(learnerId, idempotencyKey, input); }
+  ) {
+    throw new GoneException({ error: 'MEMBERSHIP_SALES_RETIRED', message: 'Membership packages have been replaced by GDS membership cards.' });
+  }
 }

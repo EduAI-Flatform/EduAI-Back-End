@@ -16,6 +16,7 @@ export interface LoginResponse {
   tokenType: 'Bearer';
   expiresIn: number;
   user: RegisteredUserResponse;
+  mfaRequired?: boolean;
 }
 
 export type RefreshResponse = LoginResponse;

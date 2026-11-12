@@ -35,7 +35,18 @@ jobs:
         run: npm ci
 
       - name: Production deployment authorization gate
-        run: node --test scripts/production-deployment-gate.test.cjs scripts/revenue-release-migrations.test.cjs scripts/configure-gds-production-wallet.test.cjs scripts/configure-gds-withdrawals.test.cjs scripts/gds-production-preflight.test.cjs scripts/gds-runtime-privileges.test.cjs
+        run: node --test scripts/production-deployment-gate.test.cjs scripts/revenue-release-migrations.test.cjs scripts/configure-gds-production-wallet.test.cjs scripts/configure-gds-withdrawals.test.cjs scripts/gds-production-preflight.test.cjs scripts/gds-runtime-privileges.test.cjs scripts/affiliate-runtime-privileges.test.cjs scripts/gds-migration-replay.test.cjs
+
+      - name: Complete backend source regression including GDS platform and wallet recovery
+        run: npm test -- --runInBand
+
+      - name: GDS platform schema release and private backup safeguards
+        run: node --test scripts/gds-platform-release-migrations.test.cjs scripts/backup-gds-platform.test.cjs scripts/platform-runtime-source.test.cjs scripts/platform-runtime-privileges.test.cjs scripts/initialize-gds-mfa-key.test.cjs
+
+      - name: GDS platform policy, MFA and affiliate PostgreSQL invariants
+        run: >-
+          npm run test:demo-data -- --runInBand
+          platform-policy-migration.spec.ts mfa-migration.spec.ts affiliate-wallet-migration.spec.ts
 
       - name: Manual bank transfer security tests
         run: npm test -- --runInBand modules/payments/bank-transfer modules/payments/bank-receipt-access modules/access/course-access.service modules/memberships/service-entitlement modules/memberships/membership-continuity modules/memberships/membership-checkout.service

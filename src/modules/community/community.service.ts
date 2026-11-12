@@ -111,6 +111,16 @@ export class CommunityService {
     return this.toCommunityPostResponses(posts, user?.id);
   }
 
+  async listOwnPosts(userId: string, page: number) {
+    const pageSize = 10;
+    const where = { authorId: userId, deletedAt: null };
+    const [records, total] = await Promise.all([
+      this.prisma.communityPost.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize, select: communityPostRecordSelect }),
+      this.prisma.communityPost.count({ where }),
+    ]);
+    return { items: await this.toCommunityPostResponses(records, userId), page, pageSize, total, totalPages: Math.ceil(total / pageSize) };
+  }
+
   async getPost(
     user: AuthenticatedUser | undefined,
     id: string,

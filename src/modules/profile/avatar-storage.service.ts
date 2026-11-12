@@ -7,6 +7,7 @@ import { StoredAvatar, UploadedAvatarFile } from './types/avatar-upload.types';
 
 export const MAX_AVATAR_FILE_SIZE_BYTES = 2 * 1024 * 1024;
 export const MAX_PORTFOLIO_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+export const MAX_COVER_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 
 const IMAGE_EXTENSIONS_BY_MIME_TYPE: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -28,6 +29,10 @@ export class AvatarStorageService {
     return this.uploadImage(file, 'portfolio-images', MAX_PORTFOLIO_IMAGE_SIZE_BYTES);
   }
 
+  uploadCover(file: UploadedAvatarFile): Promise<StoredAvatar> {
+    return this.uploadImage(file, 'profile-covers', MAX_COVER_FILE_SIZE_BYTES);
+  }
+
   async delete(key: string): Promise<void> {
     const r2 = this.requireStorage();
     await this.getClient(r2.accountId, r2.accessKeyId, r2.secretAccessKey).send(
@@ -37,7 +42,7 @@ export class AvatarStorageService {
 
   private async uploadImage(
     file: UploadedAvatarFile,
-    prefix: 'avatars' | 'portfolio-images',
+    prefix: 'avatars' | 'portfolio-images' | 'profile-covers',
     maxSize: number,
   ): Promise<StoredAvatar> {
     this.validateFile(file, maxSize);

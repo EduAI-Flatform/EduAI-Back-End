@@ -9,6 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { randomUUID } from 'node:crypto';
 import {
   AuthProvider,
   RoleName,
@@ -26,6 +27,7 @@ import { FirebaseLoginDto } from './dto/firebase-login.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { PasswordService } from './password.service';
+import { MfaService, MfaClaims } from './mfa.service';
 import {
   LoginResponse,
   LogoutResponse,
@@ -47,6 +49,9 @@ interface JwtPayload {
   sub: string;
   email?: string;
   roles?: RoleName[];
+  mfaRevision?: number;
+  mfaVerified?: boolean;
+  authTime?: number;
 }
 
 interface RefreshTokenRecord {
@@ -134,6 +139,7 @@ export class AuthService {
     @Optional()
     @Inject(FIREBASE_ADMIN_SERVICE)
     private readonly firebaseAdmin?: FirebaseAdminVerifier,
+    @Optional() private readonly mfa?: MfaService,
   ) {}
 
   async login(input: LoginDto): Promise<LoginResponse> {
@@ -440,12 +446,16 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
-      await tx.refreshToken.update({
-        where: { id: storedToken.id },
+      const consumed = await tx.refreshToken.updateMany({
+        where: { id: storedToken.id, revokedAt: null, expiresAt: { gt: new Date() } },
         data: { revokedAt: new Date() },
       });
 
-      return this.issueTokenResponse(user, tx);
+      if (consumed.count !== 1) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+
+      return this.issueTokenResponse(user, tx, { ...payload, authTime: payload.authTime ?? 0 });
     });
   }
 
@@ -655,21 +665,40 @@ export class AuthService {
     return undefined;
   }
 
+  async issueMfaSession(userId: string, revision: number, authTime: number | undefined): Promise<LoginResponse> {
+    if (!this.mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
+    return this.prisma.$transaction(async tx => {
+      const [user, state] = await Promise.all([
+        tx.user.findUnique({ where: { id: userId }, select: { ...FIREBASE_USER_SELECT, deletedAt: true } }),
+        tx.userMfa.findUnique({ where: { userId } }),
+      ]);
+      if (!user || user.deletedAt || user.status !== UserStatus.active || !state?.enabled || state.revision !== revision) {
+        throw new UnauthorizedException('Authenticator session changed. Sign in again.');
+      }
+      return this.issueTokenResponse(user, tx, { mfaVerified: true, mfaRevision: revision, authTime: authTime ?? 0 });
+    });
+  }
+
   private async issueTokenResponse(
     user: AuthUserRecord,
     refreshTokenWriter: RefreshTokenWriter,
+    previousMfa?: MfaClaims,
   ): Promise<LoginResponse> {
     const responseUser = this.toRegisteredUserResponse(user);
+    const mfa = this.mfa ? await this.mfa.claims(user.id, previousMfa) : undefined;
     const payload = {
       sub: responseUser.id,
       email: responseUser.email,
       roles: responseUser.roles,
+      ...(mfa ? { mfaRevision: mfa.mfaRevision, mfaVerified: mfa.mfaVerified, authTime: mfa.authTime } : {}),
     };
     const accessToken = await this.jwtService.signAsync(payload, {
       expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       secret: this.getRequiredJwtSecret('accessSecret'),
     });
-    const refreshToken = await this.jwtService.signAsync(payload, {
+    // Put entropy first: bcrypt compares only the first 72 UTF-8 bytes, so
+    // otherwise JWTs for the same user can match another device's stored hash.
+    const refreshToken = await this.jwtService.signAsync({ jti: randomUUID(), ...payload }, {
       expiresIn: REFRESH_TOKEN_EXPIRES_IN_SECONDS,
       secret: this.getRequiredJwtSecret('refreshSecret'),
     });
@@ -692,6 +721,7 @@ export class AuthService {
       tokenType: 'Bearer',
       expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       user: responseUser,
+      ...(mfa ? { mfaRequired: mfa.mfaRequired } : {}),
     };
   }
 

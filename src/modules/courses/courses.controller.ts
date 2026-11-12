@@ -120,6 +120,18 @@ export class CoursesController {
     return this.coursesService.getCourse(courseId, user);
   }
 
+  @Get('courses/:id/preview')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.instructor, RoleName.platform_admin)
+  @ApiBearerAuth()
+  @ApiOkResponse({ description: 'Authorized author preview; does not enroll or write progress.', type: CourseDetailResponseDto })
+  getCoursePreview(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) courseId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<CourseDetailResponse> {
+    return this.coursesService.getCoursePreview(courseId, user);
+  }
+
   @Get('instructor/courses')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.instructor)

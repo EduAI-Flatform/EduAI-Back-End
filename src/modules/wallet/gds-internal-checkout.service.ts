@@ -13,6 +13,7 @@ import { CommerceFulfillmentService } from '../payments/commerce-fulfillment.ser
 import { prepareGdsCommerceCapture } from './gds-commerce-capture.domain';
 import { GdsWalletInvariantError } from './gds-wallet.domain';
 import { isRetryableGdsTransaction } from './gds-transaction-retry';
+import { GdsRevenueWalletService, lockGdsFinance } from './gds-revenue-wallet.service';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -31,6 +32,7 @@ export class GdsInternalCheckoutService {
     private readonly config: AppConfigService,
     private readonly fulfillment: CommerceFulfillmentService,
     private readonly audit: AuditService,
+    private readonly revenue: GdsRevenueWalletService,
   ) {}
 
   async payOrder(buyerId: string, orderId: string): Promise<{
@@ -44,6 +46,8 @@ export class GdsInternalCheckoutService {
     }
 
     const action = () => this.prisma.$transaction(async (tx) => {
+      await lockGdsFinance(tx);
+      await this.revenue.syncBeforeSpend(tx, buyerId);
       await tx.$queryRaw(Prisma.sql`SELECT id FROM commerce_orders WHERE id = ${orderId}::uuid FOR UPDATE`);
       const order = await tx.commerceOrder.findUnique({ where: { id: orderId },
         select: { id: true, buyerId: true, status: true, fulfillmentStatus: true,
@@ -90,6 +94,7 @@ export class GdsInternalCheckoutService {
       ]);
       const wallet = await tx.gdsInternalWallet.findUnique({ where: { buyerId } });
       if (!wallet || wallet.status !== 'ACTIVE') throw new GdsWalletInvariantError('GDS_CAPTURE_HOLD_NOT_VERIFIED');
+      if ((wallet.debtMinor ?? 0n) !== 0n) throw new GdsWalletInvariantError('GDS_CAPTURE_DEBT_BLOCKED');
       let hold = await tx.gdsInternalHold.findUnique({ where: { orderRef: orderId } });
       if (!hold) {
         if (wallet.availableMinor < order.payableAmountMinor) {
@@ -103,6 +108,7 @@ export class GdsInternalCheckoutService {
         hold = await tx.gdsInternalHold.findUnique({ where: { orderRef: orderId } });
       }
       const current = await tx.gdsInternalWallet.findUniqueOrThrow({ where: { id: wallet.id } });
+      if ((current.debtMinor ?? 0n) !== 0n) throw new GdsWalletInvariantError('GDS_CAPTURE_DEBT_BLOCKED');
       if (!hold) throw new GdsWalletInvariantError('GDS_CAPTURE_HOLD_NOT_VERIFIED');
       const plan = prepareGdsCommerceCapture({ buyerId,
         order: { id: order.id, buyerId: order.buyerId, status: order.status,

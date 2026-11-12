@@ -1,4 +1,7 @@
 model User {
+  platformSupportTickets PlatformSupportTicket[] @relation("PlatformSupportOwner")
+  platformSupportReplies PlatformSupportReply[] @relation("PlatformSupportReplyAuthor")
+  platformPartnerApplications PlatformPartnerApplication[] @relation("PlatformPartnerApplicant")
   gdsAccountVerifications GdsAccountVerification[] @relation("AccountVerificationOwner")
   gdsPerformedAccountVerifications GdsAccountVerification[] @relation("AccountVerificationActor")
   gdsWithdrawals GdsWithdrawal[] @relation("GdsWithdrawalOwner")
@@ -33,6 +36,7 @@ model User {
   externalIdentities ExternalIdentity[]
   refreshTokens RefreshToken[]
   profile       UserProfile?
+  mfa           UserMfa?
   learningProfile LearningProfile?
   skills        UserSkill[]
   portfolios    Portfolio[]
@@ -104,6 +108,11 @@ model User {
   membershipCheckoutIntents MembershipCheckoutIntent[]
   courseAccessGrants CourseAccessGrant[]
   membershipRemovedCourseSnapshots MembershipRemovedCourseSnapshot[]
+
+  platformPoliciesCreated PlatformPolicyRevision[] @relation("PlatformPolicyCreator")
+  affiliateIdentities AffiliateIdentity[] @relation("AffiliateIdentityOwner")
+  affiliateAttributions AffiliateAttribution[] @relation("AffiliateAttributionBuyer")
+  platformPoliciesApproved PlatformPolicyRevision[] @relation("PlatformPolicyApprover")
 
   @@index([status])
   @@index([deletedAt])

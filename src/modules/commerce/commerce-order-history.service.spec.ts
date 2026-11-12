@@ -80,6 +80,14 @@ function harness() {
 }
 
 describe('CommerceOrderHistoryService', () => {
+  it('applies date and status filters before pagination and keeps owner scope', async () => {
+    const { service, prisma } = harness();
+    await service.list('student-id', { page: 2, pageSize: 20, status: 'confirmed', startDate: '2026-11-01', endDate: '2026-11-11' });
+    const where = { buyerId: 'student-id', archivedAt: null, status: 'confirmed', createdAt: { gte: new Date('2026-10-31T17:00:00Z'), lt: new Date('2026-11-11T17:00:00Z') } };
+    expect(prisma.commerceOrder.count).toHaveBeenCalledWith({ where });
+    expect(prisma.commerceOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({ where, skip: 20 }));
+    await expect(service.list('student-id', { page: 1, pageSize: 20, startDate: '2026-11-12', endDate: '2026-11-11' })).rejects.toThrow();
+  });
   it('lists only learner-owned non-archived orders and projects the latest payment', async () => {
     const { service, prisma } = harness();
 

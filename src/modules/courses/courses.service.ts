@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   CourseStatus,
@@ -22,6 +23,8 @@ import { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { CourseThumbnailStorageService } from './course-thumbnail-storage.service';
 import { CourseCompletionService } from './course-completion.service';
 import { CourseAccessService } from '../access/course-access.service';
+import { normalizeCourseDescription } from './course-description';
+import { PlatformSettingsService } from '../platform/platform-settings.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ListInstructorCoursesQueryDto } from './dto/list-instructor-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
@@ -367,6 +370,7 @@ export class CoursesService {
     private readonly auditService: AuditService,
     private readonly courseCompletionService: CourseCompletionService,
     private readonly courseAccessService: CourseAccessService,
+    @Optional() private readonly platformSettings?: PlatformSettingsService,
   ) {}
 
   async listCommerceCatalog(query: CommerceCatalogQuery): Promise<CommerceCatalogPage> {
@@ -509,6 +513,7 @@ export class CoursesService {
     thumbnail?: UploadedCourseThumbnail,
   ): Promise<CourseCommandResponse> {
     this.assertCanCreateCourse(user);
+    const description = await this.normalizedDescription(input.description);
     this.assertValidPricePair(input.priceAmountMinor, input.priceCurrency);
     let slug = input.slug ?? (await this.createUniqueCourseSlug(input.title));
     const storedThumbnail = thumbnail
@@ -523,7 +528,7 @@ export class CoursesService {
             instructorId: user.id,
             title: input.title,
             slug,
-            description: input.description,
+            description,
             thumbnailUrl,
             thumbnailStorageKey: storedThumbnail?.key,
             badge: input.badge,
@@ -586,7 +591,7 @@ export class CoursesService {
     const data = this.removeUndefinedFields({
       title: input.title,
       slug: input.slug,
-      description: input.description,
+      description: await this.normalizedDescription(input.description),
       thumbnailUrl,
       thumbnailStorageKey:
         storedThumbnail?.key ?? (input.thumbnailUrl === null ? null : undefined),
@@ -669,6 +674,19 @@ export class CoursesService {
       },
       select: courseCommandResponseSelect,
     });
+  }
+
+  async getCoursePreview(courseId: string, user: AuthenticatedUser): Promise<CourseDetailResponse> {
+    const course = await this.findCourseDetailOrThrow(courseId);
+    this.assertCanManageCourse(user, course);
+    return this.toCourseDetailResponse(course);
+  }
+
+  private async normalizedDescription(value: string | null | undefined) {
+    if (value === undefined || !this.platformSettings) return normalizeCourseDescription(value);
+    const { settings } = await this.platformSettings.current();
+    const courses = settings.courses as { descriptionMaxLength?: number } | undefined;
+    return normalizeCourseDescription(value, courses?.descriptionMaxLength ?? 4000);
   }
 
   async getCourse(

@@ -67,13 +67,15 @@ describe('CommerceController learner routes', () => {
     );
   });
 
-  it('requires the student role and authentication guards', () => {
+  it('keeps cart access student-only and allows authenticated buyer-history roles', () => {
     expect(Reflect.getMetadata(ROLES_KEY, CommerceController.prototype.getCart)).toEqual([
       RoleName.student,
     ]);
-    expect(Reflect.getMetadata(ROLES_KEY, CommerceController.prototype.listOrders)).toEqual([
-      RoleName.student,
-    ]);
+    for (const route of [CommerceController.prototype.listOrders, CommerceController.prototype.getOrder]) {
+      expect(Reflect.getMetadata(ROLES_KEY, route)).toEqual([
+        RoleName.student, RoleName.instructor, RoleName.platform_admin,
+      ]);
+    }
     expect(Reflect.getMetadata(GUARDS_METADATA, CommerceController.prototype.addCourse)).toHaveLength(2);
     expect(Reflect.getMetadata(GUARDS_METADATA, CommerceController.prototype.getOrder)).toHaveLength(2);
   });

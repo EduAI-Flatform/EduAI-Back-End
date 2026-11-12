@@ -211,6 +211,8 @@ model CommerceCartLine {
 }
 
 model CommerceOrder {
+  invoiceRequest PlatformSupportTicket? @relation("PlatformInvoiceOrder")
+  affiliateAttribution AffiliateAttribution?
   buyerWalletReservation BuyerWalletReservation? @relation("BuyerWalletOrderReservation")
   receiptAccessGenerations CommerceReceiptAccessGeneration[]
   bankReceiptClaims CommerceBankReceiptClaim[]

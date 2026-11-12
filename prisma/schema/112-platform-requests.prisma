@@ -1,0 +1,85 @@
+enum PlatformSupportStatus {
+  open
+  in_progress
+  resolved
+  closed
+
+  @@map("platform_support_status")
+}
+
+enum PlatformPartnerCategory {
+  school
+  business
+  scholarship
+  digital
+
+  @@map("platform_partner_category")
+}
+
+enum PlatformPartnerStatus {
+  submitted
+  reviewing
+  contacted
+  accepted
+  rejected
+
+  @@map("platform_partner_status")
+}
+
+model PlatformSupportTicket {
+  id        String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId   String                @map("owner_id") @db.Uuid
+  title     String
+  content   String
+  requestType String @default("support") @map("request_type")
+  orderId String? @unique @map("order_id") @db.Uuid
+  attachmentData Bytes? @map("attachment_data")
+  attachmentSize Int? @map("attachment_size")
+  invoiceDetails Json? @map("invoice_details")
+  order CommerceOrder? @relation("PlatformInvoiceOrder", fields: [orderId], references: [id], onDelete: Restrict, map: "platform_invoice_order_fk")
+  status    PlatformSupportStatus @default(open)
+  createdAt DateTime              @default(now()) @map("created_at")
+  updatedAt DateTime              @updatedAt @map("updated_at")
+  owner     User                  @relation("PlatformSupportOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  replies   PlatformSupportReply[]
+
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt])
+  @@map("platform_support_tickets")
+}
+
+model PlatformSupportReply {
+  id        String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId  String                @map("ticket_id") @db.Uuid
+  authorId  String                @map("author_id") @db.Uuid
+  content   String
+  isStaff   Boolean               @default(false) @map("is_staff")
+  createdAt DateTime              @default(now()) @map("created_at")
+  ticket    PlatformSupportTicket @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  author    User                  @relation("PlatformSupportReplyAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@index([authorId])
+  @@map("platform_support_replies")
+}
+
+model PlatformPartnerApplication {
+  id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  submittedById String?                 @map("submitted_by_id") @db.Uuid
+  category      PlatformPartnerCategory
+  name          String
+  organization  String
+  phone         String
+  email         String
+  content       String
+  consentAt     DateTime                @map("consent_at")
+  policyId      String?                 @map("policy_id") @db.Uuid
+  status        PlatformPartnerStatus   @default(submitted)
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
+  submittedBy   User?                   @relation("PlatformPartnerApplicant", fields: [submittedById], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([submittedById])
+  @@map("platform_partner_applications")
+}

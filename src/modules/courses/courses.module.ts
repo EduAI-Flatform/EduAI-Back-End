@@ -8,9 +8,10 @@ import { CourseCompletionService } from './course-completion.service';
 import { CoursesController } from './courses.controller';
 import { CoursesService } from './courses.service';
 import { LearningPathService } from './learning-path.service';
+import { PlatformModule } from '../platform/platform.module';
 
 @Module({
-  imports: [AuthModule, AuditModule, CertificatesModule, NotificationsModule],
+  imports: [AuthModule, AuditModule, CertificatesModule, NotificationsModule, PlatformModule],
   controllers: [CoursesController],
   providers: [
     CoursesService,

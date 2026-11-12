@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
@@ -7,9 +7,13 @@ import { AppConfigService } from '../../../config/app-config.service';
 import { IS_PUBLIC_KEY } from '../../../common/security/public.decorator';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuthenticatedUser } from '../types/authenticated-user.type';
+import { ALLOW_MFA_PENDING } from '../mfa.decorator';
 
 interface AccessTokenPayload {
   sub?: string;
+  mfaRevision?: number;
+  mfaVerified?: boolean;
+  authTime?: number;
 }
 
 const AUTHENTICATED_REQUEST = Symbol('authenticatedRequest');
@@ -68,6 +72,7 @@ export class JwtAuthGuard implements CanActivate {
         email: true,
         status: true,
         deletedAt: true,
+        mfa: { select: { enabled: true, revision: true } },
         roles: { select: { role: { select: { name: true } } } },
       },
     });
@@ -76,10 +81,18 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid access token');
     }
 
+    const allowPending = this.reflector.getAllAndOverride<boolean>(ALLOW_MFA_PENDING, [context.getHandler(), context.getClass()]);
+    const revisionMatches = (payload.mfaRevision ?? 0) === (user.mfa?.revision ?? 0);
+    if (!allowPending && (user.mfa?.enabled ? (!payload.mfaVerified || !revisionMatches) : !revisionMatches)) {
+      throw new ForbiddenException({ error: 'MFA_REQUIRED', message: 'Complete authenticator verification or sign in again.' });
+    }
+
     request.user = {
       id: user.id,
       email: user.email,
       roles: user.roles.map(({ role }) => role.name),
+      ...(payload.mfaRevision !== undefined ? { mfaRevision: payload.mfaRevision, mfaVerified: payload.mfaVerified === true } : {}),
+      ...(payload.authTime !== undefined ? { authTime: payload.authTime } : {}),
     };
     request[AUTHENTICATED_REQUEST] = true;
 

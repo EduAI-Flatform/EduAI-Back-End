@@ -21,10 +21,12 @@ function setup() {
     $transaction: jest.fn().mockImplementation(async (fn) => fn(tx)),
     gdsWithdrawalSettings: { findUnique: jest.fn().mockResolvedValue(settings) },
     revenueEarningPeriod: { findMany: jest.fn().mockResolvedValue([{ id: 'period' }]) },
+    affiliateIdentity: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const finance = { reconcileWalletPeriod: jest.fn().mockResolvedValue(true) };
   const config = { app: { nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: true } };
-  return { tx, prisma, finance, settings, projection, wallet, recognized, service: new GdsRevenueWalletService(prisma as never, config as never, finance as never) };
+  const affiliate = { syncOwner: jest.fn() };
+  return { tx, prisma, finance, affiliate, settings, projection, wallet, recognized, service: new GdsRevenueWalletService(prisma as never, config as never, finance as never, affiliate as never) };
 }
 describe('recoverable revenue-to-GDS worker', () => {
   it('repays debt first and does not credit recognized earnings twice on worker replay', async () => {

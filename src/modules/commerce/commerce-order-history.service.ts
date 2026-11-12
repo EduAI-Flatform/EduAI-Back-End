@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -23,9 +23,14 @@ export class CommerceOrderHistoryService {
     learnerId: string,
     query: ListOrdersQueryDto = { page: 1, pageSize: 20 },
   ): Promise<OrderHistoryPageResponseDto> {
+    if (query.startDate && query.endDate && query.startDate > query.endDate) throw new BadRequestException('Start date must not follow end date.');
+    const start = query.startDate ? new Date(query.startDate + 'T00:00:00+07:00') : undefined;
+    const end = query.endDate ? new Date(new Date(query.endDate + 'T00:00:00+07:00').getTime() + 86400000) : undefined;
     const where: Prisma.CommerceOrderWhereInput = {
       buyerId: learnerId,
       archivedAt: null,
+      ...(query.status ? { status: query.status } : {}),
+      ...(start || end ? { createdAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
     };
     const [total, orders] = await Promise.all([
       this.prisma.commerceOrder.count({ where }),

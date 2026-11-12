@@ -1,0 +1,29 @@
+enum PlatformPolicyStatus {
+  draft
+  approved
+  scheduled
+  cancelled
+
+  @@map("platform_policy_status")
+}
+
+model PlatformPolicyRevision {
+  affiliateVisits AffiliateVisit[] @relation("AffiliateVisitPolicy")
+  affiliateAttributions AffiliateAttribution[] @relation("AffiliateAttributionPolicy")
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  group         String
+  version       Int
+  status        PlatformPolicyStatus @default(draft)
+  content       Json
+  createdById   String @map("created_by_id") @db.Uuid
+  approvedById  String? @map("approved_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  approvedAt    DateTime? @map("approved_at")
+  effectiveAt   DateTime? @map("effective_at")
+  creator User @relation("PlatformPolicyCreator", fields: [createdById], references: [id], onDelete: Restrict, map: "platform_policy_creator_fk")
+  approver User? @relation("PlatformPolicyApprover", fields: [approvedById], references: [id], onDelete: Restrict, map: "platform_policy_approver_fk")
+
+  @@unique([group, version])
+  @@index([group, status, effectiveAt])
+  @@map("platform_policy_revisions")
+}

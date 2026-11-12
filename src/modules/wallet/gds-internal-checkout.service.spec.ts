@@ -78,14 +78,34 @@ function setup(options: { existingHold?: boolean; confirmed?: boolean; amount?: 
     dispatchPending: jest.fn().mockResolvedValue(undefined),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
+  const revenue = { syncBeforeSpend: jest.fn().mockResolvedValue(undefined) };
   const service = new GdsInternalCheckoutService(
     prisma as unknown as PrismaService, config as unknown as AppConfigService,
     fulfillment as unknown as CommerceFulfillmentService, audit as unknown as AuditService,
+    revenue as any,
   );
-  return { tx, prisma, fulfillment, audit, service };
+  return { tx, prisma, fulfillment, audit, service, revenue };
 }
 
 describe('PAYW-04C internal-only Commerce capture orchestration', () => {
+  it('refreshes recorded affiliate refunds before order locks and refuses spend before the worker catches up', async () => {
+    const { service, tx, revenue } = setup();
+    revenue.syncBeforeSpend.mockImplementation(async () => {
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1); // Finance lock precedes order/wallet locks.
+      tx.gdsInternalWallet.findUnique.mockResolvedValue({ id: walletId, buyerId, status: 'ACTIVE', availableMinor: 100000n, heldMinor: 0n, debtMinor: 100n } as any);
+    });
+    await expect(service.payOrder(buyerId, orderId)).rejects.toThrow('GDS_CAPTURE_DEBT_BLOCKED');
+    expect(tx.gdsInternalJournal.create).not.toHaveBeenCalled();
+  });
+  it('refuses new capture while refund recovery debt exists, including a previously reserved hold', async () => {
+    for (const existingHold of [false, true]) {
+      const { service, tx } = setup({ existingHold });
+      tx.gdsInternalWallet.findUnique.mockResolvedValue({ id: walletId, buyerId, status: 'ACTIVE', availableMinor: 100000n, heldMinor: 100000n, debtMinor: 1n } as any);
+      await expect(service.payOrder(buyerId, orderId)).rejects.toThrow('GDS_CAPTURE_DEBT_BLOCKED');
+      expect(tx.gdsInternalJournal.create).not.toHaveBeenCalled();
+      expect(tx.commerceSettlement.create).not.toHaveBeenCalled();
+    }
+  });
   it('reserves, captures, confirms, and grants entitlements inside one serializable transaction', async () => {
     const { service, tx, prisma, fulfillment, audit } = setup();
     await expect(service.payOrder(buyerId, orderId)).resolves.toEqual({

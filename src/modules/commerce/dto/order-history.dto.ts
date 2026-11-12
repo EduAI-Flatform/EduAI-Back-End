@@ -1,9 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 import { MoneyResponseDto } from './commerce-response.dto';
 
 export class ListOrdersQueryDto {
+  @IsOptional() @IsIn(['confirmed', 'pending_payment', 'cancelled', 'expired']) status?: 'confirmed' | 'pending_payment' | 'cancelled' | 'expired';
+  @IsOptional() @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) startDate?: string;
+  @IsOptional() @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) endDate?: string;
   @IsOptional()
   @Transform(({ value }) => Number(value))
   @IsInt()

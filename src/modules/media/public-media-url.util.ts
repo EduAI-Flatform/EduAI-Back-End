@@ -44,7 +44,7 @@ export function parsePublicMediaToken(token: string): string | null {
 }
 
 function isAllowedPublicMediaKey(storageKey: string): boolean {
-  return /^(?:course-thumbnails|avatars|portfolio-images)\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/.test(
+  return /^(?:course-thumbnails|avatars|portfolio-images|profile-covers)\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/.test(
     storageKey,
   );
 }

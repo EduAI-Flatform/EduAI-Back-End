@@ -49,6 +49,30 @@ const REVIEWED_REVENUE_MIGRATIONS = Object.freeze([
   { name: '20261103030000_validate_gds_wallet_capture_settlement', sha256: 'E561F4212A165633B88B9EA8F7EC4495A8F2D3BCB74E7B06CB5FD8EB8431F0E0' },
 ]);
 const RECEIPT_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-receipt-migrations';
+// Independent owner-reviewed platform release. Receipt approval never grants
+// permission to apply these artifacts or any later migration.
+const REVIEWED_GDS_PLATFORM_MIGRATIONS = Object.freeze([
+  { name: '20261111090000_platform_policy_revisions', sha256: '894C1ADB315666F0231CFDF6157F35C557F15AE7231F91DA53527B9F0E0D977B' },
+  { name: '20261111120000_add_platform_requests', sha256: '9491A488FC76E83CAF2CF38792B12E738B2F1029570771155861926B9A78F109' },
+  { name: '20261111130000_profile_cover_images', sha256: '9066ABE6AE9C6A3840F152A614E716496136B877C9C2FA39A37B27A903F2F965' },
+  { name: '20261111150000_user_mfa', sha256: 'E30CC981BB89D10B109D82302334D4BE4A2247E4FBF7B23501876C5D2592178D' },
+  { name: '20261111160000_affiliate', sha256: 'BBD11F340803119CA3C81A21D5A6789A29157DBEDAD19D3F77DFD8BDA94F12A5' },
+  { name: '20261111170000_support_image', sha256: '81D68CBC97899D11D3C4EA1C46C9C88E2252FD7BA8668F2981D24248055E0F80' },
+  { name: '20261111180000_affiliate_wallet', sha256: '68209F41FBC9CFD719BDA6EB8462B8A2769E890482A73212F598205E3D23AA76' },
+]);
+const GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-gds-platform-migrations';
+
+function parseMigrationApprovalArguments(arguments_) {
+  const allowed = new Set([RECEIPT_MIGRATION_APPROVAL_ARGUMENT, GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT]);
+  if (!Array.isArray(arguments_) || new Set(arguments_).size !== arguments_.length ||
+      arguments_.some(argument => !allowed.has(argument))) {
+    throw safeDatabaseFailure('MIGRATION_ARGUMENT_INVALID');
+  }
+  return {
+    allowReviewedReceiptMigrations: arguments_.includes(RECEIPT_MIGRATION_APPROVAL_ARGUMENT),
+    allowReviewedGdsPlatformMigrations: arguments_.includes(GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT),
+  };
+}
 const RECONCILIATION_FINANCIAL_KINDS = [
   'duplicate_collection',
   'late_payment',
@@ -343,6 +367,10 @@ function assertReviewedRevenueMigrationFingerprints(rootDirectory) {
   return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_REVENUE_MIGRATIONS);
 }
 
+function assertReviewedGdsPlatformMigrationFingerprints(rootDirectory) {
+  return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_GDS_PLATFORM_MIGRATIONS);
+}
+
 function assertReviewedMigrationFingerprints(rootDirectory, migrations) {
   const hashes = {};
   for (const migration of migrations) {
@@ -390,6 +418,7 @@ function assertMigrationLedgerState({
   allowAlreadyApplied = false,
   allowReviewedBankTransferMigration = false,
   allowReviewedReceiptMigrations = false,
+  allowReviewedGdsPlatformMigrations = false,
   localMigrationNames: localNames,
   localMigrationChecksums: localChecksums,
   migrationRows,
@@ -443,6 +472,29 @@ function assertMigrationLedgerState({
   }
 
   const pendingMigrationNames = localNames.filter((name) => !applied.has(name));
+  const reviewedGdsNames = REVIEWED_GDS_PLATFORM_MIGRATIONS.map(({ name }) => name);
+  const hasGdsArtifacts = reviewedGdsNames.some(name => localNames.includes(name));
+  if (hasGdsArtifacts) {
+    // Local artifacts and already-applied ledger rows must agree with the
+    // reviewed hashes, including retries after only a prefix completed.
+    for (const migration of REVIEWED_GDS_PLATFORM_MIGRATIONS) {
+      if (!localNames.includes(migration.name) ||
+          localChecksums?.[migration.name]?.toUpperCase() !== migration.sha256) {
+        throw migrationPreflightFailure('MIGRATION_ARTIFACT_CHECKSUM_MISMATCH');
+      }
+    }
+  }
+  const pendingGdsNames = pendingMigrationNames.filter(name => reviewedGdsNames.includes(name));
+  const appliedGdsCount = reviewedGdsNames.length - pendingGdsNames.length;
+  const isReviewedGdsSuffix = hasGdsArtifacts && pendingGdsNames.length > 0 &&
+    applied.has(EXPECTED_BANK_TRANSFER_MIGRATION) &&
+    REVIEWED_RECEIPT_MIGRATIONS.every(({ name }) => applied.has(name)) &&
+    REVIEWED_REVENUE_MIGRATIONS.every(({ name }) => applied.has(name)) &&
+    reviewedGdsNames.slice(0, appliedGdsCount).every(name => applied.has(name)) &&
+    JSON.stringify(pendingMigrationNames) === JSON.stringify(reviewedGdsNames.slice(appliedGdsCount));
+  if (allowAlreadyApplied && targetRows.length === 1 && isReviewedGdsSuffix && !allowReviewedGdsPlatformMigrations) {
+    throw migrationPreflightFailure('MIGRATION_RELEASE_APPROVAL_REQUIRED');
+  }
   const onlyReviewedBankTransferPending =
     allowReviewedBankTransferMigration &&
     pendingMigrationNames.length === 1 &&
@@ -469,6 +521,7 @@ function assertMigrationLedgerState({
     allowAlreadyApplied &&
     targetRows.length === 1 &&
     (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending || onlyReviewedRevenuePending ||
+      (allowReviewedGdsPlatformMigrations && isReviewedGdsSuffix) ||
       (allowReviewedReceiptMigrations && isReviewedReceiptSuffix))
   ) {
     if (
@@ -1723,6 +1776,8 @@ function assertReconciliationPreflightStable(before, after) {
     before.migrationHash !== after.migrationHash ||
     before.bankTransferMigrationHash !== after.bankTransferMigrationHash ||
     JSON.stringify(before.receiptMigrationHashes) !== JSON.stringify(after.receiptMigrationHashes) ||
+    JSON.stringify(before.revenueMigrationHashes) !== JSON.stringify(after.revenueMigrationHashes) ||
+    JSON.stringify(before.gdsPlatformMigrationHashes) !== JSON.stringify(after.gdsPlatformMigrationHashes) ||
     before.ledger?.currentSchemaVersion !== after.ledger?.currentSchemaVersion ||
     JSON.stringify(before.ledger?.pendingMigrationNames) !==
       JSON.stringify(after.ledger?.pendingMigrationNames) ||
@@ -2009,6 +2064,7 @@ async function runMigrationPreflight({
   migrationUrl,
   allowAlreadyApplied = false,
   allowReviewedReceiptMigrations = false,
+  allowReviewedGdsPlatformMigrations = false,
 }) {
   const migrationHash = await runSafePreflightStage(
     'ARTIFACT',
@@ -2025,6 +2081,10 @@ async function runMigrationPreflight({
   const revenueMigrationHashes = await runSafePreflightStage(
     'ARTIFACT',
     () => assertReviewedRevenueMigrationFingerprints(rootDirectory),
+  );
+  const gdsPlatformMigrationHashes = await runSafePreflightStage(
+    'ARTIFACT',
+    () => assertReviewedGdsPlatformMigrationFingerprints(rootDirectory),
   );
   const roles = await runSafePreflightStage(
     'ROLE_VERIFICATION',
@@ -2076,6 +2136,7 @@ async function runMigrationPreflight({
           allowAlreadyApplied,
           allowReviewedBankTransferMigration: true,
           allowReviewedReceiptMigrations,
+          allowReviewedGdsPlatformMigrations,
           localMigrationNames: localNames,
           localMigrationChecksums: localChecksums,
           migrationRows: ledgerResult.rows,
@@ -2129,6 +2190,7 @@ async function runMigrationPreflight({
     bankTransferMigrationHash,
     receiptMigrationHashes,
     revenueMigrationHashes,
+    gdsPlatformMigrationHashes,
     roles,
     privileges,
     localMigrationNames: localNames,
@@ -2194,12 +2256,8 @@ async function runMigrationPostflight({
 }
 
 async function run() {
-  const extraArguments = process.argv.slice(2);
-  if (extraArguments.some((arg) => arg !== RECEIPT_MIGRATION_APPROVAL_ARGUMENT) ||
-      extraArguments.filter((arg) => arg === RECEIPT_MIGRATION_APPROVAL_ARGUMENT).length > 1) {
-    throw safeDatabaseFailure('MIGRATION_ARGUMENT_INVALID');
-  }
-  const allowReviewedReceiptMigrations = extraArguments.includes(RECEIPT_MIGRATION_APPROVAL_ARGUMENT);
+  const { allowReviewedReceiptMigrations, allowReviewedGdsPlatformMigrations } =
+    parseMigrationApprovalArguments(process.argv.slice(2));
   const rootDirectory = process.cwd();
   dotenv.config({ quiet: true });
   const runtimeDatabaseUrl = process.env.DATABASE_URL;
@@ -2216,6 +2274,7 @@ async function run() {
       migrationUrl: migrationDatabaseUrl,
       allowAlreadyApplied: true,
       allowReviewedReceiptMigrations,
+      allowReviewedGdsPlatformMigrations,
     }),
   );
   const repeatPreflight = await runSafePreflightStage(
@@ -2226,6 +2285,7 @@ async function run() {
       migrationUrl: migrationDatabaseUrl,
       allowAlreadyApplied: true,
       allowReviewedReceiptMigrations,
+      allowReviewedGdsPlatformMigrations,
     }),
   );
   await runSafePreflightStage(
@@ -2287,6 +2347,10 @@ async function run() {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   }
   const bankMigrationHashBeforeApply = assertReviewedBankTransferMigrationFingerprint(rootDirectory);
+  const gdsPlatformMigrationHashesBeforeApply = assertReviewedGdsPlatformMigrationFingerprints(rootDirectory);
+  if (JSON.stringify(gdsPlatformMigrationHashesBeforeApply) !== JSON.stringify(preflight.gdsPlatformMigrationHashes)) {
+    throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
+  }
   if (bankMigrationHashBeforeApply !== preflight.bankTransferMigrationHash) {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   }
@@ -2378,6 +2442,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  REVIEWED_GDS_PLATFORM_MIGRATIONS,
+  GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT,
+  parseMigrationApprovalArguments,
+  assertReviewedGdsPlatformMigrationFingerprints,
   REVIEWED_REVENUE_MIGRATIONS,
   assertReviewedRevenueMigrationFingerprints,
   EXPECTED_RECONCILIATION_MIGRATION,

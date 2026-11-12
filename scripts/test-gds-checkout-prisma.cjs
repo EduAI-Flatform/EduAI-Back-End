@@ -20,6 +20,9 @@ async function main() {
   const { MembershipCheckoutService } = require('../dist/src/modules/memberships/membership-checkout.service.js');
   const { MembershipContinuityService } = require('../dist/src/modules/memberships/membership-continuity.service.js');
   const { GdsInternalCheckoutService } = require('../dist/src/modules/wallet/gds-internal-checkout.service.js');
+  const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
+  const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
+  const { AffiliateWalletService } = require('../dist/src/modules/wallet/affiliate-wallet.service.js');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   try {
     const ids = Object.fromEntries(['buyerCourse','buyerMember','seller','course','plan','version','duration'].map(k => [k,randomUUID()]));
@@ -82,7 +85,9 @@ async function main() {
     const audit=new AuditService(db);
     const access=new CourseAccessService(db,config);
     const fulfillment=new CommerceFulfillmentService(db,access,audit,{createForUser:async()=>{}});
-    const gds=new GdsInternalCheckoutService(db,config,fulfillment,audit);
+    const finance=new RevenueFinanceService(db);
+    const revenue=new GdsRevenueWalletService(db,config,finance,new AffiliateWalletService(finance));
+    const gds=new GdsInternalCheckoutService(db,config,fulfillment,audit,revenue);
     const cart=new CommerceService(db,audit,access);
     const orders=new CommerceOrderService(db,config,{},audit,access);
     const membership=new MembershipCheckoutService(db,audit,new CommerceProductService(audit),new MembershipContinuityService(db,access,audit));

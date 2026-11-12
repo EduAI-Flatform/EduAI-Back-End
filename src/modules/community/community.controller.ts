@@ -7,8 +7,11 @@ import {
   ParseUUIDPipe,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { IsInt, Max, Min } from 'class-validator';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -31,6 +34,10 @@ import { UpdateCommunityPostDto } from './dto/update-community-post.dto';
 import { CommunityPostResponseDto } from './dto/community-post-response.dto';
 import { CommunityService } from './community.service';
 
+class OwnCommunityPostsQueryDto {
+  @Type(() => Number) @IsInt() @Min(1) @Max(1000000) page = 1;
+}
+
 @ApiTags('Community posts')
 @Controller('community')
 export class CommunityController {
@@ -48,6 +55,13 @@ export class CommunityController {
   @ApiUnauthorizedResponse({ description: 'Supplied access token is invalid.' })
   listPosts(@CurrentUser() user: AuthenticatedUser | undefined) {
     return this.communityService.listPosts(user);
+  }
+
+  @Get('posts/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  listOwnPosts(@CurrentUser('id') userId: string, @Query() query: OwnCommunityPostsQueryDto) {
+    return this.communityService.listOwnPosts(userId, query.page);
   }
 
   @Get('posts/:id')
