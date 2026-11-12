@@ -107,6 +107,10 @@ jobs:
             env, shell: false, timeout: 60000, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', maxBuffer: 1048576,
           });
           console.log(JSON.stringify({ schemaReadStatus: result.status, missing: result.error?.code === 'ENOENT',
+            missingRootCertificate: /root certificate file .* does not exist/i.test(result.stderr || ''),
+            missingClientCertificate: /client certificate file .* does not exist/i.test(result.stderr || ''),
+            tlsMode: ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'].includes(env.PGSSLMODE) ? env.PGSSLMODE : null,
+            explicitRootCertificate: Boolean(env.PGSSLROOTCERT),
             missingDatabase: /database "[^"]+" does not exist/.test(result.stderr || ''),
             missingRole: /role "[^"]+" does not exist/.test(result.stderr || ''),
             missingValueIsUri: /"postgres(?:ql)?:\/\//.test(result.stderr || ''),
