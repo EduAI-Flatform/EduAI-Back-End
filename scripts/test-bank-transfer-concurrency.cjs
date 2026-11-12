@@ -191,11 +191,12 @@ async function main() {
     await assertReceiptNonfinancial(canonicalA.orderId); await assertReceiptNonfinancial(canonicalB.orderId);
     console.log('PASS receipt cross-order canonical image replay rejected despite different PNG encodings');
 
-    for(let receiptRace=0;receiptRace<10;receiptRace++) {
+    for(let receiptRace=0;receiptRace<40;receiptRace++) {
     const transactionA=await prepareReceipt(); const transactionB=await prepareReceipt();
     const receiptTransactionId='RECEIPT-TX-'+randomUUID().toUpperCase();
     const transactionFileA=await receiptFile(transactionA.bankRequest,'#44'+receiptRace.toString(16).padStart(2,'0')+'01',receiptTransactionId);
     const transactionFileB=await receiptFile(transactionB.bankRequest,'#44'+receiptRace.toString(16).padStart(2,'0')+'02',receiptTransactionId);
+    console.log('RECEIPT_TRANSACTION_RACE_ITERATION='+receiptRace);
     const transactionClaims=await Promise.all([
       receiptServices[0].upload(ids.buyer,transactionA.orderId,key(),transactionFileA),
       receiptServices[1].upload(ids.buyer,transactionB.orderId,key(),transactionFileB),
@@ -257,4 +258,10 @@ async function main() {
     await pool.end();
   }
 }
-main().catch(error => { console.error('PAYW_POSTGRES_CONCURRENCY=FAIL',error.name,error.code ?? '',error.message); process.exitCode=1; });
+main().catch(error => {
+  console.error('PAYW_POSTGRES_CONCURRENCY=FAIL',error.name,error.code ?? '',error.message);
+  // Only local synthetic fixtures run here. Preserve the application call site
+  // for bounded conflicts, without printing provider/database error objects.
+  if (error.name === 'ConflictException') console.error(error.stack);
+  process.exitCode=1;
+});

@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { Prisma } from '../../../generated/prisma/client';
 import { BankReceiptService } from './bank-transfer-receipt.service';
 import { decodeReceiptImage } from './bank-transfer-receipt-image';
 jest.mock('./bank-transfer-receipt-image', () => ({ decodeReceiptImage: jest.fn() }));
@@ -27,7 +28,11 @@ describe('Private synthetic receipt intake', () => {
       commerceBankReceiptClaim:{
         findUnique:jest.fn().mockImplementation(async ({where}) => claims.find(c=>where.id?c.id===where.id:c.buyerId===where.buyerId_operationKeyHash.buyerId&&c.operationKeyHash===where.buyerId_operationKeyHash.operationKeyHash)??null),
         findFirst:jest.fn().mockResolvedValue(null), count:jest.fn().mockImplementation(async()=>claims.length),
-        create:jest.fn().mockImplementation(async({data})=>{const c={status:'PROCESSING',...data,fieldsJson:null,warnings:[],confidence:null,imageDeletedAt:null,assessedAt:null};claims.push(c);return c;}),
+        create:jest.fn().mockImplementation(async({data})=>{
+          if (claims.some(c => c.originalSha256 === data.originalSha256 || c.imageSha256 === data.imageSha256))
+            throw new Prisma.PrismaClientKnownRequestError('Synthetic unique image constraint', { code: 'P2002', clientVersion: 'test' });
+          const c={status:'PROCESSING',...data,fieldsJson:null,warnings:[],confidence:null,imageDeletedAt:null,assessedAt:null};claims.push(c);return c;
+        }),
         update:jest.fn().mockImplementation(async({where,data})=>Object.assign(claims.find(c=>c.id===where.id),data)),
         findMany:jest.fn().mockResolvedValue([]),
       },
@@ -42,6 +47,23 @@ describe('Private synthetic receipt intake', () => {
     const config={app:{nodeEnv:'test'}};
     return {service:new BankReceiptService(tx,config as any,audit as any,storage as any,ocr as any,access as any),access,tx,claims,storage,ocr,config,request,order,audit};
   };
+  it('does not create a global image predicate read that conflicts with unrelated receipt finalization', async () => {
+    const h = harness();
+    h.tx.commerceBankReceiptClaim.findFirst.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
+      'Synthetic predicate serialization conflict', { code: 'P2034', clientVersion: 'test' }));
+    await expect(h.service.upload(buyer, 'order', 'upload-predicate-conflict', file)).resolves.toMatchObject({ status: 'MATCHED_CLAIM' });
+    expect(h.tx.commerceBankReceiptClaim.findFirst).not.toHaveBeenCalled();
+    expect(h.claims).toHaveLength(1);
+  });
+  it('maps database image uniqueness rejection to the same safe conflict without storage or OCR', async () => {
+    const h = harness();
+    h.tx.commerceBankReceiptClaim.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
+      'Synthetic image uniqueness conflict', { code: 'P2002', clientVersion: 'test', meta: { target: ['image_sha256'] } }));
+    await expect(h.service.upload(buyer, 'order', 'upload-image-unique', file)).rejects.toThrow('RECEIPT_ALREADY_USED');
+    expect(h.storage.put).not.toHaveBeenCalled();
+    expect(h.ocr.assess).not.toHaveBeenCalled();
+    expect(h.claims).toHaveLength(0);
+  });
   it('uses a separate idempotent access ledger after matched assessment and upload replay',async()=>{
     process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED='true';const h=harness();
     const first=await h.service.upload(buyer,'order','early-upload-key',file);
@@ -141,7 +163,7 @@ describe('Private synthetic receipt intake', () => {
     expect(h.storage.put).not.toHaveBeenCalled();
   });
   it('rejects an image previously used by another order',async()=>{
-    const h=harness();h.tx.commerceBankReceiptClaim.findFirst.mockResolvedValue({id:'other'});
+    const h=harness();h.claims.push({id:'other',buyerId:'other',operationKeyHash:'other-key',originalSha256:'a'.repeat(64),imageSha256:'b'.repeat(64)});
     await expect(h.service.upload(buyer,'order','upload-key-1',file)).rejects.toThrow('RECEIPT_ALREADY_USED');
     expect(h.storage.put).not.toHaveBeenCalled();
   });

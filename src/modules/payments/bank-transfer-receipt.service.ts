@@ -41,7 +41,9 @@ export class BankReceiptService {
         }
         if (order.status !== 'pending_payment' || !['PENDING', 'UNDER_REVIEW', 'NEEDS_SUPPORT'].includes(request.status) || request.expiresAt <= new Date()) throw new ConflictException('ORDER_NOT_PAYABLE');
         if (await tx.commerceBankReceiptClaim.count({ where: { orderId } }) >= 3) throw new ConflictException('RECEIPT_UPLOAD_LIMIT');
-        if (await tx.commerceBankReceiptClaim.findFirst({ where: { OR: [{ originalSha256: image.originalSha256 }, { imageSha256: image.imageSha256 }] } })) throw new ConflictException('RECEIPT_ALREADY_USED');
+        // The two UNIQUE image constraints enforce cross-order replay atomically.
+        // A broad pre-insert OR read can take relation-wide SSI predicate locks
+        // and conflict with unrelated OCR finalization. Map P2002 below instead.
         const now = new Date();
         const claim = await tx.commerceBankReceiptClaim.create({ data: { id: randomUUID(), requestId: request.id, orderId, buyerId,
           operationKeyHash, originalSha256: image.originalSha256, imageSha256: image.imageSha256,
