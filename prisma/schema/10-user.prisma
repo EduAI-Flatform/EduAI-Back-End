@@ -69,6 +69,8 @@ model User {
   scholarshipAwards ScholarshipAward[]
   createdTmiRewards TmiReward[] @relation("TmiRewardCreator")
   tmiLedgerEntries TmiLedgerEntry[]
+  pointActivityReceipts PointActivityReceipt[]
+  pointExpirySettlements PointExpirySettlement[]
   tmiRedemptions TmiRedemption[]
   tmiEntitlements TmiEntitlement[]
   notifications Notification[]

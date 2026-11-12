@@ -4,6 +4,12 @@ import {
   validatePlatformUrl,
 } from "./platform-settings.validation";
 describe("platform configuration validation", () => {
+  it('accepts only registered point event codes and rejects duplicate rules', () => {
+    const settings = { ...DEFAULT_PLATFORM_SETTINGS.points, rules: [{ event: 'course.completed', points: 80 }] };
+    expect(validatePlatformSettings('points', settings)).toBe('points');
+    expect(() => validatePlatformSettings('points', { ...settings, rules: [{ event: 'client.claimed', points: 80 }] })).toThrow();
+    expect(() => validatePlatformSettings('points', { ...settings, rules: [...settings.rules, ...settings.rules] })).toThrow();
+  });
   const activity = { kind: 'event', title: { vi: 'Sự kiện GDS', en: 'GDS event' },
     description: { vi: '', en: '' }, startsAt: '2026-12-10T09:00:00+07:00', url: '/activities', enabled: true };
   it.each([

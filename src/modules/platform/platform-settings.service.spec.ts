@@ -11,9 +11,11 @@ function setup() {
     effectiveAt: null,
   };
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([{ migrationVerified: false, guardsVerified: false, schemaVerified: false, runtimeVerified: false }]),
     user: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     commerceOrder: { findMany: jest.fn().mockResolvedValue([]) },
     gdsInternalTopup: { findMany: jest.fn().mockResolvedValue([]) },
+    enrollment: { findMany: jest.fn().mockResolvedValue([]) },
     platformPolicyRevision: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue(null),
@@ -33,6 +35,30 @@ function setup() {
   };
 }
 describe("versioned platform policies", () => {
+  it('allows point scheduling only after the reviewed schema and bounded runtime guards verify', async () => {
+    const { service, revision, tx } = setup();
+    Object.assign(revision, { group: 'points', status: 'approved', content: { ...DEFAULT_PLATFORM_SETTINGS.points,
+      enabled: true, rules: [{ event: 'course.completed', points: 80 }] } });
+    await expect(service.schedule('admin', 'revision', new Date(Date.now() + 60000))).rejects.toThrow('Activation is not ready');
+    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
+    tx.$queryRaw.mockResolvedValue([{ migrationVerified: true, guardsVerified: true, schemaVerified: true, runtimeVerified: true }]);
+    await service.schedule('admin', 'revision', new Date(Date.now() + 60000));
+    expect(tx.platformPolicyRevision.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'revision', status: 'approved' } }));
+    expect(DEFAULT_PLATFORM_SETTINGS.points.enabled).toBe(false);
+  });
+  it('previews point policy impact without awarding or rewriting prior completions', async () => {
+    const { service, revision, tx } = setup();
+    revision.group = 'points';
+    revision.content = { ...DEFAULT_PLATFORM_SETTINGS.points, enabled: true,
+      rules: [{ event: 'course.completed', points: 80 }] } as never;
+    tx.enrollment.findMany.mockResolvedValue([{ id: 'completion', userId: 'learner', completedAt: new Date() }] as never);
+    expect(await service.preview('revision')).toMatchObject({ pointsImpact: { status: 'evaluated', simulationOnly: true,
+      sampledEvents: 1, beforePoints: 0, afterPoints: 80, historicalAwardsPreserved: true,
+      beforeRevisionId: null, afterRevisionId: 'revision' }, preservesPurchasedAccess: true });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect((await service.state()).pointCapabilities.supportedEvents).toEqual(['course.completed']);
+    expect(await service.publicSettings()).not.toHaveProperty('pointCapabilities');
+  });
   it("publishes only effective scheduled settings and excludes private financial rules", async () => {
     const { service, tx } = setup();
     tx.platformPolicyRevision.findMany.mockResolvedValue([

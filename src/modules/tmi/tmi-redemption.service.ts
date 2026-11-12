@@ -21,6 +21,8 @@ import { AdjustTmiBalanceDto } from './dto/adjust-tmi-balance.dto';
 import { RedeemTmiRewardDto } from './dto/redeem-tmi-reward.dto';
 import { RefundTmiRedemptionDto } from './dto/refund-tmi-redemption.dto';
 import type { TmiRewardResponse } from './tmi-reward.service';
+import { PointLedgerService } from './point-ledger.service';
+import { activityPointSpendAllocations } from './activity-point-expiry';
 
 const rewardRuntimeSelect = {
   id: true,
@@ -124,16 +126,13 @@ export interface TmiAdminLedgerPage {
   totalPages: number;
 }
 
-type LedgerBalanceEntry = Pick<Prisma.TmiLedgerEntryGetPayload<{
-  select: { kind: true; amount: true; adjustmentDirection: true };
-}>, 'kind' | 'amount' | 'adjustmentDirection'>;
-
 @Injectable()
 export class TmiRedemptionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly courseAccess: CourseAccessService,
+    private readonly pointLedger: PointLedgerService,
   ) {}
 
   async listAvailableRewards(query: { page: number; pageSize: number }): Promise<{ items: Omit<TmiRewardResponse, 'createdById'>[]; page: number; pageSize: number; total: number; totalPages: number }> {
@@ -147,8 +146,8 @@ export class TmiRedemptionService {
 
   async wallet(userId: string): Promise<TmiWalletResponse> {
     await this.assertUserExists(this.prisma, userId);
-    const entries = await this.prisma.tmiLedgerEntry.findMany({ where: { userId }, select: { kind: true, amount: true, adjustmentDirection: true } });
-    return this.summarizeWallet(entries);
+    const entries = await this.pointLedger.load(this.prisma, userId);
+    return this.pointLedger.project(entries, new Date());
   }
 
   async history(userId: string): Promise<TmiLedgerHistoryItem[]> {
@@ -197,7 +196,8 @@ export class TmiRedemptionService {
 
       const reward = await this.lockReward(tx, rewardId);
       this.assertRewardRedeemable(reward);
-      const balance = await this.currentBalance(tx, userId);
+      const postingAt = new Date();
+      const balance = await this.currentBalance(tx, userId, userId, postingAt);
       if (balance < reward.cost) throw new BadRequestException('Insufficient TMI balance');
 
       const redemption = await tx.tmiRedemption.create({
@@ -233,6 +233,7 @@ export class TmiRedemptionService {
           sourceId: redemption.id,
           actorId: userId,
           metadata: { rewardId, rewardKind: reward.kind },
+          occurredAt: postingAt,
         },
         select: { id: true },
       });
@@ -257,29 +258,48 @@ export class TmiRedemptionService {
       if (!redemption) throw new NotFoundException('TMI redemption not found');
       await this.lockUser(tx, redemption.userId);
       const existing = await tx.tmiLedgerEntry.findFirst({
-        where: { userId: redemption.userId, kind: TmiLedgerKind.refund, sourceType: 'tmi_redemption', sourceId: redemptionId },
+        where: { userId: redemption.userId, kind: TmiLedgerKind.refund, redemptionId },
         select: { id: true },
       });
       if (existing) return { redemptionId, amount: redemption.cost, idempotent: true };
+
+      const occurredAt = new Date();
+      const history = await this.pointLedger.settle(tx, redemption.userId, actorId, occurredAt);
+      const original = history.find(entry => entry.kind === 'redeem' && entry.sourceType === 'tmi_redemption' && entry.sourceId === redemptionId);
+      const nativeHistory = history.some(entry => entry.sourceType === 'platform_activity' || entry.sourceType === 'platform_activity_refund');
+      if (nativeHistory && (!original || original.amount !== redemption.cost)) throw new ConflictException('Point redemption source mismatch');
+      const nativeRefunds = original ? activityPointSpendAllocations(history, original.id, occurredAt).filter(lot => lot.expiresAt !== null) : [];
+      const nativeAmount = nativeRefunds.reduce((sum, lot) => sum + lot.amount, 0);
+      if (nativeAmount > redemption.cost) throw new ConflictException('Point refund allocation mismatch');
 
       const entitlement = await tx.tmiEntitlement.findUnique({
         where: { redemptionId },
         select: { kind: true, benefitMetadata: true },
       });
 
-      await tx.tmiLedgerEntry.create({
+      for (const lot of nativeRefunds) {
+        await tx.tmiLedgerEntry.create({ data: {
+          userId: redemption.userId, redemptionId, kind: TmiLedgerKind.refund, amount: lot.amount,
+          sourceType: 'platform_activity_refund', sourceId: `${redemptionId}:${lot.creditEntryId}`,
+          actorId, occurredAt, expiresAt: lot.expiresAt,
+          metadata: { refundOfEntryId: lot.creditEntryId, refundOfDebitId: original!.id, reason: input.reason ?? null },
+        }, select: { id: true } });
+      }
+      if (redemption.cost > nativeAmount) await tx.tmiLedgerEntry.create({
         data: {
           userId: redemption.userId,
           redemptionId,
           kind: TmiLedgerKind.refund,
-          amount: redemption.cost,
+          amount: redemption.cost - nativeAmount,
           sourceType: 'tmi_redemption',
           sourceId: redemptionId,
           actorId,
+          occurredAt,
           metadata: input.reason ? { reason: input.reason } : undefined,
         },
         select: { id: true },
       });
+      if (nativeRefunds.length > 0) await this.pointLedger.settle(tx, redemption.userId, actorId, occurredAt);
       await tx.tmiEntitlement.update({ where: { redemptionId }, data: { status: TmiEntitlementStatus.revoked, revokedAt: new Date() }, select: { id: true } });
       if (entitlement?.kind === TmiRewardKind.course_access) {
         await this.courseAccess.revokeGrant({
@@ -319,7 +339,8 @@ export class TmiRedemptionService {
         where: { userId: input.userId, kind: TmiLedgerKind.adjustment, sourceType: 'tmi_adjustment', sourceId: input.adjustmentKey },
         select: { id: true },
       });
-      const balance = await this.currentBalance(tx, input.userId);
+      const postingAt = new Date();
+      const balance = await this.currentBalance(tx, input.userId, actorId, postingAt);
       if (existing) return { userId: input.userId, amount: input.amount, direction: input.direction, balance, idempotent: true };
       if (input.direction === TmiAdjustmentDirection.debit && balance < input.amount) {
         throw new BadRequestException('TMI adjustment cannot create a negative balance');
@@ -334,6 +355,7 @@ export class TmiRedemptionService {
           sourceId: input.adjustmentKey,
           actorId,
           metadata: { reason: input.reason },
+          occurredAt: postingAt,
         },
         select: { id: true },
       });
@@ -377,23 +399,9 @@ export class TmiRedemptionService {
     if (reward.quota !== null && reward.redeemedCount >= reward.quota) throw new BadRequestException('TMI reward quota is exhausted');
   }
 
-  private async currentBalance(tx: Prisma.TransactionClient, userId: string): Promise<number> {
-    const entries = await tx.tmiLedgerEntry.findMany({
-      where: { userId },
-      select: { kind: true, amount: true, adjustmentDirection: true },
-    });
-    return this.summarizeWallet(entries).current;
-  }
-
-  private summarizeWallet(entries: LedgerBalanceEntry[]): TmiWalletResponse {
-    let earned = 0; let spent = 0; let expired = 0;
-    for (const entry of entries) {
-      if (!Number.isInteger(entry.amount) || entry.amount <= 0) continue;
-      if (entry.kind === TmiLedgerKind.earn || entry.kind === TmiLedgerKind.refund || (entry.kind === TmiLedgerKind.adjustment && entry.adjustmentDirection === TmiAdjustmentDirection.credit)) earned += entry.amount;
-      if (entry.kind === TmiLedgerKind.redeem || (entry.kind === TmiLedgerKind.adjustment && entry.adjustmentDirection === TmiAdjustmentDirection.debit)) spent += entry.amount;
-      if (entry.kind === TmiLedgerKind.expiry) { spent += entry.amount; expired += entry.amount; }
-    }
-    return { current: Math.max(0, earned - spent), earned, spent, expired };
+  private async currentBalance(tx: Prisma.TransactionClient, userId: string, actorId: string, at: Date): Promise<number> {
+    const entries = await this.pointLedger.settle(tx, userId, actorId, at);
+    return this.pointLedger.project(entries, at).current;
   }
 
   private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {

@@ -8,6 +8,7 @@ enum PlatformPolicyStatus {
 }
 
 model PlatformPolicyRevision {
+  pointActivityReceipts PointActivityReceipt[]
   affiliateVisits AffiliateVisit[] @relation("AffiliateVisitPolicy")
   affiliateAttributions AffiliateAttribution[] @relation("AffiliateAttributionPolicy")
   id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

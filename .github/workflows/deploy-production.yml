@@ -25,6 +25,12 @@ on:
         default: false
         required: true
 
+      authorize_point_schema_migrations:
+        description: 'Owner approval for the single reviewed native point migration and private backup; preserves existing policies'
+        type: boolean
+        default: false
+        required: true
+
       gds_wallet_topup:
         description: 'Production wallet topup admission; preserve does not change the server setting'
         type: choice
@@ -358,6 +364,14 @@ jobs:
           else
             echo "gdsPlatformSchemaMigrationAuthorization: NOT_GRANTED"
           fi
+          if [ "${{ inputs.authorize_point_schema_migrations }}" = "true" ]; then
+            echo "pointSchemaMigrationAuthorization: EXPLICIT_OWNER_APPROVAL"
+            deployment_stage="point-schema-backup"
+            node scripts/backup-gds-platform.cjs
+            migration_args+=(--authorize-reviewed-point-migrations)
+          else
+            echo "pointSchemaMigrationAuthorization: NOT_GRANTED"
+          fi
           deployment_stage="database-migration"
           npm run prisma:migrate:production -- "${migration_args[@]}"
 
@@ -368,6 +382,11 @@ jobs:
           echo "Building backend..."
           deployment_stage="backend-build"
           npm run build
+
+          if [ "${{ inputs.authorize_point_schema_migrations }}" = "true" ]; then
+            deployment_stage="point-runtime-verification"
+            node scripts/verify-point-runtime.cjs
+          fi
 
           if [ "${{ inputs.authorize_gds_platform_schema_migrations }}" = "true" ]; then
             deployment_stage="gds-mfa-key-initialization"

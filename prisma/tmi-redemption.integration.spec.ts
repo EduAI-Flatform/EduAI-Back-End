@@ -3,6 +3,7 @@ import { AuditService } from '../src/common/audit/audit.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { TmiRedemptionService } from '../src/modules/tmi/tmi-redemption.service';
 import { CourseAccessService } from '../src/modules/access/course-access.service';
+import { PointLedgerService } from '../src/modules/tmi/point-ledger.service';
 import { TmiRewardKind, TmiRewardStatus } from '../generated/prisma/client';
 
 const integration = process.env.TMI_INTEGRATION_TEST === 'true' ? describe : describe.skip;
@@ -13,6 +14,7 @@ integration('TMI redemption PostgreSQL transaction contract', () => {
     prisma,
     new AuditService(prisma),
     new CourseAccessService(prisma),
+    new PointLedgerService(new AuditService(prisma)),
   );
   const suffix = `integration-${Date.now()}`;
   let studentId: string;
