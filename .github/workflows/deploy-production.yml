@@ -92,7 +92,8 @@ jobs:
           const { spawnSync } = require('node:child_process');
           const { loadMigrationDatabaseUrl } = require('./scripts/run-production-migrations.cjs');
           const { backupEnvironment } = require('./scripts/backup-gds-platform.cjs');
-          const env = backupEnvironment(loadMigrationDatabaseUrl(process.cwd()), process.env);
+          const databaseUrl = loadMigrationDatabaseUrl(process.cwd());
+          const env = backupEnvironment(databaseUrl, process.env);
           const vocabulary = new Set('error warning no existing cluster suitable default target please see man how specify one you must install at least postgresql client package connection failed refused timeout timed out could not connect server socket password authentication permission denied relation table sequence database role does exist row level security policy aborting because version mismatch query unrecognized configuration parameter invalid option'.split(' '));
           for (const program of ['pg_dump', 'pg_restore']) {
             const result = spawnSync(program, ['--version'], { env, shell: false, timeout: 10000, encoding: 'utf8' });
@@ -106,7 +107,23 @@ jobs:
             env, shell: false, timeout: 60000, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', maxBuffer: 1048576,
           });
           console.log(JSON.stringify({ schemaReadStatus: result.status, missing: result.error?.code === 'ENOENT',
+            missingDatabase: /database "[^"]+" does not exist/.test(result.stderr || ''),
+            missingRole: /role "[^"]+" does not exist/.test(result.stderr || ''),
+            missingValueIsUri: /"postgres(?:ql)?:\/\//.test(result.stderr || ''),
+            databaseFieldIsUri: /^postgres(?:ql)?:\/\//.test(env.PGDATABASE),
             diagnosticTokens: [...new Set(((result.stderr || '').toLowerCase().match(/[a-z]+/g) || []).filter(word => vocabulary.has(word)))] }));
+          const { Client } = require('pg');
+          const client = new Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10000 });
+          (async () => {
+            try {
+              await client.connect();
+              const { rows } = await client.query('SELECT current_database() AS database, current_setting(\'server_version_num\') AS version');
+              console.log(JSON.stringify({ migrationConnectionValid: true, databaseFieldMatches: rows[0].database === env.PGDATABASE,
+                serverVersion: /^\d+$/.test(rows[0].version) ? Number(rows[0].version) : null }));
+            } catch (error) {
+              console.log(JSON.stringify({ migrationConnectionValid: false, sqlState: /^[A-Z0-9]{5}$/.test(error.code || '') ? error.code : null }));
+            } finally { await client.end(); }
+          })().catch(() => { process.exitCode = 1; });
           NODE
 
   ci:
