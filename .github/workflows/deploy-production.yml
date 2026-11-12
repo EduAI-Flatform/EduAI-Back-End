@@ -8,10 +8,6 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      diagnose_gds_backup:
-        description: 'Read-only backup-client diagnostics; no migration, restart or configuration changes'
-        type: boolean
-        default: false
       authorize_production:
         description: 'Owner approval for production deployment (does not authorize payment activation)'
         type: boolean
@@ -65,71 +61,6 @@ permissions:
   contents: read
 
 jobs:
-  diagnose_backup:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.diagnose_gds_backup == true && inputs.authorize_production == false }}
-    name: Read-only backup diagnostics
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment: production
-    steps:
-      - name: Inspect backup client without secrets or database writes
-        env:
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
-        run: |
-          set -Eeuo pipefail
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          trap 'rm -f ~/.ssh/gds_diagnostic ~/.ssh/known_hosts' EXIT
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/gds_diagnostic
-          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/gds_diagnostic ~/.ssh/known_hosts
-          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            -i ~/.ssh/gds_diagnostic -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'cd /var/www/eduai/backend && node' <<'NODE'
-          const { spawnSync } = require('node:child_process');
-          const { loadMigrationDatabaseUrl } = require('./scripts/run-production-migrations.cjs');
-          const { backupEnvironment } = require('./scripts/backup-gds-platform.cjs');
-          const databaseUrl = loadMigrationDatabaseUrl(process.cwd());
-          const env = backupEnvironment(databaseUrl, process.env);
-          const vocabulary = new Set('error warning no existing cluster suitable default target please see man how specify one you must install at least postgresql client package connection failed refused timeout timed out could not connect server socket password authentication permission denied relation table sequence database role does exist row level security policy aborting because version mismatch query unrecognized configuration parameter invalid option'.split(' '));
-          for (const program of ['pg_dump', 'pg_restore']) {
-            const result = spawnSync(program, ['--version'], { env, shell: false, timeout: 10000, encoding: 'utf8' });
-            const output = (result.stdout || '') + (result.stderr || '');
-            console.log(JSON.stringify({ program, status: result.status,
-              missing: result.error?.code === 'ENOENT',
-              version: output.match(/PostgreSQL\)\s+(\d+(?:\.\d+)*)/)?.[1] || null,
-              diagnosticTokens: [...new Set((output.toLowerCase().match(/[a-z]+/g) || []).filter(word => vocabulary.has(word)))] }));
-          }
-          const result = spawnSync('pg_dump', ['--schema-only', '--no-password'], {
-            env, shell: false, timeout: 60000, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', maxBuffer: 1048576,
-          });
-          console.log(JSON.stringify({ schemaReadStatus: result.status, missing: result.error?.code === 'ENOENT',
-            missingRootCertificate: /root certificate file .* does not exist/i.test(result.stderr || ''),
-            missingClientCertificate: /client certificate file .* does not exist/i.test(result.stderr || ''),
-            tlsMode: ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'].includes(env.PGSSLMODE) ? env.PGSSLMODE : null,
-            explicitRootCertificate: Boolean(env.PGSSLROOTCERT),
-            missingDatabase: /database "[^"]+" does not exist/.test(result.stderr || ''),
-            missingRole: /role "[^"]+" does not exist/.test(result.stderr || ''),
-            missingValueIsUri: /"postgres(?:ql)?:\/\//.test(result.stderr || ''),
-            databaseFieldIsUri: /^postgres(?:ql)?:\/\//.test(env.PGDATABASE),
-            diagnosticTokens: [...new Set(((result.stderr || '').toLowerCase().match(/[a-z]+/g) || []).filter(word => vocabulary.has(word)))] }));
-          const { Client } = require('pg');
-          const client = new Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10000 });
-          (async () => {
-            try {
-              await client.connect();
-              const { rows } = await client.query('SELECT current_database() AS database, current_setting(\'server_version_num\') AS version');
-              console.log(JSON.stringify({ migrationConnectionValid: true, databaseFieldMatches: rows[0].database === env.PGDATABASE,
-                serverVersion: /^\d+$/.test(rows[0].version) ? Number(rows[0].version) : null }));
-            } catch (error) {
-              console.log(JSON.stringify({ migrationConnectionValid: false, sqlState: /^[A-Z0-9]{5}$/.test(error.code || '') ? error.code : null }));
-            } finally { await client.end(); }
-          })().catch(() => { process.exitCode = 1; });
-          NODE
-
   ci:
     name: Validate and build
     runs-on: ubuntu-latest

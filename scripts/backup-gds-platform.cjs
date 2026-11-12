@@ -48,6 +48,12 @@ function backupEnvironment(databaseUrl, environment) {
   child.PGCONNECT_TIMEOUT = '20';
   child.PGOPTIONS = '-c default_transaction_read_only=on';
   for (const [key, value] of url.searchParams) child[LIBPQ_PARAMETERS[key]] = value;
+  // libpq 16+ needs an explicit trust source for verify-full. Use the OS CA
+  // store like Node TLS; retain hostname verification and any supplied CA.
+  // https://www.postgresql.org/docs/18/libpq-connect.html#LIBPQ-CONNECT-SSLROOTCERT
+  if (child.PGSSLMODE === 'verify-full' && !url.searchParams.has('sslrootcert')) {
+    child.PGSSLROOTCERT = 'system';
+  }
   return child;
 }
 
