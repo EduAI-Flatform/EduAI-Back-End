@@ -59,13 +59,18 @@ export async function computeMembershipCardImpact(client: SourceClient, policy: 
     const userTopups = topups.filter(topup => topup.buyerId === user.id);
     const evaluation = evaluateMembershipCard(policy, revisionId, source, at, userTopups);
     const previous = options.beforePolicy ? evaluateMembershipCard(options.beforePolicy, options.beforeRevisionId ?? null, source, at, userTopups) : null;
+    const comparable = previous && previous.status !== 'unavailable' && evaluation.status !== 'unavailable';
+    const previousBenefits = previous?.tier?.benefits ?? [];
     return { userId: user.id, evaluation, previousTierCode: previous?.tier?.code ?? null,
-      projectedTierChanged: previous && previous.status !== 'unavailable' && evaluation.status === 'evaluated' ? previous.tier?.code !== evaluation.tier?.code : null };
+      previousBenefits: comparable ? previousBenefits : null,
+      projectedBenefitsChanged: comparable ? JSON.stringify(previousBenefits) !== JSON.stringify(evaluation.tier?.benefits ?? []) : null,
+      projectedTierChanged: comparable ? previous.tier?.code !== evaluation.tier?.code : null };
   });
   return { status: items.some(item => item.evaluation.status === 'unavailable') ? 'unavailable' : 'evaluated',
     reason: items.find(item => item.evaluation.status === 'unavailable')?.evaluation.reason ?? null,
     policyRevisionId: revisionId, preservesPurchasedAccess: true, totalUsers: count, evaluatedUsers: items.length,
     projectedChangesOnPage: items.filter(item => item.projectedTierChanged === true).length,
+    projectedBenefitChangesOnPage: items.filter(item => item.projectedBenefitsChanged === true).length,
     items, nextCursor: hasNextPage ? selected[selected.length - 1]?.id ?? null : null,
     complete: !hasNextPage && !options.after, evaluatedAt: at.toISOString(),
     activationReady: false, activationBlockers: ['LEGACY_ENTITLEMENT_MIGRATION_NOT_VERIFIED', 'CARD_BENEFIT_FULFILLMENT_NOT_VERIFIED'] };

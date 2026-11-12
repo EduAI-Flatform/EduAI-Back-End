@@ -8,6 +8,13 @@ function client() {
   } };
 }
 describe('membership impact source', () => {
+  it('reports benefit changes even when the tier code is unchanged', async () => {
+    const db = client();
+    const updated = { ...policy, tiers: [{ ...policy.tiers[0], benefits: [{ vi: 'Ưu đãi mới', en: 'New benefit' }] }] };
+    const result = await computeMembershipCardImpact(db as any, updated, 'new', { beforePolicy: policy, beforeRevisionId: 'old' });
+    expect(result).toMatchObject({ projectedChangesOnPage: 0, projectedBenefitChangesOnPage: 2 });
+    expect(result.items[0]).toMatchObject({ projectedBenefitsChanged: true, previousBenefits: [] });
+  });
   it('reads only the authenticated user purchases', async () => {
     const db = client();
     await computeMembershipCardForUser(db as any, policy, 'v1', 'owner');
