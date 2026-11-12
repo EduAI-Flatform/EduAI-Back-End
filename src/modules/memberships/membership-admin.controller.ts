@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiGoneResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -18,6 +18,7 @@ import {
 } from './dto/membership-plan.dto';
 import { MembershipAdminService } from './membership-admin.service';
 import { MembershipContinuityService } from './membership-continuity.service';
+import { membershipSalesRetired } from './membership-sales-retired';
 
 @ApiTags('Admin Membership')
 @ApiBearerAuth()
@@ -31,9 +32,9 @@ export class MembershipAdminController {
   ) {}
 
   @Post('plans')
-  @ApiCreatedResponse({ description: 'Stable membership plan and first draft version created.' })
+  @ApiGoneResponse({ description: 'New package authoring is retired. Configure GDS card policies instead.' })
   createPlan(@CurrentUser('id') actorId: string, @Body() input: CreateMembershipPlanDto) {
-    return this.service.createPlan(actorId, input);
+    return membershipSalesRetired();
   }
 
   @Get('plans')
@@ -62,39 +63,42 @@ export class MembershipAdminController {
   }
 
   @Post('versions/:versionId/service-entitlements')
+  @ApiGoneResponse({ description: 'Package benefit authoring is retired; existing granted benefits are preserved.' })
   configurePlanEntitlement(
     @CurrentUser('id') actorId: string,
     @Param('versionId', new ParseUUIDPipe({ version: '4' })) versionId: string,
     @Body() input: ConfigureMembershipPlanEntitlementDto,
   ) {
-    return this.service.configurePlanEntitlement(actorId, versionId, input);
+    return membershipSalesRetired();
   }
 
   @Post('versions/:versionId/included-courses')
+  @ApiGoneResponse({ description: 'Package course authoring is retired; existing purchased access is preserved.' })
   configureIncludedCourse(
     @CurrentUser('id') actorId: string,
     @Param('versionId', new ParseUUIDPipe({ version: '4' })) versionId: string,
     @Body() input: ConfigureMembershipIncludedCourseDto,
   ) {
-    return this.service.configureIncludedCourse(actorId, versionId, input);
+    return membershipSalesRetired();
   }
 
   @Post('plans/:planId/versions')
-  @ApiCreatedResponse({ description: 'New draft version created without editing prior history.' })
+  @ApiGoneResponse({ description: 'New package versions are retired. Configure GDS card policies instead.' })
   createVersion(
     @CurrentUser('id') actorId: string,
     @Param('planId', new ParseUUIDPipe({ version: '4' })) planId: string,
     @Body() input: CreateMembershipPlanVersionDto,
   ) {
-    return this.service.createVersion(actorId, planId, input);
+    return membershipSalesRetired();
   }
 
   @Post('versions/:versionId/publish')
+  @ApiGoneResponse({ description: 'Package publication is retired; historical versions remain available.' })
   publishVersion(
     @CurrentUser('id') actorId: string,
     @Param('versionId', new ParseUUIDPipe({ version: '4' })) versionId: string,
   ) {
-    return this.service.publishVersion(actorId, versionId);
+    return membershipSalesRetired();
   }
 
   @Post('versions/:versionId/archive')

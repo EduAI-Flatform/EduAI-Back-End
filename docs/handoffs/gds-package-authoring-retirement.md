@@ -1,0 +1,11 @@
+# GDS legacy package authoring retirement
+
+The GDS migration had retired learner checkout but still exposed the old sales catalog and Admin creation/publication paths. A client could continue authoring packages that learners could never buy. Existing HTTP guards and request validation remain unchanged; valid retired authoring requests now return HTTP 410 with the same `MEMBERSHIP_SALES_RETIRED` error as checkout.
+
+Retired Admin POSTs: `admin/membership/plans`, `plans/:planId/versions`, `versions/:versionId/publish`, `versions/:versionId/included-courses` and `versions/:versionId/service-entitlements`. Paths are relative to `/api/v1/`, with `admin/membership/` on every Admin route. Learner `GET membership/catalog` retains its items shape and now returns `{ items: [], salesRetired: true }` without querying old packages. Current GDS card configuration remains the versioned platform membership policy; classification is not package checkout.
+
+Historical plan listing, current purchased membership lookup, archive operations, emergency membership-derived course revocation, existing fulfillment/refund/continuity and reusable service definitions/grants remain available under their existing permissions. No table, order, term, entitlement, balance or audit record is deleted or rewritten. Internal package service methods remain for the existing historical checkout/concurrency fixtures and require a separate dependency migration before deletion. No new financial feature or policy is activated.
+
+Validation: the new regression first failed for all five authoring methods and catalog exposure. After the correction, all 118 tests across 16 membership/card/revenue-checkout suites and the Nest build passed. Controller tests also verify preservation of current membership, history, archival, service-definition and emergency-operation delegation. Existing Admin/student RBAC metadata remains checked. No frontend contract consumes these retired authoring APIs in the current source search. Remote CI, deployment and actual bounded 410/read-role checks must be recorded separately before release acceptance.
+
+Rollback is a source revert through normal CI/CD; no schema or data rollback is required. This is a scoped retirement boundary, not completion of structured card benefit fulfillment or approval to remove historical tables.
