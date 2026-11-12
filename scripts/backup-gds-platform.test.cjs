@@ -13,6 +13,25 @@ const fixedUuid = '00000000-0000-4000-8000-000000000001';
 const dump = Buffer.from('PGDMPsynthetic-backup-content');
 const failure = { message: 'GDS_PLATFORM_BACKUP_FAILED' };
 
+test('reports only fixed diagnostic codes for missing clients and database failures', t => {
+  const f = fixture(t);
+  for (const [result, reason] of [
+    [{ error: { code: 'ENOENT', message: syntheticUrl } }, 'CLIENT_NOT_FOUND'],
+    [{ status: 1, stderr: 'pg_dump: error: server version: 17.0; pg_dump version: 16.0; ' + syntheticUrl }, 'CLIENT_VERSION_MISMATCH'],
+    [{ status: 1, stderr: 'permission denied for table private_name ' + syntheticUrl }, 'DATABASE_PERMISSION_DENIED'],
+    [{ status: 1, stderr: syntheticUrl }, 'CLIENT_FAILED'],
+  ]) {
+    assert.throws(() => backupGdsPlatform({ ...f.options, runner: () => result }), error => {
+      assert.equal(error.message, failure.message);
+      assert.equal(error.stage, 'dump');
+      assert.equal(error.reason, reason);
+      assert.ok(!JSON.stringify(error).includes('synthetic-private-password'));
+      assert.ok(!JSON.stringify(error).includes('private_name'));
+      return true;
+    });
+  }
+});
+
 function fixture(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'eduai-backup-test-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
