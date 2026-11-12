@@ -1,0 +1,11 @@
+# Historical membership source inventory
+
+`GET /api/v1/admin/membership/legacy-orders/inventory` extends the existing platform-admin-only legacy report boundary. Required `source` is `orders`, `subscriptions`, `course_grants` or `service_grants`; `pageSize` defaults to 20 (1–100), and optional `after` is the previous last UUID from that same source.
+
+Each page uses a RepeatableRead transaction with bounded keyset queries and one batched order-line lookup, not per-record queries. Results contain source-record ID, optional linked order ID and a finding code; no identities, provider proof or monetary data. `hasMore`/`nextCursor` describe only that source page. `migrationReadiness=not_assessed` and `requiredSources` explicitly prevent an empty/finished page from being represented as global migration completion. Concurrent changes between pages require a fresh reconciliation before repair/removal; this is not a persisted global snapshot.
+
+Order inventory includes membership lines or membership checkout snapshots. Subscription inventory includes source-less records. Course rights include membership, grace and unverified receipt access. All reusable service grants are enumerated; non-membership sources are retained as explicit separate-review exceptions. Revoked, expired or cancelled rows are not hidden by active-only filters. Exact source shape, owner, product type and subscription version are checked before offering an order link. Grace source suffix must match the course. Receipt-only rights never become verified purchases through parsing their source ID.
+
+No grant, usage, subscription, balance, policy or schema mutation is included. Linked orders still use the existing single-order reconciliation report; links do not constitute verified payment or repair approval. This is a prerequisite for migration, not completion of the original GDS plan.
+
+The existing disposable PostgreSQL checkout replay checks page-size-one traversal across orders, subscriptions and course grants, compares historical rights before/after, and runs in both test and production-classified modes. Unit tests cover orphan/unverified/unsupported sources, keysets, bounded validation and foreign owners. UI uses the established Admin commerce surface in a separate frontend revision; deploy backend before frontend.
