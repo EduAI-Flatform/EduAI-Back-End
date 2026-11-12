@@ -42,6 +42,10 @@ test('detects reviewed point artifact drift between preflight snapshots', () => 
   assert.throws(() => runner.assertReconciliationPreflightStable({ pointMigrationHashes: { point: 'a' } },
     { pointMigrationHashes: { point: 'b' } }), { failureClass: 'MIGRATION_PREFLIGHT_STATE_DRIFT' });
 });
+test('detects point history drift between initial and repeat preflight', () => {
+  assert.throws(() => runner.assertReconciliationPreflightStable({ pointHistory: { ledger: 'before' } },
+    { pointHistory: { ledger: 'after' } }), { failureClass: 'MIGRATION_PREFLIGHT_STATE_DRIFT' });
+});
 test('deployment takes private backup before passing only the explicit point release flag', () => {
   const workflow = readFileSync(join(__dirname, '../.github/workflows/deploy-production.yml'), 'utf8');
   assert.match(workflow, /authorize_point_schema_migrations:[\s\S]*?default: false/);

@@ -17,6 +17,7 @@ import { computeMembershipCardImpact } from "../membership-cards/membership-card
 import type { MembershipCardPolicy } from "../membership-cards/membership-card.evaluator";
 import { computeActivityPointImpact } from '../tmi/activity-point-impact';
 import { SUPPORTED_POINT_EVENTS, type ActivityPointPolicy } from '../tmi/activity-point-policy';
+import { readActivityPointReadiness } from '../tmi/activity-point.readiness';
 
 const publicGroups = [
   "branding",
@@ -68,9 +69,11 @@ export class PlatformSettingsService {
         take: 100,
       }),
     ]);
+    const pointReadiness = await readActivityPointReadiness(this.prisma);
     return { ...current, revisions, groups: PLATFORM_GROUPS, pointCapabilities: {
       supportedEvents: [...SUPPORTED_POINT_EVENTS], historicalAwardsPreserved: true,
       reprocessesHistoricalEvents: false, impactWindowDays: 30,
+      activationReady: pointReadiness.ready, activationBlocker: pointReadiness.reason,
     } };
   }
 
@@ -134,7 +137,7 @@ export class PlatformSettingsService {
           beforeRevisionId: current.versions.points ?? null, afterRevisionId: row.id }),
         { isolationLevel: 'RepeatableRead' })
       : null;
-    const blockers = this.activationBlockers(
+    const blockers = await this.activationBlockers(
       row.group as PlatformGroup,
       row.content,
     );
@@ -181,9 +184,10 @@ export class PlatformSettingsService {
       if (!row)
         throw new NotFoundException("Configuration revision not found.");
       validatePlatformSettings(row.group, row.content);
-      const blockers = this.activationBlockers(
+      const blockers = await this.activationBlockers(
         row.group as PlatformGroup,
         row.content,
+        tx,
       );
       if (blockers.length)
         throw new BadRequestException({
@@ -235,16 +239,15 @@ export class PlatformSettingsService {
     });
   }
 
-  private activationBlockers(group: PlatformGroup, content: unknown): string[] {
+  private async activationBlockers(group: PlatformGroup, content: unknown, client: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma): Promise<string[]> {
     const c = content as Record<string, unknown>;
     if (["membership", "points", "affiliate"].includes(group) && c.enabled === false) return [];
     if (group === "affiliate" && c.subAffiliateEnabled) {
       return ["SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED"];
     }
     if (group === "points") {
-      return [
-        "POINT_ACTIVITY_ADAPTER_NOT_CONFIGURED",
-      ];
+      const readiness = await readActivityPointReadiness(client);
+      return readiness.ready ? [] : [readiness.reason];
     }
     if (
       group === "operations" &&

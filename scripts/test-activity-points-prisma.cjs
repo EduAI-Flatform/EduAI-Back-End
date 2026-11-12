@@ -17,6 +17,9 @@ async function main() {
   const { PointLedgerService } = require('../dist/src/modules/tmi/point-ledger.service.js');
   const { TmiRedemptionService } = require('../dist/src/modules/tmi/tmi-redemption.service.js');
   const { ActivityPointWorker } = require('../dist/src/modules/tmi/activity-point.worker.js');
+  const { readActivityPointReadiness, POINT_SCHEMA_MIGRATION, POINT_SCHEMA_SHA256 } = require('../dist/src/modules/tmi/activity-point.readiness.js');
+  const { REVIEWED_POINT_MIGRATIONS } = require('./run-production-migrations.cjs');
+  assert.deepEqual(REVIEWED_POINT_MIGRATIONS, [{ name: POINT_SCHEMA_MIGRATION, sha256: POINT_SCHEMA_SHA256 }]);
   const { buildRuntimePointPrivilegeStatement } = require('./membership-runtime-privileges.cjs');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const role = `point_${randomUUID().replaceAll('-', '')}`;
@@ -45,10 +48,17 @@ async function main() {
     await db.$executeRawUnsafe(`GRANT UPDATE(status,revoked_at) ON tmi_entitlements TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT INSERT ON tmi_redemptions,tmi_entitlements,audit_logs TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT SELECT(id) ON audit_logs TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT SELECT(migration_name,checksum,finished_at,rolled_back_at) ON _prisma_migrations TO "${role}"`);
     runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
     const audit = new AuditService(runtime), ledger = new PointLedgerService(audit);
     const awards = new ActivityPointService(runtime, audit);
     const redemptions = new TmiRedemptionService(runtime, audit, {}, ledger);
+    assert.equal((await readActivityPointReadiness(runtime)).ready, true);
+    await db.$executeRawUnsafe('ALTER TABLE tmi_ledger_entries DISABLE TRIGGER point_posting_receipt_required');
+    try { assert.equal((await readActivityPointReadiness(runtime)).ready, false); }
+    finally { await db.$executeRawUnsafe('ALTER TABLE tmi_ledger_entries ENABLE TRIGGER point_posting_receipt_required'); }
+    assert.equal((await readActivityPointReadiness(runtime)).ready, true);
+    console.log('POINT_SCHEMA_AND_RESTRICTED_RUNTIME_READINESS=PASS');
 
     const duplicated = await Promise.all([awards.recordCourseCompletion(source.id), awards.recordCourseCompletion(source.id)]);
     assert.equal(duplicated[0].id, duplicated[1].id);

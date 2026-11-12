@@ -4,6 +4,7 @@ const { readFileSync, readdirSync, statSync } = require('node:fs');
 const { join } = require('node:path');
 const dotenv = require('dotenv');
 const { Client } = require('pg');
+const { readPointHistoryState, assertPointHistoryPreserved } = require('./point-migration-state.cjs');
 const {
   grantRuntimeMembershipPrivileges,
   revokeRuntimeLegacyMarkerPrivileges,
@@ -1804,6 +1805,7 @@ function assertReconciliationPreflightStable(before, after) {
     JSON.stringify(before.revenueMigrationHashes) !== JSON.stringify(after.revenueMigrationHashes) ||
     JSON.stringify(before.gdsPlatformMigrationHashes) !== JSON.stringify(after.gdsPlatformMigrationHashes) ||
     JSON.stringify(before.pointMigrationHashes) !== JSON.stringify(after.pointMigrationHashes) ||
+    JSON.stringify(before.pointHistory) !== JSON.stringify(after.pointHistory) ||
     before.ledger?.currentSchemaVersion !== after.ledger?.currentSchemaVersion ||
     JSON.stringify(before.ledger?.pendingMigrationNames) !==
       JSON.stringify(after.ledger?.pendingMigrationNames) ||
@@ -2208,6 +2210,7 @@ async function runMigrationPreflight({
           caseSnapshot,
           markerSnapshot,
           financialDigest,
+          pointHistory: allowReviewedPointMigrations ? await readPointHistoryState(client) : null,
         };
       },
       'MIGRATION_DATABASE_URL',
@@ -2271,6 +2274,7 @@ async function runMigrationPostflight({
         caseSnapshot: caseResult.rows[0],
         markerSnapshot: markerResult.rows[0],
         financialDigest: parseDigestSnapshot(digestResult),
+        pointHistory: preflight.pointHistory ? await readPointHistoryState(client) : null,
       };
     },
     'MIGRATION_DATABASE_URL',
@@ -2282,6 +2286,7 @@ async function runMigrationPostflight({
     financialDigestBefore: preflight.financialDigest,
     financialDigestAfter: postflight.financialDigest,
   });
+  if (preflight.pointHistory) Object.assign(checks, assertPointHistoryPreserved(preflight.pointHistory, postflight.pointHistory));
   return { ...postflight, checks };
 }
 
@@ -2440,6 +2445,10 @@ async function run() {
   console.log(`sourceKeyBackfillRows: ${postflight.checks.sourceKeyBackfillRows}`);
   console.log(`legacyMarkerRows: ${postflight.checks.legacyMarkerRows}`);
   console.log(`financialRowsChanged: ${postflight.checks.financialRowsChanged}`);
+  if (postflight.checks.historicalPointRowsPreserved) {
+    console.log('historicalPointRowsPreserved: true');
+    console.log('pointPoliciesPreserved: true');
+  }
 
   await revokeRuntimeLegacyMarkerPrivileges(
     migrationDatabaseUrl,

@@ -11,6 +11,7 @@ function setup() {
     effectiveAt: null,
   };
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([{ migrationVerified: false, guardsVerified: false, schemaVerified: false, runtimeVerified: false }]),
     user: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     commerceOrder: { findMany: jest.fn().mockResolvedValue([]) },
     gdsInternalTopup: { findMany: jest.fn().mockResolvedValue([]) },
@@ -34,6 +35,17 @@ function setup() {
   };
 }
 describe("versioned platform policies", () => {
+  it('allows point scheduling only after the reviewed schema and bounded runtime guards verify', async () => {
+    const { service, revision, tx } = setup();
+    Object.assign(revision, { group: 'points', status: 'approved', content: { ...DEFAULT_PLATFORM_SETTINGS.points,
+      enabled: true, rules: [{ event: 'course.completed', points: 80 }] } });
+    await expect(service.schedule('admin', 'revision', new Date(Date.now() + 60000))).rejects.toThrow('Activation is not ready');
+    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
+    tx.$queryRaw.mockResolvedValue([{ migrationVerified: true, guardsVerified: true, schemaVerified: true, runtimeVerified: true }]);
+    await service.schedule('admin', 'revision', new Date(Date.now() + 60000));
+    expect(tx.platformPolicyRevision.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'revision', status: 'approved' } }));
+    expect(DEFAULT_PLATFORM_SETTINGS.points.enabled).toBe(false);
+  });
   it('previews point policy impact without awarding or rewriting prior completions', async () => {
     const { service, revision, tx } = setup();
     revision.group = 'points';
