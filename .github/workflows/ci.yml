@@ -40,6 +40,9 @@ jobs:
       - name: Complete backend source regression including GDS platform and wallet recovery
         run: npm test -- --runInBand
 
+      - name: GDS platform schema release and private backup safeguards
+        run: node --test scripts/gds-platform-release-migrations.test.cjs scripts/backup-gds-platform.test.cjs scripts/platform-runtime-source.test.cjs
+
       - name: GDS platform policy, MFA and affiliate PostgreSQL invariants
         run: >-
           npm run test:demo-data -- --runInBand

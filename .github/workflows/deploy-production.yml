@@ -19,6 +19,12 @@ on:
         default: false
         required: true
 
+      authorize_gds_platform_schema_migrations:
+        description: 'Owner approval for exactly seven reviewed GDS platform migrations and private backup; does not enable financial policies'
+        type: boolean
+        default: false
+        required: true
+
       gds_wallet_topup:
         description: 'Production wallet topup admission; preserve does not change the server setting'
         type: choice
@@ -337,13 +343,23 @@ jobs:
 
           echo "Applying database migrations with isolated role..."
           deployment_stage="database-migration"
+          migration_args=()
           if [ "${{ inputs.authorize_receipt_schema_migrations }}" = "true" ]; then
             echo "receiptSchemaMigrationAuthorization: EXPLICIT_OWNER_APPROVAL"
-            npm run prisma:migrate:production -- --authorize-reviewed-receipt-migrations
+            migration_args+=(--authorize-reviewed-receipt-migrations)
           else
             echo "receiptSchemaMigrationAuthorization: NOT_GRANTED"
-            npm run prisma:migrate:production
           fi
+          if [ "${{ inputs.authorize_gds_platform_schema_migrations }}" = "true" ]; then
+            echo "gdsPlatformSchemaMigrationAuthorization: EXPLICIT_OWNER_APPROVAL"
+            deployment_stage="gds-platform-backup"
+            node scripts/backup-gds-platform.cjs
+            migration_args+=(--authorize-reviewed-gds-platform-migrations)
+          else
+            echo "gdsPlatformSchemaMigrationAuthorization: NOT_GRANTED"
+          fi
+          deployment_stage="database-migration"
+          npm run prisma:migrate:production -- "${migration_args[@]}"
 
           echo "Verifying least-privilege runtime database role..."
           deployment_stage="runtime-role-verification"

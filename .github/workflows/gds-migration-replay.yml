@@ -88,3 +88,7 @@ jobs:
 
       - name: Verify concurrent GDS withdrawals through real Prisma and PostgreSQL
         run: node scripts/test-gds-withdrawals-prisma.cjs
+
+      - name: Verify private backup against the disposable replay database
+        run: |
+          node -e 'const {backupGdsPlatform}=require("./scripts/backup-gds-platform.cjs"); console.log(JSON.stringify(backupGdsPlatform({loadDatabaseUrl:()=>process.env.DATABASE_URL})));'

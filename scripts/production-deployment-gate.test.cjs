@@ -19,8 +19,9 @@ test('deployment on main is gated by per-repository auto opt-in or explicit manu
   assert.match(deploy, /github.event_name == 'workflow_dispatch' && inputs.authorize_production == true/);
   assert.match(deploy, /environment: production/);
   assert.match(deploy, /if \[ "\$\{\{ inputs.authorize_receipt_schema_migrations \}\}" = "true" \]; then/);
-  assert.match(deploy, /npm run prisma:migrate:production -- --authorize-reviewed-receipt-migrations/);
-  assert.match(deploy, /npm run prisma:migrate:production\r?\n/);
+  assert.match(deploy, /migration_args\+=\(--authorize-reviewed-receipt-migrations\)/);
+  assert.match(deploy, /migration_args=\(\)/);
+  assert.match(deploy, /npm run prisma:migrate:production -- "\$\{migration_args\[@\]\}"/);
 });
 
 test('skipped deployments do not send external notifications', () => {
@@ -54,4 +55,14 @@ test('withdrawal activation is explicit and follows migration, restart and readi
   assert.ok(activation > workflow.indexOf('npm run process:restart:production'));
   assert.ok(activation > workflow.indexOf('Backend readiness check timed out'));
   assert.match(workflow, /configure-gds-withdrawals.cjs[\s\S]*?--expected-sha "\$EXPECTED_DEPLOY_SHA" --authorize-production-withdrawals/);
+});
+
+test('GDS platform schema release requires explicit consent and a private backup before migration', () => {
+  assert.match(trigger, /authorize_gds_platform_schema_migrations:[\s\S]*?type: boolean[\s\S]*?default: false/);
+  assert.match(workflow, /inputs.authorize_gds_platform_schema_migrations/);
+  const backup = workflow.indexOf('node scripts/backup-gds-platform.cjs');
+  assert.ok(backup > 0);
+  assert.ok(backup < workflow.indexOf('npm run prisma:migrate:production'));
+  assert.match(workflow, /migration_args\+=\(--authorize-reviewed-gds-platform-migrations\)/);
+  assert.match(workflow, /npm run prisma:migrate:production -- "\$\{migration_args\[@\]\}"/);
 });
