@@ -40,19 +40,22 @@ export class PointLedgerService {
   }
 
   /** Caller holds the existing users FOR UPDATE lock for the entire transaction. */
-  async settle(tx: Prisma.TransactionClient, userId: string, actorId: string, at: Date): Promise<PointLedgerRow[]> {
+  async settle(tx: Prisma.TransactionClient, userId: string, actorId: string, at: Date, maxSettlements = Infinity): Promise<PointLedgerRow[]> {
+    if (maxSettlements !== Infinity && (!Number.isSafeInteger(maxSettlements) || maxSettlements < 1)) throw new Error('POINT_EXPIRY_BATCH_INVALID');
     const entries = await this.load(tx, userId);
     const due = activityPointExpirySettlements(entries, at);
     if (due.length === 0) return entries;
     const existing = await tx.pointExpirySettlement.findMany({
-      where: { creditEntryId: { in: due.map(lot => lot.entryId) } }, select: { creditEntryId: true, amount: true },
+      where: { userId }, select: { creditEntryId: true, amount: true },
     });
     const settled = new Map(existing.map(receipt => [receipt.creditEntryId, receipt]));
+    let processed = 0;
     for (const lot of due) {
       if (settled.has(lot.entryId)) {
         if (lot.amount !== 0 || settled.get(lot.entryId)!.amount !== 0) throw new Error('POINT_ACTIVITY_EXPIRY_RECEIPT_MISMATCH');
         continue;
       }
+      if (processed >= maxSettlements) break;
       const posting = lot.amount > 0 ? await tx.tmiLedgerEntry.create({
         data: { userId, kind: 'expiry', amount: lot.amount, sourceType: 'platform_activity_expiry',
           sourceId: lot.entryId, actorId, occurredAt: at }, select: pointLedgerSelect,
@@ -63,6 +66,7 @@ export class PointLedgerService {
         target: { type: 'point_expiry_settlement', id: receipt.id },
         metadata: { userId, creditEntryId: lot.entryId, amount: lot.amount } }, tx);
       if (posting) entries.push(withRefundProvenance(posting));
+      processed++;
     }
     return entries;
   }

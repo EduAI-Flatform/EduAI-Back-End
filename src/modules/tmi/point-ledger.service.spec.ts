@@ -55,4 +55,15 @@ describe('point ledger expiry integration', () => {
     tx.pointExpirySettlement.findMany.mockResolvedValue([{ creditEntryId: credit.id, amount: 0 }] as never);
     await expect(service.settle(tx as never, 'user', 'actor', at)).rejects.toThrow('POINT_ACTIVITY_EXPIRY_RECEIPT_MISMATCH');
   });
+  it('bounds worker postings and skips recorded zero settlements before applying the batch limit', async () => {
+    const spent = { ...credit, id: 'spend', kind: 'redeem', sourceType: 'tmi_redemption', amount: 100,
+      sourceId: 'redemption', occurredAt: new Date('2026-10-02T10:00:00Z'), expiresAt: null, postingSequence: 2n };
+    const second = { ...credit, id: 'second', postingSequence: 3n, occurredAt: new Date('2026-10-03T10:00:00Z') };
+    const third = { ...second, id: 'third', postingSequence: 4n };
+    const { service, tx } = harness([credit, spent, second, third] as never);
+    tx.pointExpirySettlement.findMany.mockResolvedValue([{ creditEntryId: credit.id, amount: 0 }] as never);
+    await service.settle(tx as never, 'user', 'actor', at, 1);
+    expect(tx.pointExpirySettlement.create).toHaveBeenCalledTimes(1);
+    expect(tx.pointExpirySettlement.create).toHaveBeenCalledWith({ data: expect.objectContaining({ creditEntryId: 'second' }) });
+  });
 });

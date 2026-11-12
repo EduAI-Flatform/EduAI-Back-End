@@ -99,6 +99,16 @@ function buildRuntimeGdsPrivilegeStatement(runtimeUrl) {
   return statements.join('; ');
 }
 
+function buildRuntimePointPrivilegeStatement(runtimeUrl) {
+  const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
+  return [
+    'REVOKE ALL PRIVILEGES ON TABLE public.point_activity_receipts, public.point_expiry_settlements FROM ' + role + ', PUBLIC',
+    'GRANT SELECT, INSERT ON TABLE public.point_activity_receipts, public.point_expiry_settlements, public.tmi_ledger_entries TO ' + role,
+    'REVOKE ALL PRIVILEGES ON SEQUENCE public.tmi_ledger_entries_posting_sequence_seq FROM ' + role + ', PUBLIC',
+    'GRANT USAGE ON SEQUENCE public.tmi_ledger_entries_posting_sequence_seq TO ' + role,
+  ].join('; ');
+}
+
 // Separate from legacy grants so pre-withdrawal schemas remain supported.
 function buildRuntimeGdsWithdrawalPrivilegeStatement(runtimeUrl) {
   const role = quoteIdentifier(runtimeRoleFromUrl(runtimeUrl));
@@ -219,6 +229,8 @@ async function grantRuntimeMembershipPrivileges(
     const platformTables = (platformSchema?.rows ?? []).filter(row => typeof row.name === 'string');
     const platformStatement = buildRuntimePlatformPrivilegeStatement(runtimeUrl, platformTables);
     if (platformStatement) await client.query(platformStatement);
+    const pointSchema = await client.query("SELECT to_regclass('public.point_activity_receipts') IS NOT NULL AND to_regclass('public.point_expiry_settlements') IS NOT NULL AND to_regclass('public.tmi_ledger_entries_posting_sequence_seq') IS NOT NULL AS ready");
+    if (pointSchema?.rows?.[0]?.ready) await client.query(buildRuntimePointPrivilegeStatement(runtimeUrl));
     await client.query('COMMIT');
     transactionOpen = false;
   } catch {
@@ -257,6 +269,7 @@ async function revokeRuntimeLegacyMarkerPrivileges(
 }
 
 module.exports = {
+  buildRuntimePointPrivilegeStatement,
   PLATFORM_RUNTIME_TABLES,
   PLATFORM_RUNTIME_UPDATES,
   PLATFORM_RUNTIME_SCHEMA_QUERY,

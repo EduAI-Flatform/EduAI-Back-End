@@ -12,13 +12,13 @@ Implemented substrate:
 - A database-generated `posting_sequence` disambiguates new ledger entries sharing a timestamp. It is internal and is not exposed in JSON responses. The additive migration now also requires bounded runtime usage on its sequence before deployment.
 - Authorization and debit share one valuation timestamp under the user lock, preventing a slow transaction from authorizing just before expiry and then recording consumption after the cutoff. Both all-native and mixed refunds have replay coverage.
 
-The award service is intentionally not registered with a worker or exposed through a controller yet. Existing point accrual activation remains blocked. The migration has not been applied outside disposable PGlite tests and is not yet included in production migration authorization or runtime grants. The new redemption code selects the new sequence column, so it must not be deployed before that migration.
+The award service and bounded lifecycle worker are now registered internally, with no public award endpoint. Expiry and completion scans run independently, at most 50 users/events per pass, and expiry posts at most 25 settlements per user transaction. Failed sources are retried in later scan cycles. Point accrual activation remains blocked. Runtime grant preparation now includes append-only receipt access and sequence USAGE without reset rights. The migration is not yet authorized for production. New code selects the sequence column, so it must not be deployed before that migration.
 
 Remaining before release:
 
 1. Extend integration verification for expiry/redemption/refund boundaries, all-native refunds and idempotent retries using real PostgreSQL. The source implementation and focused regression coverage are present; real transaction rollback and concurrency remain unproven at this checkpoint.
 2. Complete reserved-ledger/source guards so orphan activity postings cannot bypass receipt provenance. Validate the full Prisma migration chain and exact runtime privileges in real PostgreSQL, including concurrent workers, redemption and rollback/retry.
-3. Register a bounded canonical-completion/expiry worker only after the above paths are safe. Disabled accrual must not prevent existing expiry. No school API is needed for native course completion.
+3. Verify the registered bounded worker in real PostgreSQL, including disabled accrual and independent failing queues. No school API is needed for native course completion. CI now runs `scripts/test-activity-points-prisma.cjs` against the disposable migrated database with a restricted role; actual CI results remain pending at this checkpoint.
 4. Add the separately reviewed migration authorization, checksummed artifact, backup/preflight/postflight and bounded runtime SELECT/INSERT grants; preserve historical migration authorizations.
 5. Complete Admin supported-rule choices, readiness and policy impact/provenance visibility; then run affected browser checks, review/CI, controlled deployment and post-deploy verification.
 
