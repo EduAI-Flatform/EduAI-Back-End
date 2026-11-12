@@ -8,6 +8,8 @@ const path = require('node:path');
 const { loadMigrationDatabaseUrl } = require('./run-production-migrations.cjs');
 
 const FAILURE = 'GDS_PLATFORM_BACKUP_FAILED';
+const CLIENT_FAILURES = new Set(['CLIENT_NOT_FOUND', 'CLIENT_VERSION_MISMATCH',
+  'DATABASE_PERMISSION_DENIED', 'DATABASE_AUTHENTICATION_FAILED', 'CLIENT_FAILED']);
 const LIBPQ_PARAMETERS = Object.freeze({
   sslmode: 'PGSSLMODE', sslcert: 'PGSSLCERT', sslkey: 'PGSSLKEY', sslrootcert: 'PGSSLROOTCERT',
   sslcrl: 'PGSSLCRL', sslcrldir: 'PGSSLCRLDIR', sslcompression: 'PGSSLCOMPRESSION',
@@ -84,7 +86,17 @@ function sameFile(file, identity) {
 }
 
 function checkedResult(result) {
-  if (!result || result.error || result.signal || result.status !== 0) throw fail();
+  if (!result || result.error || result.signal || result.status !== 0) {
+    // Classify locally; never return client stderr, connection fields or paths.
+    const stderr = typeof result?.stderr === 'string' || Buffer.isBuffer(result?.stderr)
+      ? result.stderr.toString() : '';
+    const reason = result?.error?.code === 'ENOENT' ? 'CLIENT_NOT_FOUND'
+      : /server version:.*pg_dump version:/s.test(stderr) ? 'CLIENT_VERSION_MISMATCH'
+        : /permission denied/i.test(stderr) ? 'DATABASE_PERMISSION_DENIED'
+          : /password authentication failed|no pg_hba.conf entry/i.test(stderr) ? 'DATABASE_AUTHENTICATION_FAILED'
+            : 'CLIENT_FAILED';
+    throw Object.assign(fail(), { reason });
+  }
 }
 
 function hashFile(descriptor) {
@@ -107,25 +119,30 @@ function backupGdsPlatform(dependencies = {}) {
   let file;
   let identity;
   let descriptor;
+  let stage = 'load-config';
   try {
     const environment = backupEnvironment(
       (dependencies.loadDatabaseUrl ?? loadMigrationDatabaseUrl)(root),
       dependencies.environment ?? process.env,
     );
+    stage = 'prepare-directory';
     const directory = privateBackupDirectory(home);
     const date = (dependencies.now ?? (() => new Date()))();
     const timestamp = date.toISOString().replace(/[:.]/g, '-');
     const identifier = (dependencies.uuid ?? randomUUID)();
     if (!/^[a-f0-9-]{36}$/.test(identifier)) throw fail();
     file = path.join(directory, `gds-platform-${timestamp}-${identifier}.dump`);
+    stage = 'create-archive';
     descriptor = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
       | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
     identity = fs.fstatSync(descriptor);
     fs.fchmodSync(descriptor, 0o600);
+    stage = 'dump';
     checkedResult(runner('pg_dump', ['--format=custom', '--no-password', '--serializable-deferrable'], {
       env: environment, shell: false, windowsHide: true, stdio: ['ignore', descriptor, 'pipe'],
       timeout: 15 * 60 * 1000, maxBuffer: 8 * 1024 * 1024,
     }));
+    stage = 'validate-archive';
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor); descriptor = undefined;
     if (!sameFile(file, identity)) throw fail();
@@ -134,6 +151,7 @@ function backupGdsPlatform(dependencies = {}) {
     if (stat.dev !== identity.dev || stat.ino !== identity.ino || !stat.size || stat.nlink !== 1) throw fail();
     const magic = Buffer.alloc(5);
     if (fs.readSync(descriptor, magic, 0, 5, 0) !== 5 || magic.toString('ascii') !== 'PGDMP') throw fail();
+    stage = 'archive-list';
     const listing = runner('pg_restore', ['--list'], {
       env: environment, shell: false, windowsHide: true, stdio: [descriptor, 'pipe', 'pipe'],
       timeout: 60 * 1000, maxBuffer: 8 * 1024 * 1024,
@@ -141,16 +159,17 @@ function backupGdsPlatform(dependencies = {}) {
     checkedResult(listing);
     if (!(Buffer.isBuffer(listing.stdout) || typeof listing.stdout === 'string')
       || !listing.stdout.toString().trim()) throw fail();
+    stage = 'hash';
     const sha256 = hashFile(descriptor);
     if (!sameFile(file, identity) || fs.fstatSync(descriptor).size !== stat.size) throw fail();
     fs.closeSync(descriptor); descriptor = undefined;
     return { backupPath: file, bytes: stat.size, sha256, format: 'pg_dump_custom', validated: true, createdAt: date.toISOString() };
-  } catch {
+  } catch (error) {
     if (descriptor !== undefined) { try { fs.closeSync(descriptor); } catch {} }
     // Remove only the incomplete inode created by this run. Never delete a
     // replaced file, symlink, pre-existing backup, or recursively remove dirs.
     if (file && identity) { try { if (sameFile(file, identity)) fs.unlinkSync(file); } catch {} }
-    throw fail();
+    throw Object.assign(fail(), { stage, reason: CLIENT_FAILURES.has(error?.reason) ? error.reason : 'OPERATION_FAILED' });
   }
 }
 
@@ -158,8 +177,12 @@ if (require.main === module) {
   try {
     if (process.argv.length !== 2) throw fail();
     console.log(JSON.stringify(backupGdsPlatform()));
-  } catch {
+  } catch (error) {
     console.error(FAILURE);
+    if (error?.message === FAILURE
+      && (CLIENT_FAILURES.has(error.reason) || error.reason === 'OPERATION_FAILED')) {
+      console.error(JSON.stringify({ backupFailureStage: error.stage, backupFailureReason: error.reason }));
+    }
     process.exitCode = 1;
   }
 }
