@@ -369,6 +369,11 @@ jobs:
           deployment_stage="backend-build"
           npm run build
 
+          if [ "${{ inputs.authorize_gds_platform_schema_migrations }}" = "true" ]; then
+            deployment_stage="gds-mfa-key-initialization"
+            node scripts/initialize-gds-mfa-key.cjs
+          fi
+
           echo "Restarting PM2..."
           deployment_stage="pm2-restart"
           npm run process:restart:production

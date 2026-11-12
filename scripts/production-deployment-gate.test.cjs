@@ -66,3 +66,10 @@ test('GDS platform schema release requires explicit consent and a private backup
   assert.match(workflow, /migration_args\+=\(--authorize-reviewed-gds-platform-migrations\)/);
   assert.match(workflow, /npm run prisma:migrate:production -- "\$\{migration_args\[@\]\}"/);
 });
+
+test('MFA key initialization is limited to the approved release and precedes process restart', () => {
+  const initialization = workflow.indexOf('node scripts/initialize-gds-mfa-key.cjs');
+  assert.ok(initialization > workflow.indexOf('npm run prisma:migrate:production'));
+  assert.ok(initialization < workflow.indexOf('npm run process:restart:production'));
+  assert.match(workflow.slice(initialization - 200, initialization), /inputs.authorize_gds_platform_schema_migrations/);
+});

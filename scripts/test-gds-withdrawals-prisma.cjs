@@ -12,6 +12,10 @@ async function main() {
   assert.equal(url.pathname, '/eduai_migration_replay');
   const { PrismaPg } = require('@prisma/adapter-pg');
   const { PrismaClient } = require('../dist/generated/prisma/client.js');
+  const { AuditService } = require('../dist/src/common/audit/audit.service.js');
+  const { CourseAccessService } = require('../dist/src/modules/access/course-access.service.js');
+  const { CommerceService } = require('../dist/src/modules/commerce/commerce.service.js');
+  const { CommerceOrderService } = require('../dist/src/modules/commerce/commerce-order.service.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
   const { AffiliateWalletService } = require('../dist/src/modules/wallet/affiliate-wallet.service.js');
@@ -165,31 +169,29 @@ async function main() {
       // tables, including native upsert behavior and encrypted MFA-state reads.
       const applicationOwner = await user(0n);
       const applicationBuyer = await user(0n);
-      // Keep the immutable order/line totals valid at transaction commit. This
-      // pending synthetic order is only an attribution FK fixture, never paid.
-      const applicationOrder = await db.$transaction(async tx => {
-        const courseId = randomUUID();
-        const title = 'Synthetic runtime permission course';
-        await tx.course.create({ data: {
-          id: courseId, instructorId: applicationOwner.id, title,
-          slug: 'gds-runtime-' + courseId, level: 'beginner', status: 'published',
-          visibility: 'public', priceAmountMinor: 10000, priceCurrency: 'VND',
-        } });
-        const product = await tx.commerceProduct.create({ data: {
-          type: 'course', courseId, sellerId: applicationOwner.id, status: 'active',
-        } });
-        const order = await tx.commerceOrder.create({ data: {
-          buyerId: applicationBuyer.id, orderNumber: 'GDS-RUNTIME-' + randomUUID().replaceAll('-', '').slice(0, 20),
-          subtotalAmountMinor: 10000n, payableAmountMinor: 10000n, pricingPolicyVersion: 'synthetic-runtime',
-        } });
-        await tx.commerceOrderLine.create({ data: {
-          orderId: order.id, productId: product.id, productType: 'course', productReferenceId: courseId,
-          sellerId: applicationOwner.id, displayTitle: title, quantity: 1,
-          unitListPriceAmountMinor: 10000n, subtotalAmountMinor: 10000n,
-          discountAmountMinor: 0n, finalAmountMinor: 10000n, currency: 'VND',
-        } });
-        return order;
+      // Use canonical checkout services for draft-to-active product lifecycle,
+      // cart conversion, immutable line snapshots and matching order totals.
+      // This pending synthetic order is only an attribution FK, never paid.
+      const courseId = randomUUID();
+      await db.course.create({ data: {
+        id: courseId, instructorId: applicationOwner.id, title: 'Synthetic runtime permission course',
+        slug: 'gds-runtime-' + courseId, level: 'beginner', status: 'published',
+        visibility: 'public', priceAmountMinor: 10000, priceCurrency: 'VND',
+      } });
+      const checkoutConfig = { ...config, commerce: { idempotencySecret: 'synthetic-runtime-checkout-ci-only-32-chars' } };
+      const checkoutAudit = new AuditService(db);
+      const checkoutAccess = new CourseAccessService(db, checkoutConfig);
+      const checkoutCart = new CommerceService(db, checkoutAudit, checkoutAccess);
+      const checkoutOrders = new CommerceOrderService(db, checkoutConfig, {}, checkoutAudit, checkoutAccess);
+      await checkoutCart.addCourse(applicationBuyer.id, courseId);
+      const applicationOrder = await checkoutOrders.createOrder(applicationBuyer.id, randomUUID(), {});
+      const persistedApplicationOrder = await db.commerceOrder.findUniqueOrThrow({
+        where: { id: applicationOrder.id }, include: { lines: true },
       });
+      assert.equal(persistedApplicationOrder.status, 'pending_payment');
+      assert.equal(persistedApplicationOrder.lines.length, 1);
+      assert.equal(persistedApplicationOrder.payableAmountMinor, 10000n);
+      assert.equal(persistedApplicationOrder.lines[0].finalAmountMinor, 10000n);
       const lastApplicationPolicy = await db.platformPolicyRevision.aggregate({ where: { group: 'branding' }, _max: { version: true } });
       const applicationPolicy = await runtime.platformPolicyRevision.create({ data: {
         group: 'branding', version: (lastApplicationPolicy._max.version ?? 0) + 1,
