@@ -4,6 +4,23 @@ import {
   validatePlatformUrl,
 } from "./platform-settings.validation";
 describe("platform configuration validation", () => {
+  const activity = { kind: 'event', title: { vi: 'Sự kiện GDS', en: 'GDS event' },
+    description: { vi: '', en: '' }, startsAt: '2026-12-10T09:00:00+07:00', url: '/activities', enabled: true };
+  it.each([
+    { ...activity, kind: 'unsupported' },
+    { ...activity, title: { vi: '   ', en: '' } },
+    { ...activity, startsAt: 'not-a-date' },
+    { ...activity, startsAt: '2026-02-30T09:00:00Z' },
+    { ...activity, startsAt: '2026-12-10T09:00:00' },
+  ])('rejects activity configuration that cannot be published accurately %#', item => {
+    expect(() => validatePlatformSettings('operations', { ...DEFAULT_PLATFORM_SETTINGS.operations, activities: [item] })).toThrow();
+  });
+  it('accepts both supported activity types, timezone-aware dates and disabled incomplete drafts', () => {
+    expect(validatePlatformSettings('operations', { ...DEFAULT_PLATFORM_SETTINGS.operations,
+      activities: [activity, { ...activity, kind: 'competition', startsAt: '2026-12-10T02:00:00Z' },
+        { ...activity, enabled: false, startsAt: '', title: { vi: '', en: '' } }],
+    })).toBe('operations');
+  });
   it.each(Object.entries(DEFAULT_PLATFORM_SETTINGS))(
     "accepts initial %s settings",
     (group, value) => {
