@@ -149,11 +149,15 @@ async function main() {
       await db.$executeRawUnsafe(statement);
     }
     await db.$executeRawUnsafe(`GRANT SELECT ON revenue_earning_periods, revenue_ledger_entries TO "${role}"`);
-    await db.$executeRawUnsafe(`GRANT SELECT ON affiliate_attributions, affiliate_identities TO "${role}"`);
+    // This disposable role exercises the empty affiliate-owner query. Every included relation needs SELECT.
+    await db.$executeRawUnsafe(`GRANT SELECT ON affiliate_attributions, affiliate_identities, platform_policy_revisions, affiliate_accruals, commerce_orders, commerce_settlements, commerce_refunds TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT SELECT(migration_name,checksum,finished_at,rolled_back_at) ON _prisma_migrations TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT INSERT ON audit_logs TO "${role}"`);
     const runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
     try {
+      const { affiliateOrderSelect } = require('../dist/src/modules/affiliate/affiliate-source.js');
+      assert.deepEqual(await runtime.affiliateAttribution.findMany({ where: { identity: { ownerId: randomUUID() } },
+        include: { policy: true, order: { select: affiliateOrderSelect }, accruals: true } }), []);
       const runtimeFinance = new RevenueFinanceService(runtime);
       const runtimeRevenue = new GdsRevenueWalletService(runtime, config, runtimeFinance, new AffiliateWalletService(runtimeFinance));
       const runtimeService = new GdsWithdrawalService(runtime, config, runtimeRevenue);
