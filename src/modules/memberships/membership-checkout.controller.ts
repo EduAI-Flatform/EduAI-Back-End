@@ -1,4 +1,4 @@
-import { Body, Controller, Get, GoneException, Headers, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiGoneResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -7,6 +7,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CreateMembershipCheckoutDto } from './dto/membership-plan.dto';
 import { MembershipCheckoutService } from './membership-checkout.service';
+import { membershipSalesRetired } from './membership-sales-retired';
 
 @ApiTags('Membership')
 @ApiBearerAuth()
@@ -17,8 +18,8 @@ export class MembershipCheckoutController {
   constructor(private readonly checkout: MembershipCheckoutService) {}
 
   @Get('catalog')
-  @ApiOkResponse({ description: 'Published membership versions and authoritative duration pricing.' })
-  catalog(@CurrentUser('id') learnerId: string) { return this.checkout.catalog(learnerId); }
+  @ApiOkResponse({ description: 'Empty retired-package catalog. Use GDS membership cards for current tiers.' })
+  catalog(@CurrentUser('id') learnerId: string) { return { items: [], salesRetired: true }; }
 
   @Get('current')
   @ApiOkResponse({ description: 'The learner latest membership state and any pending plan change.' })
@@ -31,6 +32,6 @@ export class MembershipCheckoutController {
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() input: CreateMembershipCheckoutDto,
   ) {
-    throw new GoneException({ error: 'MEMBERSHIP_SALES_RETIRED', message: 'Membership packages have been replaced by GDS membership cards.' });
+    return membershipSalesRetired();
   }
 }
