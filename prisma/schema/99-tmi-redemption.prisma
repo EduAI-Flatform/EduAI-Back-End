@@ -17,6 +17,9 @@ model TmiRedemption {
 }
 
 model TmiLedgerEntry {
+  pointActivityReceipt PointActivityReceipt? @relation("PointActivityPosting")
+  pointExpirySettlement PointExpirySettlement? @relation("PointExpiryCredit")
+  pointExpiryPosting PointExpirySettlement? @relation("PointExpiryPosting")
   id                  String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId              String                   @map("user_id") @db.Uuid
   redemptionId        String?                  @map("redemption_id") @db.Uuid

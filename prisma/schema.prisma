@@ -271,6 +271,8 @@ model User {
   scholarshipAwards ScholarshipAward[]
   createdTmiRewards TmiReward[] @relation("TmiRewardCreator")
   tmiLedgerEntries TmiLedgerEntry[]
+  pointActivityReceipts PointActivityReceipt[]
+  pointExpirySettlements PointExpirySettlement[]
   tmiRedemptions TmiRedemption[]
   tmiEntitlements TmiEntitlement[]
   notifications Notification[]
@@ -1911,6 +1913,7 @@ enum PlatformPolicyStatus {
 }
 
 model PlatformPolicyRevision {
+  pointActivityReceipts PointActivityReceipt[]
   affiliateVisits AffiliateVisit[] @relation("AffiliateVisitPolicy")
   affiliateAttributions AffiliateAttribution[] @relation("AffiliateAttributionPolicy")
   id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -2105,6 +2108,43 @@ model AffiliateWalletEffect {
   accrual AffiliateAccrual @relation(fields: [accrualId], references: [id], onDelete: Restrict)
   wallet GdsInternalWallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
   @@map("affiliate_wallet_effects")
+}
+
+model PointActivityReceipt {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  eventType        String   @map("event_type")
+  sourceId         String   @map("source_id") @db.Uuid
+  policyRevisionId String   @map("policy_revision_id") @db.Uuid
+  outcome          String
+  amount           Int
+  occurredAt       DateTime @map("occurred_at")
+  expiresAt        DateTime @map("expires_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  ledgerEntryId    String?  @unique @map("ledger_entry_id") @db.Uuid
+  user             User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  source           Enrollment @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  policyRevision   PlatformPolicyRevision @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict)
+  ledgerEntry      TmiLedgerEntry? @relation("PointActivityPosting", fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@unique([eventType, sourceId])
+  @@index([userId, occurredAt], map: "point_activity_receipts_user_day_idx")
+  @@map("point_activity_receipts")
+}
+
+model PointExpirySettlement {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  creditEntryId String   @unique @map("credit_entry_id") @db.Uuid
+  amount        Int
+  settledAt     DateTime @map("settled_at")
+  ledgerEntryId String?  @unique @map("ledger_entry_id") @db.Uuid
+  user          User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  creditEntry   TmiLedgerEntry @relation("PointExpiryCredit", fields: [creditEntryId], references: [id], onDelete: Restrict)
+  ledgerEntry   TmiLedgerEntry? @relation("PointExpiryPosting", fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@index([userId], map: "point_expiry_settlements_user_idx")
+  @@map("point_expiry_settlements")
 }
 
 model UserRole {
@@ -2350,6 +2390,7 @@ model Enrollment {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
   accessBackfillIssue CourseAccessBackfillIssue?
+  pointActivityReceipts PointActivityReceipt[]
 
   @@unique([userId, courseId])
   @@index([courseId])
@@ -3496,6 +3537,9 @@ model TmiRedemption {
 }
 
 model TmiLedgerEntry {
+  pointActivityReceipt PointActivityReceipt? @relation("PointActivityPosting")
+  pointExpirySettlement PointExpirySettlement? @relation("PointExpiryCredit")
+  pointExpiryPosting PointExpirySettlement? @relation("PointExpiryPosting")
   id                  String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId              String                   @map("user_id") @db.Uuid
   redemptionId        String?                  @map("redemption_id") @db.Uuid
