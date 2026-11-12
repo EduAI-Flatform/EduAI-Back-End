@@ -113,3 +113,65 @@ END $$;
 CREATE TRIGGER point_expiry_source_guard BEFORE INSERT ON point_expiry_settlements
 FOR EACH ROW EXECUTE FUNCTION point_expiry_source_guard();
 REVOKE ALL ON FUNCTION point_receipt_immutable(),point_activity_source_guard(),point_expiry_source_guard() FROM PUBLIC;
+
+-- Posting and provenance are inserted in the same transaction, so enforce their
+-- linkage at commit rather than allowing an orphan reserved-source ledger row.
+CREATE FUNCTION point_require_posting_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.source_type='platform_activity' AND NOT EXISTS(
+    SELECT 1 FROM point_activity_receipts r WHERE r.ledger_entry_id=NEW.id AND r.user_id=NEW.user_id
+      AND r.outcome='awarded' AND r.amount=NEW.amount AND r.source_id::text=NEW.source_id
+      AND r.created_at=NEW.occurred_at AND r.expires_at=NEW.expires_at AND NEW.kind::text='earn')
+  THEN RAISE EXCEPTION 'Point activity receipt required' USING ERRCODE='23514'; END IF;
+  IF NEW.source_type='platform_activity_expiry' AND NOT EXISTS(
+    SELECT 1 FROM point_expiry_settlements r WHERE r.ledger_entry_id=NEW.id AND r.user_id=NEW.user_id
+      AND r.amount=NEW.amount AND r.credit_entry_id::text=NEW.source_id
+      AND r.settled_at=NEW.occurred_at AND NEW.kind::text='expiry')
+  THEN RAISE EXCEPTION 'Point expiry receipt required' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER point_posting_receipt_required AFTER INSERT ON tmi_ledger_entries
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION point_require_posting_receipt();
+REVOKE ALL ON FUNCTION point_require_posting_receipt() FROM PUBLIC;
+
+CREATE FUNCTION point_native_ledger_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.source_type IN ('platform_activity','platform_activity_refund','platform_activity_expiry')
+    OR (TG_OP='UPDATE' AND NEW.source_type IN ('platform_activity','platform_activity_refund','platform_activity_expiry'))
+  THEN RAISE EXCEPTION 'Native point ledger is immutable' USING ERRCODE='23514'; END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER point_native_ledger_immutable BEFORE UPDATE OR DELETE ON tmi_ledger_entries
+FOR EACH ROW EXECUTE FUNCTION point_native_ledger_immutable();
+REVOKE ALL ON FUNCTION point_native_ledger_immutable() FROM PUBLIC;
+
+CREATE FUNCTION point_native_refund_source_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE credit RECORD; debit RECORD; prior BIGINT;
+BEGIN
+  IF NEW.source_type<>'platform_activity_refund' THEN RETURN NEW; END IF;
+  PERFORM id FROM users WHERE id=NEW.user_id FOR UPDATE;
+  SELECT * INTO credit FROM tmi_ledger_entries WHERE id::text=NEW.metadata->>'refundOfEntryId';
+  SELECT * INTO debit FROM tmi_ledger_entries WHERE id::text=NEW.metadata->>'refundOfDebitId';
+  SELECT COALESCE(sum(amount),0) INTO prior FROM tmi_ledger_entries
+    WHERE user_id=NEW.user_id AND source_type='platform_activity_refund'
+      AND metadata->>'refundOfEntryId'=NEW.metadata->>'refundOfEntryId'
+      AND metadata->>'refundOfDebitId'=NEW.metadata->>'refundOfDebitId';
+  IF NEW.kind::text IS DISTINCT FROM 'refund' OR NEW.amount IS NULL OR NEW.amount<=0
+    OR credit.user_id IS DISTINCT FROM NEW.user_id OR debit.user_id IS DISTINCT FROM NEW.user_id
+    OR credit.source_type NOT IN ('platform_activity','platform_activity_refund')
+    OR credit.kind::text NOT IN ('earn','refund') OR credit.expires_at IS NULL
+    OR NEW.expires_at IS DISTINCT FROM credit.expires_at OR credit.occurred_at>debit.occurred_at
+    OR credit.posting_sequence>=debit.posting_sequence OR credit.expires_at<=debit.occurred_at
+    OR debit.kind::text IS DISTINCT FROM 'redeem' OR debit.source_type IS DISTINCT FROM 'tmi_redemption'
+    OR NEW.redemption_id IS NULL OR debit.redemption_id IS DISTINCT FROM NEW.redemption_id
+    OR debit.source_id IS DISTINCT FROM NEW.redemption_id::text
+    OR NEW.source_id IS DISTINCT FROM NEW.redemption_id::text||':'||credit.id::text
+    OR NEW.occurred_at<debit.occurred_at OR NEW.occurred_at>clock_timestamp()
+    OR prior+NEW.amount>LEAST(credit.amount,debit.amount)
+  THEN RAISE EXCEPTION 'Point refund source mismatch' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER point_native_refund_source_guard BEFORE INSERT ON tmi_ledger_entries
+FOR EACH ROW EXECUTE FUNCTION point_native_refund_source_guard();
+REVOKE ALL ON FUNCTION point_native_refund_source_guard() FROM PUBLIC;

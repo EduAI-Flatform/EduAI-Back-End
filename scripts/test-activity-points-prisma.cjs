@@ -70,6 +70,20 @@ async function main() {
     assert.equal(returned.expiresAt.getTime(), duplicated[0].expiresAt.getTime());
     console.log('POINT_CONCURRENT_REDEMPTION_AND_NATIVE_REFUND=PASS');
 
+    const provenanceCount = await db.tmiLedgerEntry.count({ where: { userId: user.id } });
+    await assert.rejects(runtime.tmiLedgerEntry.create({ data: { userId: user.id, actorId: user.id,
+      kind: 'earn', amount: 80, sourceType: 'platform_activity', sourceId: randomUUID(),
+      expiresAt: new Date(Date.now() + 86400000) } }), /Point activity receipt required/);
+    await assert.rejects(runtime.tmiLedgerEntry.create({ data: { userId: user.id, actorId: user.id,
+      kind: 'expiry', amount: 1, sourceType: 'platform_activity_expiry', sourceId: duplicated[0].ledgerEntryId } }), /Point expiry receipt required/);
+    await assert.rejects(db.tmiLedgerEntry.update({ where: { id: duplicated[0].ledgerEntryId }, data: { amount: 1 } }), /immutable/);
+    await assert.rejects(runtime.tmiLedgerEntry.create({ data: { userId: user.id, actorId: admin.id,
+      redemptionId: redemption.id, kind: 'refund', amount: returned.amount, sourceType: 'platform_activity_refund',
+      sourceId: `${redemption.id}:${duplicated[0].ledgerEntryId}`, metadata: returned.metadata,
+      expiresAt: new Date(returned.expiresAt.getTime() + 86400000) } }), /Point refund source mismatch/);
+    assert.equal(await db.tmiLedgerEntry.count({ where: { userId: user.id } }), provenanceCount);
+    console.log('POINT_ORPHAN_POSTING_AND_REFUND_PROVENANCE_GUARDS=PASS');
+
     const before = await db.tmiLedgerEntry.count({ where: { userId: user.id } });
     const failingAudit = { record: async () => { throw new Error('Synthetic audit rollback'); } };
     await assert.rejects(new TmiRedemptionService(runtime, failingAudit, {}, ledger)
@@ -80,8 +94,10 @@ async function main() {
 
     // Historic fixture exercises actual worker expiry without rewriting existing entries.
     const expiredUser = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic expiry learner' } });
-    const oldAt = new Date(Date.now() - 70 * 86400000), oldExpiry = new Date(oldAt);
-    oldExpiry.setUTCMonth(oldExpiry.getUTCMonth() + 1);
+    const oldAt = new Date(Date.now() - 70 * 86400000);
+    const { evaluateActivityPointAward } = require('../dist/src/modules/tmi/activity-point-policy.js');
+    const oldExpiry = evaluateActivityPointAward({ enabled: true, expireAfterMonths: 1, maxDaily: 100,
+      rules: [{ event: 'course.completed', points: 80 }] }, 'course.completed', oldAt, oldAt, 0).expiresAt;
     const oldCourse = await db.course.create({ data: { title: 'Synthetic historic course', slug: randomUUID(), instructorId: admin.id, level: 'beginner' } });
     const oldSource = await db.enrollment.create({ data: { userId: expiredUser.id, courseId: oldCourse.id, status: 'completed', completedAt: oldAt } });
     const oldPolicy = await db.platformPolicyRevision.create({ data: { group: 'points', version: version + 2, status: 'scheduled',
