@@ -13,6 +13,22 @@ const fixedUuid = '00000000-0000-4000-8000-000000000001';
 const dump = Buffer.from('PGDMPsynthetic-backup-content');
 const failure = { message: 'GDS_PLATFORM_BACKUP_FAILED' };
 
+test('uses system trust roots for verify-full without overriding an explicit CA or reducing TLS verification', () => {
+  const system = backupEnvironment('postgresql://user:secret@db.example/eduai?sslmode=verify-full', {});
+  assert.equal(system.PGSSLMODE, 'verify-full');
+  assert.equal(system.PGSSLROOTCERT, 'system');
+  for (const root of ['/private/custom.crt', 'system', '']) {
+    const explicit = backupEnvironment('postgresql://user:secret@db.example/eduai?sslmode=verify-full&sslrootcert=' + encodeURIComponent(root), {});
+    assert.equal(explicit.PGSSLROOTCERT, root);
+    assert.equal(explicit.PGSSLMODE, 'verify-full');
+  }
+  for (const mode of ['require', 'verify-ca', 'disable']) {
+    const explicit = backupEnvironment('postgresql://user:secret@db.example/eduai?sslmode=' + mode, {});
+    assert.equal(explicit.PGSSLMODE, mode);
+    assert.equal(explicit.PGSSLROOTCERT, undefined);
+  }
+});
+
 test('reports only fixed diagnostic codes for missing clients and database failures', t => {
   const f = fixture(t);
   for (const [result, reason] of [
