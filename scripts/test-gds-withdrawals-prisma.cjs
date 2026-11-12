@@ -165,10 +165,31 @@ async function main() {
       // tables, including native upsert behavior and encrypted MFA-state reads.
       const applicationOwner = await user(0n);
       const applicationBuyer = await user(0n);
-      const applicationOrder = await db.commerceOrder.create({ data: {
-        buyerId: applicationBuyer.id, orderNumber: 'GDS-RUNTIME-' + randomUUID().replaceAll('-', '').slice(0, 20),
-        subtotalAmountMinor: 0n, payableAmountMinor: 0n, pricingPolicyVersion: 'synthetic-runtime',
-      } });
+      // Keep the immutable order/line totals valid at transaction commit. This
+      // pending synthetic order is only an attribution FK fixture, never paid.
+      const applicationOrder = await db.$transaction(async tx => {
+        const courseId = randomUUID();
+        const title = 'Synthetic runtime permission course';
+        await tx.course.create({ data: {
+          id: courseId, instructorId: applicationOwner.id, title,
+          slug: 'gds-runtime-' + courseId, level: 'beginner', status: 'published',
+          visibility: 'public', priceAmountMinor: 10000, priceCurrency: 'VND',
+        } });
+        const product = await tx.commerceProduct.create({ data: {
+          type: 'course', courseId, sellerId: applicationOwner.id, status: 'active',
+        } });
+        const order = await tx.commerceOrder.create({ data: {
+          buyerId: applicationBuyer.id, orderNumber: 'GDS-RUNTIME-' + randomUUID().replaceAll('-', '').slice(0, 20),
+          subtotalAmountMinor: 10000n, payableAmountMinor: 10000n, pricingPolicyVersion: 'synthetic-runtime',
+        } });
+        await tx.commerceOrderLine.create({ data: {
+          orderId: order.id, productId: product.id, productType: 'course', productReferenceId: courseId,
+          sellerId: applicationOwner.id, displayTitle: title, quantity: 1,
+          unitListPriceAmountMinor: 10000n, subtotalAmountMinor: 10000n,
+          discountAmountMinor: 0n, finalAmountMinor: 10000n, currency: 'VND',
+        } });
+        return order;
+      });
       const lastApplicationPolicy = await db.platformPolicyRevision.aggregate({ where: { group: 'branding' }, _max: { version: true } });
       const applicationPolicy = await runtime.platformPolicyRevision.create({ data: {
         group: 'branding', version: (lastApplicationPolicy._max.version ?? 0) + 1,
