@@ -35,6 +35,17 @@ function setup() {
   };
 }
 describe("versioned platform policies", () => {
+  it('does not report unchanged JSONB policy objects as changed when property order differs', async () => {
+    const { service, revision } = setup();
+    revision.content = Object.fromEntries(Object.entries(DEFAULT_PLATFORM_SETTINGS.branding).reverse()) as typeof revision.content;
+    expect(JSON.stringify(revision.content)).not.toBe(JSON.stringify(DEFAULT_PLATFORM_SETTINGS.branding));
+    expect(await service.preview('revision')).toMatchObject({ changed: false });
+  });
+  it('still reports changed navigation array order as a policy change', async () => {
+    const { service, revision } = setup();
+    Object.assign(revision, { group: 'navigation', content: [...DEFAULT_PLATFORM_SETTINGS.navigation].reverse() });
+    expect(await service.preview('revision')).toMatchObject({ changed: true });
+  });
   it('allows point scheduling only after the reviewed schema and bounded runtime guards verify', async () => {
     const { service, revision, tx } = setup();
     Object.assign(revision, { group: 'points', status: 'approved', content: { ...DEFAULT_PLATFORM_SETTINGS.points,
