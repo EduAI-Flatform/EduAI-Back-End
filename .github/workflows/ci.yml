@@ -41,7 +41,7 @@ jobs:
         run: npm test -- --runInBand
 
       - name: GDS platform schema release and private backup safeguards
-        run: node --test scripts/gds-platform-release-migrations.test.cjs scripts/backup-gds-platform.test.cjs scripts/platform-runtime-source.test.cjs scripts/platform-runtime-privileges.test.cjs scripts/initialize-gds-mfa-key.test.cjs scripts/point-runtime-privileges.test.cjs scripts/point-release-migrations.test.cjs scripts/point-migration-state.test.cjs
+        run: node --test scripts/gds-platform-release-migrations.test.cjs scripts/backup-gds-platform.test.cjs scripts/platform-runtime-source.test.cjs scripts/platform-runtime-privileges.test.cjs scripts/initialize-gds-mfa-key.test.cjs scripts/point-runtime-privileges.test.cjs scripts/point-release-migrations.test.cjs scripts/point-migration-state.test.cjs scripts/verify-point-runtime.test.cjs
 
       - name: GDS platform policy, MFA and affiliate PostgreSQL invariants
         run: >-

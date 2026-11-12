@@ -64,3 +64,11 @@ test('both preflights propagate approval and pin hashes immediately before migra
   const finalCheck = source.indexOf('const pointMigrationHashesBeforeApply = assertReviewedPointMigrationFingerprints(rootDirectory);');
   assert.ok(finalCheck > source.indexOf("'STABILITY',") && finalCheck < source.indexOf('const migration = spawnSync('));
 });
+test('point runtime is verified after schema and grants but before restarting the process', () => {
+  const workflow = readFileSync(join(__dirname, '../.github/workflows/deploy-production.yml'), 'utf8');
+  const apply = workflow.indexOf('npm run prisma:migrate:production');
+  const build = workflow.indexOf('npm run build', apply);
+  const verify = workflow.indexOf('node scripts/verify-point-runtime.cjs', build);
+  const restart = workflow.indexOf('npm run process:restart:production', verify);
+  assert.ok(apply > 0 && build > apply && verify > build && restart > verify);
+});

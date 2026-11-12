@@ -383,6 +383,11 @@ jobs:
           deployment_stage="backend-build"
           npm run build
 
+          if [ "${{ inputs.authorize_point_schema_migrations }}" = "true" ]; then
+            deployment_stage="point-runtime-verification"
+            node scripts/verify-point-runtime.cjs
+          fi
+
           if [ "${{ inputs.authorize_gds_platform_schema_migrations }}" = "true" ]; then
             deployment_stage="gds-mfa-key-initialization"
             node scripts/initialize-gds-mfa-key.cjs
