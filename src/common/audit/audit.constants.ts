@@ -69,6 +69,7 @@ export const AuditAction = {
   TmiRewardRefunded: 'TMI_REWARD_REFUNDED',
   TmiBalanceAdjusted: 'TMI_BALANCE_ADJUSTED',
   PointActivityRecorded: 'POINT_ACTIVITY_RECORDED',
+  PointActivityExpired: 'POINT_ACTIVITY_EXPIRED',
   JobCreated: 'JOB_CREATED',
   JobUpdated: 'JOB_UPDATED',
   JobPublished: 'JOB_PUBLISHED',

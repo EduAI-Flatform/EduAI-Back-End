@@ -1,4 +1,7 @@
 -- Additive provenance only. Does not enable accrual or alter existing point history.
+-- Database order disambiguates new postings written within the same millisecond.
+ALTER TABLE tmi_ledger_entries ADD COLUMN posting_sequence BIGSERIAL NOT NULL;
+CREATE UNIQUE INDEX tmi_ledger_posting_sequence_key ON tmi_ledger_entries(posting_sequence);
 CREATE TABLE point_activity_receipts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

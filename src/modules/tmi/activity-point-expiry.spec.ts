@@ -1,4 +1,4 @@
-import { pendingActivityPointExpiries, type PointExpiryEntry } from './activity-point-expiry';
+import { activityPointSpendAllocations, activityPointExpirySettlements, pendingActivityPointExpiries, type PointExpiryEntry } from './activity-point-expiry';
 
 const now = new Date('2026-11-12T10:00:00Z');
 const past = new Date('2026-11-10T10:00:00Z');
@@ -49,5 +49,35 @@ describe('activity point expiry allocation', () => {
     const expiredSpend = { ...debit('late-spend', 100), occurredAt: new Date('2026-11-12T09:30:00Z') };
     expect(() => pendingActivityPointExpiries([credit('expired', 100), expiredSpend], now)).toThrow('POINT_LEDGER_UNFUNDED_DEBIT');
     expect(() => pendingActivityPointExpiries([{ ...credit('invalid-kind', 100), kind: 'refund' }], now)).toThrow('POINT_ACTIVITY_KIND_INVALID');
+  });
+  it('uses database posting order for entries sharing a timestamp', () => {
+    const earned = { ...credit('z-credit', 100), postingSequence: 1n };
+    const spend = { ...debit('a-spend', 40), occurredAt: past, postingSequence: 2n };
+    expect(pendingActivityPointExpiries([spend, earned], now)).toEqual([{ entryId: earned.id, amount: 60, expiresAt: due }]);
+  });
+  it('captures the exact native and legacy lots consumed by a redemption', () => {
+    const legacy = { ...credit('legacy', 100, null), sourceType: 'legacy_import' };
+    expect(activityPointSpendAllocations([legacy, credit('native', 50), debit('spend', 80)], 'spend', now)).toEqual([
+      { creditEntryId: 'native', amount: 50, expiresAt: due },
+      { creditEntryId: 'legacy', amount: 30, expiresAt: null },
+    ]);
+  });
+  it('retains original expiry on native refunds even when refunded after expiry', () => {
+    const refund = { ...credit('returned', 40, due), kind: 'refund', sourceType: 'platform_activity_refund',
+      occurredAt: now, refundOfEntryId: 'native', refundOfDebitId: 'spend' };
+    expect(pendingActivityPointExpiries([credit('native', 100), debit('spend', 40), refund], now)).toEqual([
+      { entryId: 'native', amount: 60, expiresAt: due }, { entryId: 'returned', amount: 40, expiresAt: due },
+    ]);
+  });
+  it('rejects extending the original validity or refunding more than the consumed lot', () => {
+    const refund = { ...credit('returned', 40, future), kind: 'refund', sourceType: 'platform_activity_refund',
+      occurredAt: now, refundOfEntryId: 'native', refundOfDebitId: 'spend' };
+    expect(() => pendingActivityPointExpiries([credit('native', 100), debit('spend', 40), refund], now)).toThrow('POINT_ACTIVITY_REFUND_MISMATCH');
+    expect(() => pendingActivityPointExpiries([credit('native', 100), debit('spend', 40), { ...refund, amount: 41, expiresAt: due }], now))
+      .toThrow('POINT_ACTIVITY_REFUND_MISMATCH');
+  });
+  it('returns zero settlements for fully spent grants so workers can advance', () => {
+    expect(activityPointExpirySettlements([credit('spent', 100), debit('spend', 100)], now))
+      .toEqual([{ entryId: 'spent', amount: 0, expiresAt: due }]);
   });
 });

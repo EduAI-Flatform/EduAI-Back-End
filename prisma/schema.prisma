@@ -3537,6 +3537,7 @@ model TmiRedemption {
 }
 
 model TmiLedgerEntry {
+  postingSequence BigInt @unique(map: "tmi_ledger_posting_sequence_key") @default(autoincrement()) @map("posting_sequence")
   pointActivityReceipt PointActivityReceipt? @relation("PointActivityPosting")
   pointExpirySettlement PointExpirySettlement? @relation("PointExpiryCredit")
   pointExpiryPosting PointExpirySettlement? @relation("PointExpiryPosting")
