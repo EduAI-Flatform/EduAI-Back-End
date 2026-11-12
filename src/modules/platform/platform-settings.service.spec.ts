@@ -13,6 +13,7 @@ function setup() {
   const tx = {
     user: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     commerceOrder: { findMany: jest.fn().mockResolvedValue([]) },
+    gdsInternalTopup: { findMany: jest.fn().mockResolvedValue([]) },
     platformPolicyRevision: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue(null),
@@ -101,16 +102,14 @@ describe("versioned platform policies", () => {
     await service.schedule("admin", "revision", new Date(Date.now() + 60000));
     expect(tx.platformPolicyRevision.updateMany).toHaveBeenCalled();
   });
-  it("blocks unverified top-up ranking without blocking verified-spend classification", async () => {
+  it("supports approved top-up policies without activating defaults or removing the approval lifecycle", async () => {
     const { service, revision, tx } = setup();
     const policy = structuredClone(DEFAULT_PLATFORM_SETTINGS.membership);
     policy.enabled = true; policy.basis = 'topup'; policy.tiers[1].threshold = 100; policy.tiers[2].threshold = 200;
     Object.assign(revision, { group: 'membership', content: policy });
-    await expect(service.schedule('admin', 'revision', new Date(Date.now() + 60000))).rejects.toThrow();
-    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
-    policy.basis = 'spend';
     await service.schedule('admin', 'revision', new Date(Date.now() + 60000));
-    expect(tx.platformPolicyRevision.updateMany).toHaveBeenCalled();
+    expect(tx.platformPolicyRevision.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'revision', status: 'approved' } }));
+    expect(DEFAULT_PLATFORM_SETTINGS.membership.enabled).toBe(false);
   });
   it("schedules approved presentation content and records actor/effective date", async () => {
     const { service, tx } = setup();

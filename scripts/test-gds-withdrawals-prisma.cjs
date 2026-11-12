@@ -169,6 +169,53 @@ async function main() {
       // tables, including native upsert behavior and encrypted MFA-state reads.
       const applicationOwner = await user(0n);
       const applicationBuyer = await user(0n);
+      // Canonical synthetic top-up proof/journal, inside this guarded disposable
+      // database only. Qualification must work with the actual restricted role.
+      const topupId = randomUUID(), inboxId = randomUUID();
+      const collection = `card-proof-${topupId}`, paymentLink = `card-link-${topupId}`;
+      const qrHash = 'a'.repeat(64), bankHash = 'b'.repeat(64);
+      const signedAt = new Date(Date.now() - 1000), topupOrderCode = BigInt(Date.now());
+      await db.$transaction(async tx => {
+        await tx.gdsInternalTopup.create({ data: {
+          id: topupId, buyerId: applicationOwner.id, walletId: applicationOwner.wallet.id,
+          requestKeyHash: qrHash, amountMinor: 85000n, payosOrderCode: topupOrderCode,
+          transferMemo: 'G00000001', receivingAccountHash: qrHash, paymentLinkId: paymentLink,
+          status: 'PENDING_PAYOS', expiresAt: new Date(Date.now() + 3600000),
+        } });
+        await tx.gdsInternalPayosInbox.create({ data: {
+          id: inboxId, topupId, providerEventIdentity: collection, payosOrderCode: topupOrderCode,
+          paymentLinkId: paymentLink, amountMinor: 85000n, currency: 'VND', receivingAccount: 'SYNTHETIC',
+          receivingAccountHash: bankHash, occurredAt: signedAt, signatureVerifiedAt: signedAt,
+        } });
+        await tx.gdsInternalPayosReconciliation.create({ data: {
+          topupId, inboxId, providerEventIdentity: collection, payosOrderCode: topupOrderCode,
+          paymentLinkId: paymentLink, amountMinor: 85000n, currency: 'VND',
+          qrReceivingAccountHash: qrHash, settlementReceivingAccountHash: bankHash,
+          occurredAt: signedAt, signatureVerifiedAt: signedAt, providerReconciledAt: signedAt,
+        } });
+        await tx.gdsInternalTopup.update({ where: { id: topupId }, data: {
+          status: 'PAYOS_VERIFIED', collectionReference: collection, settlementReceivingAccountHash: bankHash,
+          signatureVerifiedAt: signedAt, providerReconciledAt: signedAt,
+        } });
+        await tx.gdsInternalJournal.create({ data: {
+          walletId: applicationOwner.wallet.id, eventKey: `card-credit-${topupId}`, kind: 'TOPUP_CREDIT',
+          amountMinor: 85000n, availableDeltaMinor: 85000n, heldDeltaMinor: 0n, clearingDeltaMinor: -85000n,
+          topupId, collectionReference: collection,
+        } });
+      });
+      const { computeMembershipCardForUser } = require('../dist/src/modules/membership-cards/membership-card-source.js');
+      const cardPolicy = { enabled: true, basis: 'topup', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
+        tiers: [{ code: 'member', name: { vi: 'Member', en: 'Member' }, threshold: 0, benefits: [] },
+          { code: 'gold', name: { vi: 'Gold', en: 'Gold' }, threshold: 85000, benefits: [] }] };
+      const balanceBeforeCard = await balance(applicationOwner.id);
+      const topupCard = await runtime.$transaction(tx => computeMembershipCardForUser(tx, cardPolicy, 'synthetic-policy', applicationOwner.id), { isolationLevel: 'RepeatableRead' });
+      assert.equal(topupCard.status, 'evaluated');
+      assert.equal(topupCard.qualifyingAmountMinor, '85000');
+      assert.equal(topupCard.tier.code, 'gold');
+      assert.equal(topupCard.eligibleTopupCount, 1);
+      assert.equal((await computeMembershipCardForUser(runtime, cardPolicy, 'synthetic-policy', applicationBuyer.id)).qualifyingAmountMinor, '0');
+      assert.deepEqual(await balance(applicationOwner.id), balanceBeforeCard, 'Card evaluation must never mutate wallet state');
+      console.log('GDS_MEMBERSHIP_TOPUP_RESTRICTED_SOURCE=PASS');
       // Use canonical checkout services for draft-to-active product lifecycle,
       // cart conversion, immutable line snapshots and matching order totals.
       // This pending synthetic order is only an attribution FK, never paid.
