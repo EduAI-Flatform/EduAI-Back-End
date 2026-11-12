@@ -19,6 +19,7 @@ async function main() {
   const { CommerceFulfillmentService } = require('../dist/src/modules/payments/commerce-fulfillment.service.js');
   const { MembershipCheckoutService } = require('../dist/src/modules/memberships/membership-checkout.service.js');
   const { MembershipContinuityService } = require('../dist/src/modules/memberships/membership-continuity.service.js');
+  const { LegacyMembershipReportService } = require('../dist/src/modules/memberships/legacy-membership-report.service.js');
   const { GdsInternalCheckoutService } = require('../dist/src/modules/wallet/gds-internal-checkout.service.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
@@ -107,7 +108,14 @@ async function main() {
       assert.equal(await db.commerceSettlement.count({where:{orderId}}),1);
       assert.equal(await db.commercePaymentAttempt.count({where:{orderId}}),0);
       assert.equal((await access.decide({user:{id:buyerId,roles:['student']},courseId:ids.course,operation:'FULL_LEARNING'})).allowed,true);
-      if(type==='membership') assert.equal(await db.membershipSubscription.count({where:{userId:buyerId,status:'active'}}),1);
+      if(type==='membership') {
+        assert.equal(await db.membershipSubscription.count({where:{userId:buyerId,status:'active'}}),1);
+        const before = await db.courseAccessGrant.findMany({where:{userId:buyerId},orderBy:{id:'asc'}});
+        const report = await new LegacyMembershipReportService(db).report(orderId);
+        assert.equal(report.status,'reconciled'); assert.equal(report.readOnly,true); assert.deepEqual(report.findings,[]);
+        assert.deepEqual(await db.courseAccessGrant.findMany({where:{userId:buyerId},orderBy:{id:'asc'}}),before);
+        console.log('GDS_LEGACY_MEMBERSHIP_RECONCILIATION=PASS; canonical capture, restricted scope, unchanged purchased grants');
+      }
       await gds.payOrder(buyerId,orderId);
       assert.equal((await db.gdsInternalWallet.findUniqueOrThrow({where:{buyerId}})).availableMinor,expectedBalance);
       console.log('GDS_FULL_SCHEMA_'+type.toUpperCase()+'_CHECKOUT=PASS; concurrent replay, exact debit, entitlement, no external attempt');
