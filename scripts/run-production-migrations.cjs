@@ -61,9 +61,13 @@ const REVIEWED_GDS_PLATFORM_MIGRATIONS = Object.freeze([
   { name: '20261111180000_affiliate_wallet', sha256: '68209F41FBC9CFD719BDA6EB8462B8A2769E890482A73212F598205E3D23AA76' },
 ]);
 const GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-gds-platform-migrations';
+const REVIEWED_POINT_MIGRATIONS = Object.freeze([
+  { name: '20261112180000_activity_points', sha256: '2CB0A2157FA15329AB0870ED46E30F3BFB3BAC4DB4B05498582B32185029A355' },
+]);
+const POINT_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-point-migrations';
 
 function parseMigrationApprovalArguments(arguments_) {
-  const allowed = new Set([RECEIPT_MIGRATION_APPROVAL_ARGUMENT, GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT]);
+  const allowed = new Set([RECEIPT_MIGRATION_APPROVAL_ARGUMENT, GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT, POINT_MIGRATION_APPROVAL_ARGUMENT]);
   if (!Array.isArray(arguments_) || new Set(arguments_).size !== arguments_.length ||
       arguments_.some(argument => !allowed.has(argument))) {
     throw safeDatabaseFailure('MIGRATION_ARGUMENT_INVALID');
@@ -71,6 +75,7 @@ function parseMigrationApprovalArguments(arguments_) {
   return {
     allowReviewedReceiptMigrations: arguments_.includes(RECEIPT_MIGRATION_APPROVAL_ARGUMENT),
     allowReviewedGdsPlatformMigrations: arguments_.includes(GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT),
+    allowReviewedPointMigrations: arguments_.includes(POINT_MIGRATION_APPROVAL_ARGUMENT),
   };
 }
 const RECONCILIATION_FINANCIAL_KINDS = [
@@ -371,6 +376,10 @@ function assertReviewedGdsPlatformMigrationFingerprints(rootDirectory) {
   return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_GDS_PLATFORM_MIGRATIONS);
 }
 
+function assertReviewedPointMigrationFingerprints(rootDirectory) {
+  return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_POINT_MIGRATIONS);
+}
+
 function assertReviewedMigrationFingerprints(rootDirectory, migrations) {
   const hashes = {};
   for (const migration of migrations) {
@@ -419,6 +428,7 @@ function assertMigrationLedgerState({
   allowReviewedBankTransferMigration = false,
   allowReviewedReceiptMigrations = false,
   allowReviewedGdsPlatformMigrations = false,
+  allowReviewedPointMigrations = false,
   localMigrationNames: localNames,
   localMigrationChecksums: localChecksums,
   migrationRows,
@@ -472,6 +482,20 @@ function assertMigrationLedgerState({
   }
 
   const pendingMigrationNames = localNames.filter((name) => !applied.has(name));
+  const reviewedPointNames = REVIEWED_POINT_MIGRATIONS.map(({ name }) => name);
+  const hasPointArtifacts = reviewedPointNames.some(name => localNames.includes(name));
+  if (hasPointArtifacts) {
+    for (const migration of REVIEWED_POINT_MIGRATIONS) {
+      if (!localNames.includes(migration.name) || localChecksums?.[migration.name]?.toUpperCase() !== migration.sha256)
+        throw migrationPreflightFailure('MIGRATION_ARTIFACT_CHECKSUM_MISMATCH');
+    }
+  }
+  const onlyReviewedPointsPending = hasPointArtifacts && pendingMigrationNames.length === reviewedPointNames.length
+    && JSON.stringify(pendingMigrationNames) === JSON.stringify(reviewedPointNames)
+    && applied.has(EXPECTED_BANK_TRANSFER_MIGRATION)
+    && [...REVIEWED_RECEIPT_MIGRATIONS, ...REVIEWED_REVENUE_MIGRATIONS, ...REVIEWED_GDS_PLATFORM_MIGRATIONS].every(({ name }) => applied.has(name));
+  if (allowAlreadyApplied && targetRows.length === 1 && onlyReviewedPointsPending && !allowReviewedPointMigrations)
+    throw migrationPreflightFailure('MIGRATION_RELEASE_APPROVAL_REQUIRED');
   const reviewedGdsNames = REVIEWED_GDS_PLATFORM_MIGRATIONS.map(({ name }) => name);
   const hasGdsArtifacts = reviewedGdsNames.some(name => localNames.includes(name));
   if (hasGdsArtifacts) {
@@ -521,6 +545,7 @@ function assertMigrationLedgerState({
     allowAlreadyApplied &&
     targetRows.length === 1 &&
     (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending || onlyReviewedRevenuePending ||
+      (allowReviewedPointMigrations && onlyReviewedPointsPending) ||
       (allowReviewedGdsPlatformMigrations && isReviewedGdsSuffix) ||
       (allowReviewedReceiptMigrations && isReviewedReceiptSuffix))
   ) {
@@ -1778,6 +1803,7 @@ function assertReconciliationPreflightStable(before, after) {
     JSON.stringify(before.receiptMigrationHashes) !== JSON.stringify(after.receiptMigrationHashes) ||
     JSON.stringify(before.revenueMigrationHashes) !== JSON.stringify(after.revenueMigrationHashes) ||
     JSON.stringify(before.gdsPlatformMigrationHashes) !== JSON.stringify(after.gdsPlatformMigrationHashes) ||
+    JSON.stringify(before.pointMigrationHashes) !== JSON.stringify(after.pointMigrationHashes) ||
     before.ledger?.currentSchemaVersion !== after.ledger?.currentSchemaVersion ||
     JSON.stringify(before.ledger?.pendingMigrationNames) !==
       JSON.stringify(after.ledger?.pendingMigrationNames) ||
@@ -2065,6 +2091,7 @@ async function runMigrationPreflight({
   allowAlreadyApplied = false,
   allowReviewedReceiptMigrations = false,
   allowReviewedGdsPlatformMigrations = false,
+  allowReviewedPointMigrations = false,
 }) {
   const migrationHash = await runSafePreflightStage(
     'ARTIFACT',
@@ -2086,6 +2113,7 @@ async function runMigrationPreflight({
     'ARTIFACT',
     () => assertReviewedGdsPlatformMigrationFingerprints(rootDirectory),
   );
+  const pointMigrationHashes = await runSafePreflightStage('ARTIFACT', () => assertReviewedPointMigrationFingerprints(rootDirectory));
   const roles = await runSafePreflightStage(
     'ROLE_VERIFICATION',
     () => verifyDatabaseRoleSeparationAtServer(runtimeUrl, migrationUrl),
@@ -2137,6 +2165,7 @@ async function runMigrationPreflight({
           allowReviewedBankTransferMigration: true,
           allowReviewedReceiptMigrations,
           allowReviewedGdsPlatformMigrations,
+          allowReviewedPointMigrations,
           localMigrationNames: localNames,
           localMigrationChecksums: localChecksums,
           migrationRows: ledgerResult.rows,
@@ -2191,6 +2220,7 @@ async function runMigrationPreflight({
     receiptMigrationHashes,
     revenueMigrationHashes,
     gdsPlatformMigrationHashes,
+    pointMigrationHashes,
     roles,
     privileges,
     localMigrationNames: localNames,
@@ -2256,7 +2286,7 @@ async function runMigrationPostflight({
 }
 
 async function run() {
-  const { allowReviewedReceiptMigrations, allowReviewedGdsPlatformMigrations } =
+  const { allowReviewedReceiptMigrations, allowReviewedGdsPlatformMigrations, allowReviewedPointMigrations } =
     parseMigrationApprovalArguments(process.argv.slice(2));
   const rootDirectory = process.cwd();
   dotenv.config({ quiet: true });
@@ -2275,6 +2305,7 @@ async function run() {
       allowAlreadyApplied: true,
       allowReviewedReceiptMigrations,
       allowReviewedGdsPlatformMigrations,
+      allowReviewedPointMigrations,
     }),
   );
   const repeatPreflight = await runSafePreflightStage(
@@ -2286,6 +2317,7 @@ async function run() {
       allowAlreadyApplied: true,
       allowReviewedReceiptMigrations,
       allowReviewedGdsPlatformMigrations,
+      allowReviewedPointMigrations,
     }),
   );
   await runSafePreflightStage(
@@ -2348,6 +2380,9 @@ async function run() {
   }
   const bankMigrationHashBeforeApply = assertReviewedBankTransferMigrationFingerprint(rootDirectory);
   const gdsPlatformMigrationHashesBeforeApply = assertReviewedGdsPlatformMigrationFingerprints(rootDirectory);
+  const pointMigrationHashesBeforeApply = assertReviewedPointMigrationFingerprints(rootDirectory);
+  if (JSON.stringify(pointMigrationHashesBeforeApply) !== JSON.stringify(preflight.pointMigrationHashes))
+    throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   if (JSON.stringify(gdsPlatformMigrationHashesBeforeApply) !== JSON.stringify(preflight.gdsPlatformMigrationHashes)) {
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   }
@@ -2442,6 +2477,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  REVIEWED_POINT_MIGRATIONS,
+  POINT_MIGRATION_APPROVAL_ARGUMENT,
+  assertReviewedPointMigrationFingerprints,
   REVIEWED_GDS_PLATFORM_MIGRATIONS,
   GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT,
   parseMigrationApprovalArguments,
