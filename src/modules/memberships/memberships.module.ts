@@ -12,11 +12,12 @@ import { ServiceEntitlementService } from './service-entitlement.service';
 import { MembershipContinuityService } from './membership-continuity.service';
 import { LegacyMembershipReportController } from './legacy-membership-report.controller';
 import { LegacyMembershipReportService } from './legacy-membership-report.service';
+import { LegacyMembershipInventoryService } from './legacy-membership-inventory.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, AuditModule, CommerceModule],
   controllers: [MembershipAdminController, ServiceEntitlementController, MembershipCheckoutController, LegacyMembershipReportController],
-  providers: [MembershipAdminService, MembershipCheckoutService, MembershipContinuityService, ServiceEntitlementService, LegacyMembershipReportService],
+  providers: [MembershipAdminService, MembershipCheckoutService, MembershipContinuityService, ServiceEntitlementService, LegacyMembershipReportService, LegacyMembershipInventoryService],
   exports: [MembershipAdminService, MembershipContinuityService, ServiceEntitlementService],
 })
 export class MembershipsModule {}

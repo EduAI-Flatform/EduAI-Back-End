@@ -20,6 +20,7 @@ async function main() {
   const { MembershipCheckoutService } = require('../dist/src/modules/memberships/membership-checkout.service.js');
   const { MembershipContinuityService } = require('../dist/src/modules/memberships/membership-continuity.service.js');
   const { LegacyMembershipReportService } = require('../dist/src/modules/memberships/legacy-membership-report.service.js');
+  const { LegacyMembershipInventoryService } = require('../dist/src/modules/memberships/legacy-membership-inventory.service.js');
   const { GdsInternalCheckoutService } = require('../dist/src/modules/wallet/gds-internal-checkout.service.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
@@ -115,6 +116,34 @@ async function main() {
         assert.equal(report.status,'reconciled'); assert.equal(report.readOnly,true); assert.deepEqual(report.findings,[]);
         assert.deepEqual(await db.courseAccessGrant.findMany({where:{userId:buyerId},orderBy:{id:'asc'}}),before);
         console.log('GDS_LEGACY_MEMBERSHIP_RECONCILIATION=PASS; canonical capture, restricted scope, unchanged purchased grants');
+        const inventory = new LegacyMembershipInventoryService(db);
+        const subscription = await db.membershipSubscription.findFirstOrThrow({where:{userId:buyerId}});
+        const orphanUser=randomUUID();
+        await db.user.create({data:{id:orphanUser,email:orphanUser+'@synthetic.invalid',fullName:'Synthetic legacy inventory exception'}});
+        const orphanSubscription=await db.membershipSubscription.create({data:{userId:orphanUser,versionId:ids.version,startsAt:subscription.startsAt,expiresAt:subscription.expiresAt}});
+        const definition=await db.serviceEntitlementDefinition.create({data:{code:'LEGACY_AUDIT_'+randomUUID().replaceAll('-','').toUpperCase(),valueType:'boolean',resetPeriod:'none',displayName:'Synthetic legacy inventory',createdById:ids.seller}});
+        const separateService=await db.serviceEntitlementGrant.create({data:{userId:orphanUser,definitionId:definition.id,sourceType:'ADMIN',sourceId:randomUUID(),valueType:'boolean',resetPeriod:'none',booleanValue:true,startsAt:subscription.startsAt,endsAt:subscription.expiresAt}});
+        for (const [source,targetId,expectedOrder,expectedCode] of [
+          ['orders',orderId,orderId,'ORDER_RECONCILIATION_REQUIRED'],
+          ['subscriptions',subscription.id,orderId,'ORDER_RECONCILIATION_REQUIRED'],
+          ['course_grants',before[0].id,orderId,'ORDER_RECONCILIATION_REQUIRED'],
+          ['subscriptions',orphanSubscription.id,null,'SOURCE_ORDER_MISSING'],
+          ['service_grants',separateService.id,null,'UNSUPPORTED_SERVICE_SOURCE'],
+        ]) {
+          let after; let found=false;
+          for(let page=0;page<100;page++) {
+            const result=await inventory.list({source,pageSize:1,after});
+            assert.equal(result.readOnly,true); assert.equal(result.migrationReadiness,'not_assessed');
+            if(result.items.some(item=>item.id===targetId&&item.orderId===expectedOrder&&item.code===expectedCode))found=true;
+            if(!result.hasMore)break;
+            assert.notEqual(result.nextCursor,after); after=result.nextCursor;
+          }
+          assert.equal(found,true);
+        }
+        assert.deepEqual(await db.courseAccessGrant.findMany({where:{userId:buyerId},orderBy:{id:'asc'}}),before);
+        assert.deepEqual(await db.membershipSubscription.findUniqueOrThrow({where:{id:orphanSubscription.id}}),orphanSubscription);
+        assert.deepEqual(await db.serviceEntitlementGrant.findUniqueOrThrow({where:{id:separateService.id}}),separateService);
+        console.log('GDS_LEGACY_SOURCE_INVENTORY=PASS; cursor paging, independent source coverage, unchanged grants');
       }
       await gds.payOrder(buyerId,orderId);
       assert.equal((await db.gdsInternalWallet.findUniqueOrThrow({where:{buyerId}})).availableMinor,expectedBalance);
