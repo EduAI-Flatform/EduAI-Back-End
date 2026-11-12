@@ -18,6 +18,7 @@ import type { MembershipCardPolicy } from "../membership-cards/membership-card.e
 import { computeActivityPointImpact } from '../tmi/activity-point-impact';
 import { SUPPORTED_POINT_EVENTS, type ActivityPointPolicy } from '../tmi/activity-point-policy';
 import { readActivityPointReadiness } from '../tmi/activity-point.readiness';
+import { samePlatformPolicyContent } from './platform-policy-content';
 
 const publicGroups = [
   "branding",
@@ -124,7 +125,7 @@ export class PlatformSettingsService {
     const row = await this.get(id);
     const current = await this.current();
     const before = current.settings[row.group];
-    const changed = JSON.stringify(before) !== JSON.stringify(row.content);
+    const changed = !samePlatformPolicyContent(before, row.content);
     const membershipImpact = row.group === "membership"
       ? await this.prisma.$transaction(tx => computeMembershipCardImpact(
           tx, row.content as unknown as MembershipCardPolicy, row.id,
