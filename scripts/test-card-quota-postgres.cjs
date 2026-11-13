@@ -145,6 +145,16 @@ async function main() {
       userId: user.id, operationKeyHash: service.operationKeyHash(paidKey) } } })).grantId, purchased.id);
     assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id, sourceType: 'MEMBERSHIP_CARD' } }), 2,
       'Unused card quota must not be provisioned when purchased quota is selected');
+    const ownQuotas = await service.listForUser(user.id, paidFirstAt);
+    assert.equal(ownQuotas.items[0].source, 'independent');
+    assert.equal(ownQuotas.items[0].remaining, '8');
+    assert.equal(ownQuotas.cardItems.length, 1);
+    assert.equal(ownQuotas.cardItems[0].quota, '7');
+    assert.equal(ownQuotas.cardItems[0].consumed, '4');
+    assert.equal(ownQuotas.cardItems[0].remaining, '3');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id, sourceType: 'MEMBERSHIP_CARD' } }), 2,
+      'Own-quota reads must not provision the unused current card context');
+    console.log('CARD_QUOTA_OWN_READ_SEPARATE_FROM_PAID_PRIORITY=PASS');
     await runtimePolicy(7, new Date('2026-11-25'), 'card_first', false);
     assert.equal((await service.resolve(user.id, 'AI_CHAT', new Date('2026-11-26'))).remaining, '8', 'Disabling card preserves purchased service quota');
     const usageBeforeDisabledRequest = await db.serviceEntitlementUsage.count({ where: { userId: user.id } });

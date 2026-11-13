@@ -46,7 +46,7 @@ export class ServiceEntitlementService {
         const current = byCode.get(decision.code);
         if (!current || (!current.allowed && decision.allowed)) byCode.set(decision.code, decision);
       }
-      return { items: [...byCode.values()], evaluatedAt: at };
+      return { items: [...byCode.values()], cardItems: decisions.filter(item => item.source === 'card'), evaluatedAt: at };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
@@ -214,6 +214,7 @@ export class ServiceEntitlementService {
   ) {
     const window = entitlementUsageWindow(grant.resetPeriod, grant.startsAt, grant.endsAt, at);
     let remaining: string | null = null;
+    let consumed: string | null = null;
     let allowed = grant.valueType !== ServiceEntitlementValueType.boolean || grant.booleanValue === true;
     if (grant.valueType === ServiceEntitlementValueType.metered) {
       const usage = await client.serviceEntitlementUsage.aggregate({
@@ -227,6 +228,7 @@ export class ServiceEntitlementService {
         _sum: { quantity: true },
       });
       const amount = usage._sum.quantity ?? 0n;
+      consumed = amount.toString();
       const available = (grant.quota as bigint) - amount;
       allowed = available > 0n;
       remaining = (available > 0n ? available : 0n).toString();
@@ -240,6 +242,9 @@ export class ServiceEntitlementService {
       resetPeriod: grant.resetPeriod.toUpperCase(),
       allowed,
       reason: allowed ? 'ENTITLEMENT_ACTIVE' : 'ENTITLEMENT_DISABLED_OR_EXHAUSTED',
+      source: grant.sourceType === 'MEMBERSHIP_CARD' ? 'card' : grant.sourceType === 'UNVERIFIED_RECEIPT_ACCESS' ? 'unverified_receipt' : 'independent',
+      quota: grant.quota?.toString() ?? null,
+      consumed,
       remaining,
       periodStartsAt: window.startsAt,
       periodEndsAt: window.endsAt,

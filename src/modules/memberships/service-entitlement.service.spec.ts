@@ -82,6 +82,19 @@ describe('ServiceEntitlementService', () => {
     process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED = 'true';
     process.env.BANK_RECEIPT_SYNTHETIC_BUYER_IDS = 'student-id';
   };
+  it('lists current card quota separately when purchased quota takes consumption priority, without provisioning', async () => {
+    const { service, tx } = harness();
+    const card = grant({ id: '', sourceType: 'MEMBERSHIP_CARD', quota: 5n });
+    jest.mocked(resolveCardServiceQuota).mockResolvedValue({ configured: true, priority: 'purchased_first', grants: [card as never] });
+    tx.serviceEntitlementUsage.aggregate.mockResolvedValue({ _sum: { quantity: 2n } });
+    const result = await service.listForUser('student-id', now);
+    expect(result.items[0]).toMatchObject({ source: 'independent', quota: '3', consumed: '2', remaining: '1' });
+    expect(result).toMatchObject({ cardItems: [{ source: 'card', code: 'AI_CHAT', quota: '5', consumed: '2', remaining: '3' }] });
+    expect(tx.serviceEntitlementGrant.createMany).not.toHaveBeenCalled();
+    expect(tx.serviceEntitlementUsage.create).not.toHaveBeenCalled();
+    expect(provisionCardServiceGrant).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain('cardQualification');
+  });
   it('consumes the current card first when configured, pooling across old card grants in the service period', async () => {
     const { service, tx } = harness();
     const card = grant({ id: '', sourceType: 'MEMBERSHIP_CARD', quota: 5n });
