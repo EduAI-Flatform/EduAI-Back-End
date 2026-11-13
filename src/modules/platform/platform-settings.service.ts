@@ -85,7 +85,7 @@ export class PlatformSettingsService {
     }, cardServiceCapabilities: { supportedOperations: [...CARD_REQUEST_SERVICES],
       schemaReady: cardReadiness.ready, schemaBlocker: cardReadiness.reason,
       definitions: cardDefinitions.map(definition => ({ ...definition, executable: isBoundCardRequestDefinition(definition) })),
-      activationReady: false, activationBlocker: 'CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED',
+      activationReady: cardReadiness.ready, activationBlocker: cardReadiness.reason,
     } };
   }
 
@@ -132,7 +132,7 @@ export class PlatformSettingsService {
     throw new ConflictException("Configuration changed. Please retry.");
   }
 
-  async preview(id: string) {
+  async preview(id: string, membershipPage: { after?: string; pageSize?: number } = {}) {
     const row = await this.get(id);
     const current = await this.current();
     const before = current.settings[row.group];
@@ -140,7 +140,7 @@ export class PlatformSettingsService {
     const membershipImpact = row.group === "membership"
       ? await this.prisma.$transaction(tx => computeMembershipCardImpact(
           tx, row.content as unknown as MembershipCardPolicy, row.id,
-          { beforePolicy: current.settings.membership as MembershipCardPolicy, beforeRevisionId: current.versions.membership },
+          { ...membershipPage, beforePolicy: current.settings.membership as MembershipCardPolicy, beforeRevisionId: current.versions.membership },
         ), { isolationLevel: "RepeatableRead" })
       : null;
     const pointsImpact = row.group === 'points'
@@ -167,7 +167,7 @@ export class PlatformSettingsService {
       canSchedule: blockers.length === 0,
       blockers,
       preservesPurchasedAccess: true,
-      membershipImpact,
+      membershipImpact: membershipImpact ? { ...membershipImpact, activationReady: blockers.length === 0, activationBlockers: blockers } : null,
       cardServiceBindings,
       pointsImpact,
     };
@@ -264,7 +264,7 @@ export class PlatformSettingsService {
     if (group === 'membership' && (c.serviceLimits as { enabled?: boolean } | undefined)?.enabled === true) {
       const bindings = inspectedBindings ?? await inspectCardServiceBindings(client, content as MembershipCardPolicy);
       const readiness = await readCardServiceReadiness(client);
-      return ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED', ...(readiness.ready ? [] : [readiness.reason]),
+      return [...(readiness.ready ? [] : [readiness.reason]),
         ...new Set(bindings.issues.map(issue => issue.reason))];
     }
     if (group === "affiliate" && c.subAffiliateEnabled) {

@@ -40,7 +40,7 @@ export async function computeMembershipCardImpact(client: SourceClient & Pick<Pr
   const policyProbe = evaluateMembershipCard(policy, revisionId, [], at, []);
   if (policyProbe.status === 'unavailable') return { status: 'unavailable', reason: policyProbe.reason,
     policyRevisionId: revisionId, preservesPurchasedAccess: true, items: [], nextCursor: null, complete: false,
-    activationReady: false, activationBlockers: [policyProbe.reason] };
+    simulationOnly: true };
   const count = await client.user.count({ where: { deletedAt: null } });
   const users = await client.user.findMany({ where: { deletedAt: null, ...(options.after ? { id: { gt: options.after } } : {}) },
     orderBy: { id: 'asc' }, take: pageSize + 1, select: { id: true } });
@@ -56,7 +56,7 @@ export async function computeMembershipCardImpact(client: SourceClient & Pick<Pr
     where: { buyerId: { in: selected.map(user => user.id) }, status: 'CREDITED' },
     orderBy: { id: 'asc' }, take: MAX_SOURCE_ORDERS + 1, select: membershipTopupSelect,
   }) : [];
-  if (orders.length > MAX_SOURCE_ORDERS || topups.length > MAX_SOURCE_ORDERS) return { status: 'unavailable', reason: 'SOURCE_SCAN_LIMIT_EXCEEDED', policyRevisionId: revisionId, preservesPurchasedAccess: true, totalUsers: count, items: [], nextCursor: null, complete: false };
+  if (orders.length > MAX_SOURCE_ORDERS || topups.length > MAX_SOURCE_ORDERS) return { status: 'unavailable', reason: 'SOURCE_SCAN_LIMIT_EXCEEDED', policyRevisionId: revisionId, preservesPurchasedAccess: true, totalUsers: count, items: [], nextCursor: null, complete: false, simulationOnly: true };
   const quotaImpact = await loadCardServiceImpact(client, [policy, ...(options.beforePolicy ? [options.beforePolicy] : [])], selected.map(user => user.id), at);
   const items = selected.map(user => {
     const source = orders.filter(order => order.buyerId === user.id);
@@ -94,5 +94,5 @@ export async function computeMembershipCardImpact(client: SourceClient & Pick<Pr
     serviceConsumptionProjectionIssues: quotaImpact.issues,
     items, nextCursor: hasNextPage ? selected[selected.length - 1]?.id ?? null : null,
     complete: !hasNextPage && !options.after && quotaImpact.complete && !items.some(item => item.evaluation.status === 'unavailable'), evaluatedAt: at.toISOString(),
-    activationReady: false, activationBlockers: ['LEGACY_ENTITLEMENT_MIGRATION_NOT_VERIFIED', 'CARD_BENEFIT_FULFILLMENT_NOT_VERIFIED'] };
+    simulationOnly: true };
 }

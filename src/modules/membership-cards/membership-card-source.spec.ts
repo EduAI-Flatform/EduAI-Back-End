@@ -81,7 +81,7 @@ describe('membership impact source', () => {
   it('shows complete=false for a paginated impact rather than claiming global totals', async () => {
     const db = client();
     const result = await computeMembershipCardImpact(db as any, policy, 'v1', { pageSize: 1 });
-    expect(result).toMatchObject({ totalUsers: 2, evaluatedUsers: 1, complete: false, nextCursor: 'one', activationReady: false });
+    expect(result).toMatchObject({ totalUsers: 2, evaluatedUsers: 1, complete: false, nextCursor: 'one', simulationOnly: true });
   });
   it('loads only credited top-ups for top-up classification without counting purchases', async () => {
     const db = client();

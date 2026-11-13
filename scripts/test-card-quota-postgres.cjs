@@ -193,6 +193,44 @@ async function main() {
     assert.equal(summaryGrants.length, 1);
     assert.equal(await db.serviceEntitlementUsage.count({ where: { grantId: summaryGrants[0].id } }), 1);
     console.log('CARD_AI_SUMMARY_REAL_PRISMA_SOURCE_ACCESS_AND_PROVIDER_ADMISSION=PASS');
+
+    // Exercise the actual policy lifecycle with production-shaped lifecycle-only privileges.
+    // This disposable fixture never activates a production policy or calls a real provider.
+    await db.$executeRawUnsafe(`GRANT SELECT,INSERT ON audit_logs TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT INSERT ON platform_policy_revisions TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT UPDATE(status,approved_by_id,approved_at,effective_at) ON platform_policy_revisions TO "${role}"`);
+    const { PlatformSettingsService } = require('../dist/src/modules/platform/platform-settings.service.js');
+    const settings = new PlatformSettingsService(runtime);
+    const countsBeforeGovernance = [await db.serviceEntitlementGrant.count(), await db.serviceEntitlementUsage.count()];
+    const draft = await settings.create(admin.id, 'membership', {
+      enabled: true, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
+      serviceLimits: { enabled: true, consumptionPriority: 'card_first', termAnchorAt: '', termMonths: 0 },
+      tiers: [{ code: 'custom', name: { vi: 'Synthetic', en: 'Synthetic' }, threshold: 0, benefits: [],
+        serviceLimits: [{ definitionId: summaryDefinition.id, quota: '2' }] }],
+    });
+    assert.equal((await settings.state()).cardServiceCapabilities.activationReady, true);
+    const preview = await settings.preview(draft.id);
+    assert.equal(preview.canSchedule, true);
+    assert.equal(preview.membershipImpact.activationReady, true);
+    assert.deepEqual(preview.membershipImpact.activationBlockers, []);
+    const effectiveAt = new Date(Date.now() + 86400000);
+    await assert.rejects(() => settings.schedule(admin.id, draft.id, effectiveAt), error => error.getStatus() === 409);
+    await settings.approve(admin.id, draft.id);
+    await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants DISABLE TRIGGER membership_card_grant_validate');
+    try {
+      await assert.rejects(() => settings.schedule(admin.id, draft.id, effectiveAt),
+        error => error.getStatus() === 400 && error.getResponse().blockers.includes('CARD_SERVICE_SCHEMA_NOT_VERIFIED'));
+    } finally { await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants ENABLE TRIGGER membership_card_grant_validate'); }
+    assert.equal((await db.platformPolicyRevision.findUniqueOrThrow({ where: { id: draft.id } })).status, 'approved');
+    await settings.schedule(admin.id, draft.id, effectiveAt);
+    const scheduled = await db.platformPolicyRevision.findUniqueOrThrow({ where: { id: draft.id } });
+    assert.equal(scheduled.status, 'scheduled');
+    assert.equal(scheduled.effectiveAt.getTime(), effectiveAt.getTime());
+    assert.deepEqual([await db.serviceEntitlementGrant.count(), await db.serviceEntitlementUsage.count()], countsBeforeGovernance);
+    assert.equal(await db.auditLog.count({ where: { targetId: draft.id, action: { in: [
+      'PLATFORM_POLICY_DRAFT_CREATED', 'PLATFORM_POLICY_APPROVED', 'PLATFORM_POLICY_SCHEDULED',
+    ] } } }), 3);
+    console.log('CARD_QUOTA_RESTRICTED_POLICY_LIFECYCLE_READINESS_AND_NO_USAGE_WRITES=PASS');
   } finally {
     await Promise.allSettled(clients.map(client => client.end()));
     await runtime?.$disconnect();

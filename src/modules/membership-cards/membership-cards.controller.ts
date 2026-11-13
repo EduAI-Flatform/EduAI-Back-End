@@ -11,7 +11,7 @@ import { Roles } from '../auth/roles.decorator';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { PlatformSettingsService } from '../platform/platform-settings.service';
 import type { MembershipCardPolicy } from './membership-card.evaluator';
-import { computeMembershipCardForUser, computeMembershipCardImpact } from './membership-card-source';
+import { computeMembershipCardForUser } from './membership-card-source';
 
 export class MembershipImpactQuery {
   @IsOptional() @IsUUID('4') after?: string;
@@ -42,10 +42,9 @@ export class MembershipCardsController {
     const revision = await this.prisma.platformPolicyRevision.findUnique({ where: { id: revisionId } });
     if (!revision) throw new NotFoundException('Membership policy revision not found.');
     if (revision.group !== 'membership') {
-      return { status: 'unavailable', reason: 'NOT_A_MEMBERSHIP_REVISION', policyRevisionId: revisionId, complete: false };
+      return { status: 'unavailable', reason: 'NOT_A_MEMBERSHIP_REVISION', policyRevisionId: revisionId, complete: false, items: [] };
     }
-    const effective = await this.settings.current();
-    return this.prisma.$transaction(tx => computeMembershipCardImpact(tx, revision.content as unknown as MembershipCardPolicy, revisionId,
-      { ...query, beforePolicy: effective.settings.membership as MembershipCardPolicy, beforeRevisionId: effective.versions.membership ?? null }), { isolationLevel: 'RepeatableRead' });
+    const preview = await this.settings.preview(revisionId, query);
+    return preview.membershipImpact;
   }
 }
