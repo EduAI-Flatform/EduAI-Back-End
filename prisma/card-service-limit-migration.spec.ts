@@ -117,6 +117,14 @@ describe('card service-limit PostgreSQL boundary', () => {
     await reject(() => db.query("UPDATE platform_policy_revisions SET effective_at='2026-11-10' WHERE id=$1", [active]), /membership.*immutable/i);
     await reject(() => card(active), /membership_card_grant_context_key/);
   });
+  it('does not require card-table privileges for unrelated policy lifecycle updates', async () => {
+    const branding = await policy(3, { group: 'branding' });
+    const role = 'synthetic_policy_' + randomUUID().replace(/-/g, '');
+    await db.exec(`CREATE ROLE "${role}"; GRANT USAGE ON SCHEMA public TO "${role}";
+      GRANT SELECT, UPDATE ON platform_policy_revisions TO "${role}"; SET LOCAL ROLE "${role}";`);
+    await db.query("UPDATE platform_policy_revisions SET status='cancelled' WHERE id=$1", [branding]);
+    await db.exec('RESET ROLE');
+  });
   it('counts old and revoked card usage across revisions without consuming independent preexisting quota', async () => {
     const oldPolicy = await policy(); const newPolicy = await policy(5, { effectiveAt: '2026-11-15' });
     const old = await card(oldPolicy); await consume(old, 2, 1);

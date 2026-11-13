@@ -162,6 +162,7 @@ CREATE TRIGGER "membership_card_grant_validate" BEFORE INSERT ON "service_entitl
 
 CREATE FUNCTION "membership_card_policy_facts_immutable"() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF OLD."group" <> 'membership' AND NEW."group" <> 'membership' THEN RETURN NEW; END IF;
   IF (OLD."group" = 'membership' OR NEW."group" = 'membership')
     AND ROW(NEW."group", NEW."version", NEW."content", NEW."created_by_id", NEW."created_at")
       IS DISTINCT FROM ROW(OLD."group", OLD."version", OLD."content", OLD."created_by_id", OLD."created_at") THEN
