@@ -15,6 +15,7 @@ import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { entitlementUsageWindow } from './service-entitlement.rules';
 import { receiptEarlyAccessEnabled } from '../../common/security/receipt-sandbox-policy';
+import { resolveCardServiceQuota, provisionCardServiceGrant } from '../membership-cards/membership-card-service-quota';
 
 const KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const grantInclude = { definition: true } satisfies Prisma.ServiceEntitlementGrantInclude;
@@ -37,22 +38,26 @@ export class ServiceEntitlementService {
   ) {}
 
   async listForUser(userId: string, at = new Date()) {
-    const grants = await this.activeGrants(this.prisma, userId, undefined, at);
-    const decisions = await Promise.all(grants.map((grant) => this.grantDecision(this.prisma, grant, at)));
-    const byCode = new Map<string, (typeof decisions)[number]>();
-    for (const decision of decisions) {
-      const current = byCode.get(decision.code);
-      if (!current || (!current.allowed && decision.allowed)) byCode.set(decision.code, decision);
-    }
-    return { items: [...byCode.values()], evaluatedAt: at };
+    return this.prisma.$transaction(async tx => {
+      const grants = await this.activeGrants(tx, userId, undefined, at);
+      const decisions = await Promise.all(grants.map((grant) => this.grantDecision(tx, grant, at)));
+      const byCode = new Map<string, (typeof decisions)[number]>();
+      for (const decision of decisions) {
+        const current = byCode.get(decision.code);
+        if (!current || (!current.allowed && decision.allowed)) byCode.set(decision.code, decision);
+      }
+      return { items: [...byCode.values()], evaluatedAt: at };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
   async resolve(userId: string, code: string, at = new Date()) {
-    const normalizedCode = code.trim().toUpperCase();
-    const grants = await this.activeGrants(this.prisma, userId, normalizedCode, at);
-    if (grants.length === 0) return this.denied(normalizedCode);
-    const decisions = await Promise.all(grants.map((grant) => this.grantDecision(this.prisma, grant, at)));
-    return decisions.find((decision) => decision.allowed) ?? decisions[0];
+    return this.prisma.$transaction(async tx => {
+      const normalizedCode = code.trim().toUpperCase();
+      const grants = await this.activeGrants(tx, userId, normalizedCode, at);
+      if (grants.length === 0) return this.denied(normalizedCode);
+      const decisions = await Promise.all(grants.map((grant) => this.grantDecision(tx, grant, at)));
+      return decisions.find((decision) => decision.allowed) ?? decisions[0];
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
   async provisionFromPlanVersion(
@@ -122,9 +127,10 @@ export class ServiceEntitlementService {
         if (!decision.allowed) continue;
         const remaining = decision.remaining === null ? null : BigInt(decision.remaining);
         if (remaining !== null && remaining < quantity) continue;
+        const consumedGrant = grant.sourceType === 'MEMBERSHIP_CARD' ? await provisionCardServiceGrant(tx, grant) : grant;
         const usage = await tx.serviceEntitlementUsage.create({
           data: {
-            grantId: grant.id, userId, operationKeyHash, requestHash, quantity,
+            grantId: consumedGrant.id, userId, operationKeyHash, requestHash, quantity,
             periodStartsAt: decision.periodStartsAt,
             periodEndsAt: decision.periodEndsAt,
             remainingAfter: remaining === null ? null : remaining - quantity,
@@ -153,12 +159,12 @@ export class ServiceEntitlementService {
   }
 
   private async activeGrants(
-    client: Pick<PrismaService, 'serviceEntitlementGrant' | 'commerceReceiptAccessEffect'> | Prisma.TransactionClient,
+    client: Prisma.TransactionClient,
     userId: string,
     code: string | undefined,
     at: Date,
   ): Promise<Grant[]> {
-    const grants = await client.serviceEntitlementGrant.findMany({
+    const found = await client.serviceEntitlementGrant.findMany({
       where: {
         userId,
         status: ServiceEntitlementGrantStatus.active,
@@ -169,18 +175,22 @@ export class ServiceEntitlementService {
       include: grantInclude,
       orderBy: [{ endsAt: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }, { id: 'asc' }],
     });
+    // Current canonical qualification controls card grants; stale active grants cannot supply quota.
+    let grants = found.filter(grant => grant.sourceType !== 'MEMBERSHIP_CARD');
     const early = grants.filter((grant) => grant.sourceType === 'UNVERIFIED_RECEIPT_ACCESS');
-    if (early.length === 0) return grants;
-    if (!receiptEarlyAccessEnabled(this.config.app.nodeEnv, process.env, userId)) {
-      return grants.filter((grant) => grant.sourceType !== 'UNVERIFIED_RECEIPT_ACCESS');
+    if (early.length && !receiptEarlyAccessEnabled(this.config.app.nodeEnv, process.env, userId)) {
+      grants = grants.filter((grant) => grant.sourceType !== 'UNVERIFIED_RECEIPT_ACCESS');
+    } else if (early.length) {
+      const effects = await client.commerceReceiptAccessEffect.findMany({ where: {
+        resourceType: 'service_entitlement_grant', resourceId: { in: early.map((grant) => grant.id) },
+        generation: { buyerId: userId, status: 'ACCESS_UNVERIFIED' },
+      }, select: { resourceId: true, generationId: true, orderLineId: true } });
+      const allowed = new Map(effects.map((effect) => [effect.resourceId, `${effect.generationId}:${effect.orderLineId}`]));
+      grants = grants.filter((grant) => grant.sourceType !== 'UNVERIFIED_RECEIPT_ACCESS'
+        || (Boolean(grant.quotaPoolId) && allowed.get(grant.id) === grant.sourceId));
     }
-    const effects = await client.commerceReceiptAccessEffect.findMany({ where: {
-      resourceType: 'service_entitlement_grant', resourceId: { in: early.map((grant) => grant.id) },
-      generation: { buyerId: userId, status: 'ACCESS_UNVERIFIED' },
-    }, select: { resourceId: true, generationId: true, orderLineId: true } });
-    const allowed = new Map(effects.map((effect) => [effect.resourceId, `${effect.generationId}:${effect.orderLineId}`]));
-    return grants.filter((grant) => grant.sourceType !== 'UNVERIFIED_RECEIPT_ACCESS'
-      || (Boolean(grant.quotaPoolId) && allowed.get(grant.id) === grant.sourceId));
+    const card = await resolveCardServiceQuota(client, userId, code, at);
+    return card.priority === 'card_first' ? [...card.grants, ...grants] : [...grants, ...card.grants];
   }
 
   private async grantDecision(
@@ -195,8 +205,11 @@ export class ServiceEntitlementService {
       const usage = await client.serviceEntitlementUsage.aggregate({
         // Revoked generations still count. Never gate pooling on the early-access feature flag:
         // canonical paid grants must retain spent quota after the experiment is switched off.
-        where: { ...(grant.quotaPoolId ? { grant: { quotaPoolId: grant.quotaPoolId } } : { grantId: grant.id }),
-          periodStartsAt: window.startsAt, periodEndsAt: window.endsAt },
+        where: grant.sourceType === 'MEMBERSHIP_CARD'
+          ? { userId: grant.userId, grant: { sourceType: 'MEMBERSHIP_CARD', userId: grant.userId, definitionId: grant.definitionId },
+            ...(grant.resetPeriod === 'none' ? {} : { createdAt: { gte: window.startsAt, lt: window.endsAt! } }) }
+          : { ...(grant.quotaPoolId ? { grant: { quotaPoolId: grant.quotaPoolId } } : { grantId: grant.id }),
+            periodStartsAt: window.startsAt, periodEndsAt: window.endsAt },
         _sum: { quantity: true },
       });
       const amount = usage._sum.quantity ?? 0n;

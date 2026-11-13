@@ -71,6 +71,52 @@ async function main() {
       assert.equal(usage._count, 1);
     }
     console.log('CARD_CROSS_TIER_LAST_UNIT_SERIALIZABLE_RACES=PASS rounds=10');
+
+    const { ServiceEntitlementService } = require('../dist/src/modules/memberships/service-entitlement.service.js');
+    const service = new ServiceEntitlementService(db, { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-card-operation-key'.repeat(3) } });
+    const user = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic runtime learner' } });
+    const definition = await db.serviceEntitlementDefinition.create({ data: { code: 'AI_CHAT', valueType: 'metered',
+      resetPeriod: 'calendar_month', unitLabel: 'request', displayName: 'Synthetic request quota', createdById: admin.id } });
+    const runtimePolicy = async (quota, effectiveAt, priority = 'card_first', enabled = true) => db.platformPolicyRevision.create({
+      data: { group: 'membership', version: ++version, status: 'scheduled', createdById: admin.id, approvedById: admin.id,
+        createdAt: new Date('2026-10-28'), approvedAt: new Date('2026-10-29'), effectiveAt,
+        content: { enabled, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
+          serviceLimits: { enabled: true, consumptionPriority: priority, termAnchorAt: '', termMonths: 0 },
+          tiers: [{ code: 'custom', name: { vi: 'Synthetic', en: 'Synthetic' }, threshold: 0, benefits: [],
+            serviceLimits: [{ definitionId: definition.id, quota: String(quota) }] }] } } });
+    const firstPolicy = await runtimePolicy(3, start);
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', at)).remaining, '3');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id } }), 0, 'Read resolution must not create grants');
+    const key = randomUUID();
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, key, at)).remaining, '2');
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, key, at)).idempotent, true);
+    const firstGrant = await db.serviceEntitlementGrant.findFirstOrThrow({ where: { userId: user.id } });
+    assert.equal(firstGrant.cardPolicyRevisionId, firstPolicy.id);
+    assert.equal(firstGrant.cardTierCode, 'custom');
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { userId: user.id } }), 1);
+    const nextAt = new Date('2026-11-16');
+    await runtimePolicy(5, new Date('2026-11-15'));
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', nextAt)).remaining, '4');
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, randomUUID(), nextAt)).remaining, '3');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id } }), 2);
+    const runtimeRace = await Promise.allSettled([service.consume(user.id, 'AI_CHAT', 2n, randomUUID(), nextAt),
+      service.consume(user.id, 'AI_CHAT', 2n, randomUUID(), nextAt)]);
+    assert.equal(runtimeRace.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(runtimeRace.find(result => result.status === 'rejected').reason.getStatus(), 403);
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', nextAt)).remaining, '1');
+    const purchased = await db.serviceEntitlementGrant.create({ data: { userId: user.id, definitionId: definition.id,
+      sourceType: 'ADMIN', sourceId: hash(), valueType: 'metered', resetPeriod: 'calendar_month', quota: 9n, startsAt: start, endsAt: end } });
+    const paidFirstAt = new Date('2026-11-21');
+    await runtimePolicy(7, new Date('2026-11-20'), 'purchased_first');
+    const paidKey = randomUUID();
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, paidKey, paidFirstAt)).remaining, '8');
+    assert.equal((await db.serviceEntitlementUsage.findUniqueOrThrow({ where: { userId_operationKeyHash: {
+      userId: user.id, operationKeyHash: service.operationKeyHash(paidKey) } } })).grantId, purchased.id);
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id, sourceType: 'MEMBERSHIP_CARD' } }), 2,
+      'Unused card quota must not be provisioned when purchased quota is selected');
+    await runtimePolicy(7, new Date('2026-11-25'), 'card_first', false);
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', new Date('2026-11-26'))).remaining, '8', 'Disabling card preserves purchased service quota');
+    console.log('CARD_RUNTIME_PRISMA_READ_ONLY_PROVENANCE_REPLAY_POOLING_PRIORITY_AND_RACE=PASS');
   } finally {
     await Promise.allSettled(clients.map(client => client.end()));
     await db.$disconnect();
