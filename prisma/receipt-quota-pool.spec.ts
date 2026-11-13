@@ -16,6 +16,8 @@ describe('receipt quota pool PostgreSQL boundary', () => {
       CREATE TABLE membership_checkout_intents(order_id uuid UNIQUE REFERENCES commerce_orders(id),version_id uuid REFERENCES membership_plan_versions(id),starts_at timestamp(3),ends_at timestamp(3));`);
     await db.exec(readFileSync(join(__dirname, 'migrations/20260824170000_add_service_entitlements/migration.sql'), 'utf8'));
     await db.exec(readFileSync(join(__dirname, 'migrations/20261023021000_add_receipt_quota_pools/migration.sql'), 'utf8'));
+    await db.exec(readFileSync(join(__dirname, 'migrations/20261111090000_platform_policy_revisions/migration.sql'), 'utf8'));
+    await db.exec(readFileSync(join(__dirname, 'migrations/20261113100000_card_service_limit_provenance/migration.sql'), 'utf8'));
   }, 30_000);
   afterAll(async () => { await db.close(); });
   beforeEach(async () => {

@@ -1074,6 +1074,11 @@ model MembershipPlanEntitlement {
 }
 
 model ServiceEntitlementGrant {
+  cardPolicyRevisionId String? @map("card_policy_revision_id") @db.Uuid
+  cardTierCode String? @map("card_tier_code")
+  cardSourceDigest String? @map("card_source_digest") @db.Char(64)
+  cardQualification Json? @map("card_qualification")
+  cardPolicy PlatformPolicyRevision? @relation("CardServicePolicy", fields: [cardPolicyRevisionId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "membership_card_policy_fk")
   id            String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId        String                         @map("user_id") @db.Uuid
   definitionId  String                         @map("definition_id") @db.Uuid
@@ -1098,6 +1103,7 @@ model ServiceEntitlementGrant {
   @@index([userId, status, startsAt, endsAt])
   @@index([definitionId, status])
   @@index([quotaPoolId])
+  @@index([cardPolicyRevisionId], map: "service_entitlement_grants_card_policy_idx")
   @@map("service_entitlement_grants")
 }
 
@@ -1913,6 +1919,7 @@ enum PlatformPolicyStatus {
 }
 
 model PlatformPolicyRevision {
+  cardServiceGrants ServiceEntitlementGrant[] @relation("CardServicePolicy")
   pointActivityReceipts PointActivityReceipt[]
   affiliateVisits AffiliateVisit[] @relation("AffiliateVisitPolicy")
   affiliateAttributions AffiliateAttribution[] @relation("AffiliateAttributionPolicy")

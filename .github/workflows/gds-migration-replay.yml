@@ -8,7 +8,7 @@ on:
 
 jobs:
   production-baseline-to-head:
-    name: Replay production baseline then 23 GDS platform and financial migrations
+    name: Replay production baseline then 24 GDS platform and financial migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -57,8 +57,9 @@ jobs:
             prisma/migrations/20261111170000_support_image
             prisma/migrations/20261111180000_affiliate_wallet
             prisma/migrations/20261112180000_activity_points
+            prisma/migrations/20261113100000_card_service_limit_provenance
           )
-          test "${#pending[@]}" -eq 23
+          test "${#pending[@]}" -eq 24
           for migration in "${pending[@]}"; do
             mv "$migration" "$RUNNER_TEMP/gds-pending/"
           done
@@ -66,7 +67,7 @@ jobs:
           test "$baseline_count" -eq 65
           npm run prisma:migrate:deploy
           npx prisma migrate status
-      - name: Upgrade the same database through all 23 pending migrations
+      - name: Upgrade the same database through all 24 pending migrations
         shell: bash
         run: |
           set -euo pipefail
@@ -92,6 +93,9 @@ jobs:
 
       - name: Verify native point awards, expiry and concurrent spending with restricted Prisma role
         run: node scripts/test-activity-points-prisma.cjs
+
+      - name: Verify concurrent last-unit card consumption across tiers
+        run: node scripts/test-card-quota-postgres.cjs
 
       - name: Verify private backup against the disposable replay database
         run: |
