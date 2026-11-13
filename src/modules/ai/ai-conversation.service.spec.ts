@@ -21,7 +21,7 @@ describe('AiConversationService', () => {
       aiMessage: { create: jest.fn().mockResolvedValue(assistantMessage) },
       course: { findFirst: jest.fn().mockResolvedValue({ id: 'course-id', lessons: [] }) },
     };
-    const quota = { assertChatAllowed: jest.fn() };
+    const quota = { assertChatAllowed: jest.fn(), consumeServiceRequest: jest.fn() };
     const retrieval = { retrieve: jest.fn().mockResolvedValue([]) };
     const openai = {
       getModel: jest.fn().mockReturnValue('gpt-5.4-mini'),
@@ -49,6 +49,7 @@ describe('AiConversationService', () => {
       grounding: 'general',
     });
     expect(quota.assertChatAllowed).toHaveBeenCalledWith(user.id);
+    expect(quota.consumeServiceRequest).toHaveBeenCalledWith(user.id, 'AI_CHAT');
     expect(retrieval.retrieve).toHaveBeenCalledWith(user, input.message);
     expect(transaction.aiMessage.create).toHaveBeenCalledWith(expect.objectContaining({
       data: { conversationId: 'conversation-id', role: 'user', content: input.message },

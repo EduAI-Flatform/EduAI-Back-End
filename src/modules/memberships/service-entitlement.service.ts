@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -15,7 +15,7 @@ import { AppConfigService } from '../../config/app-config.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { entitlementUsageWindow } from './service-entitlement.rules';
 import { receiptEarlyAccessEnabled } from '../../common/security/receipt-sandbox-policy';
-import { resolveCardServiceQuota, provisionCardServiceGrant } from '../membership-cards/membership-card-service-quota';
+import { CARD_REQUEST_SERVICES, resolveCardServiceQuota, provisionCardServiceGrant } from '../membership-cards/membership-card-service-quota';
 
 const KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const grantInclude = { definition: true } satisfies Prisma.ServiceEntitlementGrantInclude;
@@ -101,12 +101,25 @@ export class ServiceEntitlementService {
     idempotencyKey: string | undefined,
     at = new Date(),
   ) {
+    return this.consumeRequest(userId, code, quantity, idempotencyKey, at, false);
+  }
+
+  /** Internal server attempts use fresh keys; never expose this as a generic browser consumption endpoint. */
+  consumeServerRequest(userId: string, code: typeof CARD_REQUEST_SERVICES[number], at = new Date()) {
+    if (!CARD_REQUEST_SERVICES.includes(code)) throw new BadRequestException('Unsupported server service operation.');
+    return this.consumeRequest(userId, code, 1n, randomUUID(), at, true);
+  }
+
+  private consumeRequest(userId: string, code: string, quantity: bigint, idempotencyKey: string | undefined, at: Date, onlyWhenConfigured: boolean) {
     this.assertInput(quantity, idempotencyKey);
     const normalizedCode = code.trim().toUpperCase();
-    const operationKeyHash = this.operationKeyHash(idempotencyKey as string);
     const requestHash = this.requestHash(normalizedCode, quantity);
     return this.runSerializable(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id = ${userId}::uuid FOR UPDATE`);
+      const card = onlyWhenConfigured ? await resolveCardServiceQuota(tx, userId, normalizedCode, at) : undefined;
+      if (card && !card.configured) return { allowed: true, code: normalizedCode, consumed: '0', remaining: null,
+        policyConfigured: false, idempotent: false, periodStartsAt: null, periodEndsAt: null };
+      const operationKeyHash = this.operationKeyHash(idempotencyKey as string);
       const existing = await tx.serviceEntitlementUsage.findUnique({
         where: { userId_operationKeyHash: { userId, operationKeyHash } },
       });
@@ -121,7 +134,7 @@ export class ServiceEntitlementService {
         };
       }
 
-      const grants = await this.activeGrants(tx, userId, normalizedCode, at);
+      const grants = await this.activeGrants(tx, userId, normalizedCode, at, card);
       for (const grant of grants) {
         const decision = await this.grantDecision(tx, grant, at);
         if (!decision.allowed) continue;
@@ -163,6 +176,7 @@ export class ServiceEntitlementService {
     userId: string,
     code: string | undefined,
     at: Date,
+    resolvedCard?: Awaited<ReturnType<typeof resolveCardServiceQuota>>,
   ): Promise<Grant[]> {
     const found = await client.serviceEntitlementGrant.findMany({
       where: {
@@ -189,7 +203,7 @@ export class ServiceEntitlementService {
       grants = grants.filter((grant) => grant.sourceType !== 'UNVERIFIED_RECEIPT_ACCESS'
         || (Boolean(grant.quotaPoolId) && allowed.get(grant.id) === grant.sourceId));
     }
-    const card = await resolveCardServiceQuota(client, userId, code, at);
+    const card = resolvedCard ?? await resolveCardServiceQuota(client, userId, code, at);
     return card.priority === 'card_first' ? [...card.grants, ...grants] : [...grants, ...card.grants];
   }
 

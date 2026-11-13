@@ -65,6 +65,7 @@ export class AiConversationService {
       return conversationId;
     });
 
+    await this.rateLimit.consumeServiceRequest(user.id, 'AI_CHAT');
     const sources = input.contextType === 'course' && input.contextId
       ? await this.retrieval.retrieve(user, input.message, { courseId: input.contextId })
       : await this.retrieval.retrieve(user, input.message);

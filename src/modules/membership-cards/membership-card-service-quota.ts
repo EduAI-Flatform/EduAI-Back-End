@@ -13,7 +13,7 @@ type Client = Pick<Prisma.TransactionClient, 'platformPolicyRevision' | 'commerc
 
 /** Resolve read-only candidates inside the caller's snapshot. Empty IDs mean not yet provisioned. */
 export async function resolveCardServiceQuota(client: Client, userId: string, code: string | undefined, at: Date) {
-  const empty = { priority: 'purchased_first' as 'purchased_first' | 'card_first', grants: [] as CardServiceGrant[] };
+  const empty = { configured: false, priority: 'purchased_first' as 'purchased_first' | 'card_first', grants: [] as CardServiceGrant[] };
   const revision = await client.platformPolicyRevision.findFirst({
     where: { group: 'membership', status: 'scheduled', effectiveAt: { lte: at } },
     orderBy: [{ effectiveAt: 'desc' }, { version: 'desc' }],
@@ -22,6 +22,7 @@ export async function resolveCardServiceQuota(client: Client, userId: string, co
   if (!revision?.effectiveAt) return empty;
   const policy = revision.content as unknown as MembershipCardPolicy;
   if (!policy?.enabled || policy.serviceLimits?.enabled !== true) return empty;
+  empty.configured = true;
   try { validatePlatformSettings('membership', policy); } catch { return empty; }
   const evaluation = await computeMembershipCardForUser(client, policy, revision.id, userId, at);
   if (evaluation.status !== 'evaluated' || !evaluation.tier || !evaluation.sourceDigest) return empty;
@@ -62,7 +63,7 @@ export async function resolveCardServiceQuota(client: Client, userId: string, co
       valueType: 'metered', resetPeriod: definition.resetPeriod, booleanValue: null, quota: BigInt(rule.quota),
       quotaPoolId: null, status: 'active', startsAt, endsAt, createdAt: at, revokedAt: null });
   }
-  return { priority: policy.serviceLimits.consumptionPriority, grants };
+  return { configured: true, priority: policy.serviceLimits.consumptionPriority, grants };
 }
 
 /** Called only by the existing Serializable consumption transaction after checking available quota. */

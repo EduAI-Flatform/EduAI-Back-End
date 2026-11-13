@@ -16,6 +16,7 @@ import { GeminiService } from './gemini.service';
 import { AI_PROVIDER, AiProvider } from './ai-provider';
 import { MockAiProviderService } from './mock-ai-provider.service';
 import { AiLearningPathService } from './ai-learning-path.service';
+import { MembershipsModule } from '../memberships/memberships.module';
 
 const aiProvider = {
   provide: AI_PROVIDER,
@@ -33,7 +34,7 @@ const aiProvider = {
 };
 
 @Module({
-  imports: [AppConfigModule, PrismaModule, AuthModule],
+  imports: [AppConfigModule, PrismaModule, AuthModule, MembershipsModule],
   controllers: [AiController],
   providers: [
     AiConversationService,

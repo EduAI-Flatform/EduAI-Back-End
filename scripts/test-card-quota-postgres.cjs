@@ -19,6 +19,8 @@ async function main() {
   const hash = () => randomBytes(32).toString('hex');
   const at = new Date('2026-11-10T00:00:00Z');
   const start = new Date('2026-11-01T00:00:00Z'), end = new Date('2026-12-01T00:00:00Z');
+  const role = 'card_' + randomUUID().replaceAll('-', '');
+  let runtime;
   try {
     await Promise.all(clients.map(client => client.connect()));
     assert.equal((await verifyCardQuotaSchema(clients[0])).cardQuotaGuardsEnabled, true);
@@ -73,7 +75,16 @@ async function main() {
     console.log('CARD_CROSS_TIER_LAST_UNIT_SERIALIZABLE_RACES=PASS rounds=10');
 
     const { ServiceEntitlementService } = require('../dist/src/modules/memberships/service-entitlement.service.js');
-    const service = new ServiceEntitlementService(db, { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-card-operation-key'.repeat(3) } });
+    await db.$executeRawUnsafe(`CREATE ROLE "${role}" NOLOGIN`);
+    await db.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT SELECT ON users,commerce_orders,commerce_settlements,commerce_refunds,
+      platform_policy_revisions,service_entitlement_definitions,service_entitlement_grants,service_entitlement_usage,library_resources TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT INSERT ON service_entitlement_grants,service_entitlement_usage TO "${role}"`);
+    // Row locks require an UPDATE privilege; immutable fact triggers still forbid changing these facts.
+    for (const table of ['users','platform_policy_revisions','service_entitlement_definitions','service_entitlement_grants'])
+      await db.$executeRawUnsafe(`GRANT UPDATE(id) ON ${table} TO "${role}"`);
+    runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
+    const service = new ServiceEntitlementService(runtime, { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-card-operation-key'.repeat(3) } });
     const user = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic runtime learner' } });
     const definition = await db.serviceEntitlementDefinition.create({ data: { code: 'AI_CHAT', valueType: 'metered',
       resetPeriod: 'calendar_month', unitLabel: 'request', displayName: 'Synthetic request quota', createdById: admin.id } });
@@ -116,9 +127,47 @@ async function main() {
       'Unused card quota must not be provisioned when purchased quota is selected');
     await runtimePolicy(7, new Date('2026-11-25'), 'card_first', false);
     assert.equal((await service.resolve(user.id, 'AI_CHAT', new Date('2026-11-26'))).remaining, '8', 'Disabling card preserves purchased service quota');
+    const usageBeforeDisabledRequest = await db.serviceEntitlementUsage.count({ where: { userId: user.id } });
+    assert.equal((await service.consumeServerRequest(user.id, 'AI_CHAT', new Date('2026-11-26'))).consumed, '0');
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { userId: user.id } }), usageBeforeDisabledRequest);
     console.log('CARD_RUNTIME_PRISMA_READ_ONLY_PROVENANCE_REPLAY_POOLING_PRIORITY_AND_RACE=PASS');
+
+    const { AiRateLimitService } = require('../dist/src/modules/ai/ai-rate-limit.service.js');
+    const { AiSummaryService } = require('../dist/src/modules/ai/ai-summary.service.js');
+    const summaryDefinition = await db.serviceEntitlementDefinition.create({ data: { code: 'AI_SUMMARY', valueType: 'metered',
+      resetPeriod: 'calendar_month', unitLabel: 'request', displayName: 'Synthetic summary request', createdById: admin.id } });
+    await db.platformPolicyRevision.create({ data: { group: 'membership', version: ++version, status: 'scheduled',
+      createdById: admin.id, approvedById: admin.id, createdAt: new Date('2026-10-28'), approvedAt: new Date('2026-10-29'), effectiveAt: new Date('2026-11-27'),
+      content: { enabled: true, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
+        serviceLimits: { enabled: true, consumptionPriority: 'card_first', termAnchorAt: '', termMonths: 0 },
+        tiers: [{ code: 'custom', name: { vi: 'Synthetic', en: 'Synthetic' }, threshold: 0, benefits: [],
+          serviceLimits: [{ definitionId: summaryDefinition.id, quota: '1' }] }] } } });
+    const category = await db.libraryCategory.create({ data: { name: 'Synthetic source', slug: randomUUID() } });
+    const resource = await db.libraryResource.create({ data: { ownerId: user.id, categoryId: category.id,
+      title: 'Synthetic private source', description: 'Only supplied synthetic content', type: 'document', visibility: 'private' } });
+    let providerCalls = 0;
+    const mockProvider = { complete: async () => { providerCalls++; return { content: 'Synthetic summary' }; } };
+    const limiter = new AiRateLimitService({ getClient: () => undefined }, { app: { nodeEnv: 'test' } }, {
+      consumeServerRequest: (userId, code) => service.consumeServerRequest(userId, code, new Date('2026-11-28')),
+    });
+    const summary = new AiSummaryService(runtime, mockProvider, limiter, {});
+    const summaryInput = { sourceType: 'library_resource', sourceId: resource.id };
+    const beforeDeniedSource = await db.serviceEntitlementUsage.count({ where: { userId: user.id } });
+    await assert.rejects(() => summary.summarize({ id: admin.id, roles: ['student'] }, summaryInput), error => error.getStatus() === 404);
+    assert.equal(providerCalls, 0);
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { userId: user.id } }), beforeDeniedSource);
+    assert.equal((await summary.summarize({ id: user.id, roles: ['student'] }, summaryInput)).summary, 'Synthetic summary');
+    await assert.rejects(() => summary.summarize({ id: user.id, roles: ['student'] }, summaryInput), error => error.getStatus() === 403);
+    assert.equal(providerCalls, 1, 'Exhausted service quota must stop before a repeated provider attempt');
+    const summaryGrants = await db.serviceEntitlementGrant.findMany({ where: { userId: user.id, definitionId: summaryDefinition.id } });
+    assert.equal(summaryGrants.length, 1);
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { grantId: summaryGrants[0].id } }), 1);
+    console.log('CARD_AI_SUMMARY_REAL_PRISMA_SOURCE_ACCESS_AND_PROVIDER_ADMISSION=PASS');
   } finally {
     await Promise.allSettled(clients.map(client => client.end()));
+    await runtime?.$disconnect();
+    await db.$executeRawUnsafe(`DROP OWNED BY "${role}"`).catch(() => {});
+    await db.$executeRawUnsafe(`DROP ROLE IF EXISTS "${role}"`).catch(() => {});
     await db.$disconnect();
   }
 }

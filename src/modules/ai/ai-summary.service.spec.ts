@@ -18,7 +18,7 @@ describe('AiSummaryService', () => {
       getModel: jest.fn().mockReturnValue('gpt-5.4-mini'),
       complete: completion,
     };
-    const rateLimit = { assertSummaryAllowed: jest.fn() };
+    const rateLimit = { assertSummaryAllowed: jest.fn(), consumeServiceRequest: jest.fn() };
     const courseAccess = { decideContent: jest.fn().mockResolvedValue({ allowed: true }) };
     return { service: new AiSummaryService(prisma as never, openai as never, rateLimit as never, courseAccess as never), prisma, completion, rateLimit, courseAccess };
   }
@@ -32,6 +32,7 @@ describe('AiSummaryService', () => {
       sourceType: 'lesson', sourceId: 'lesson-id', title: 'Recursion', summary: 'A concise summary.',
     });
     expect(rateLimit.assertSummaryAllowed).toHaveBeenCalledWith(student.id);
+    expect(rateLimit.consumeServiceRequest).toHaveBeenCalledWith(student.id, 'AI_SUMMARY');
     expect(prisma.lesson.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -42,6 +43,17 @@ describe('AiSummaryService', () => {
     expect(completion).toHaveBeenCalledWith(
       expect.objectContaining({ messages: expect.any(Array) }),
     );
+  });
+  it('checks source access before charging and stops before provider completion when quota is denied', async () => {
+    const { service, prisma, completion, rateLimit } = createService();
+    prisma.lesson.findFirst.mockResolvedValue(null);
+    await expect(service.summarize(student, { sourceType: 'lesson', sourceId: 'missing' })).rejects.toBeInstanceOf(NotFoundException);
+    expect(rateLimit.consumeServiceRequest).not.toHaveBeenCalled();
+    prisma.lesson.findFirst.mockResolvedValue({ id: 'lesson-id', courseId: 'course-id', isPreview: false });
+    prisma.lesson.findUnique.mockResolvedValue({ title: 'Source', content: 'Allowed' });
+    rateLimit.consumeServiceRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service.summarize(student, { sourceType: 'lesson', sourceId: 'lesson-id' })).rejects.toThrow('Quota denied');
+    expect(completion).not.toHaveBeenCalled();
   });
 
   it('does not call the provider for an inaccessible resource', async () => {

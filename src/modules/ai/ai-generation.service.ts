@@ -50,6 +50,7 @@ export class AiGenerationService {
     await this.rateLimit.assertQuizAllowed(user.id);
     const source = await this.summary.resolveSource(user, input);
     if (!source) throw new NotFoundException('AI generation source not found');
+    await this.rateLimit.consumeServiceRequest(user.id, 'AI_QUIZ');
     const questions = await this.generateJson<GeneratedQuestion[]>(
       'Generate a JSON object with an items array of multiple-choice questions. Each item must contain question, options (exactly 4 strings), correctAnswer (one option), and explanation.',
       source.title,
@@ -71,6 +72,7 @@ export class AiGenerationService {
     await this.rateLimit.assertFlashcardsAllowed(user.id);
     const source = await this.summary.resolveSource(user, input);
     if (!source) throw new NotFoundException('AI generation source not found');
+    await this.rateLimit.consumeServiceRequest(user.id, 'AI_FLASHCARDS');
     const flashcards = await this.generateJson<GeneratedFlashcard[]>(
       'Generate a JSON object with an items array of study flashcards. Each item must contain a concise front and an accurate back.',
       source.title,

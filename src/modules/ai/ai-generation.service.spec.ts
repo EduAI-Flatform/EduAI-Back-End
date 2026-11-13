@@ -24,7 +24,7 @@ describe('AiGenerationService', () => {
           content: typeof payload === 'string' ? payload : JSON.stringify(payload),
         }),
     };
-    const rateLimit = { assertQuizAllowed: jest.fn(), assertFlashcardsAllowed: jest.fn() };
+    const rateLimit = { assertQuizAllowed: jest.fn(), assertFlashcardsAllowed: jest.fn(), consumeServiceRequest: jest.fn() };
     const summary = { resolveSource: jest.fn().mockResolvedValue({ title: 'Recursion', content: 'A function calls itself.' }) };
     return { service: new AiGenerationService(prisma as never, openai as never, rateLimit as never, summary as never), prisma, rateLimit, summary };
   }
@@ -39,6 +39,7 @@ describe('AiGenerationService', () => {
       quizId: 'quiz-id', sourceType: 'lesson', sourceId: 'lesson-id', questions: expect.any(Array),
     });
     expect(rateLimit.assertQuizAllowed).toHaveBeenCalledWith(user.id);
+    expect(rateLimit.consumeServiceRequest).toHaveBeenCalledWith(user.id, 'AI_QUIZ');
     expect(summary.resolveSource).toHaveBeenCalledWith(user, input);
     expect(prisma.aiGeneratedQuiz.create).toHaveBeenCalled();
   });
@@ -56,6 +57,7 @@ describe('AiGenerationService', () => {
       ],
     });
     expect(rateLimit.assertFlashcardsAllowed).toHaveBeenCalledWith(user.id);
+    expect(rateLimit.consumeServiceRequest).toHaveBeenCalledWith(user.id, 'AI_FLASHCARDS');
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
