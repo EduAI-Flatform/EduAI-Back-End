@@ -17,6 +17,18 @@ describe("platform configuration validation", () => {
     expect(original).toEqual(DEFAULT_PLATFORM_SETTINGS.membership);
     expect(original).not.toHaveProperty('serviceLimits');
   });
+  it('accepts independent service quotas for additional administrator-defined tiers', () => {
+    const value = quotaPolicy();
+    value.enabled = true;
+    value.tiers.forEach((tier, index) => { tier.threshold = index * 100; });
+    value.tiers.push({ code: 'diamond', name: { vi: 'Kim cương', en: 'Diamond' }, threshold: 300,
+      benefits: [], serviceLimits: [{ definitionId: '00000000-0000-4000-8000-000000000001', quota: '80' }] });
+    const snapshot = structuredClone(value);
+    expect(validatePlatformSettings('membership', value)).toBe('membership');
+    expect(value).toEqual(snapshot);
+    expect(value.tiers[0].serviceLimits[0].quota).toBe('25');
+    expect(value.tiers[3].serviceLimits[0].quota).toBe('80');
+  });
   it.each(['0', '-1', '1.5', '01', '9223372036854775808', '1e3'])('rejects unsupported service quota %s', quota => {
     const value = quotaPolicy(); value.tiers[0].serviceLimits[0].quota = quota;
     expect(() => validatePlatformSettings('membership', value)).toThrow();

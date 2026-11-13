@@ -1,0 +1,9 @@
+# Card quota provenance — work in progress
+
+The initial Member, Golden Member and Platinum Member tiers are extensible. Admin-added tiers use the same versioned policy, localized names, qualification thresholds and independent service quotas. No new business threshold or quota is activated by these fixtures.
+
+The unapplied `20261113100000_card_service_limit_provenance` migration adds optional policy/tier/source/qualification provenance to existing entitlement grants. It preserves historical purchases and independent grants. Database guards validate the effective approved membership policy, configured quota and qualification/service windows; referenced facts are immutable. Card consumption requires Serializable isolation and aggregates prior card usage across policy revisions and tiers for the same user/service/window. Lifetime usage is retained; receipt and other grant counters remain separate.
+
+Local verification on 2026-11-13: all 24 tests in the card migration, receipt quota and platform policy migration suites passed under PGlite. This includes a fourth Admin-defined tier, exact top-up qualification boundaries, future approval rejection, monthly/fixed-term/lifetime windows and preserved consumption across revisions. Prisma merge/client generation and Nest build passed. These results do not prove concurrent PostgreSQL transactions or production rollout.
+
+Still required before merge/deployment: real PostgreSQL concurrency coverage, independently pinned release authorization and replay/CI integration, protected-data comparison, controlled migration backup/runtime privileges and release evidence. Keep the runtime activation blocker in place until atomic provisioning, actual service integration, consumed-quota preview and native Admin/learner controls are implemented and verified. No production migration, card grant, quota consumption or policy activation occurred in this work-in-progress slice.

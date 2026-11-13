@@ -46,7 +46,7 @@ jobs:
       - name: GDS platform policy, MFA and affiliate PostgreSQL invariants
         run: >-
           npm run test:demo-data -- --runInBand
-          platform-policy-migration.spec.ts mfa-migration.spec.ts affiliate-wallet-migration.spec.ts activity-points-migration.spec.ts
+          platform-policy-migration.spec.ts mfa-migration.spec.ts affiliate-wallet-migration.spec.ts activity-points-migration.spec.ts card-service-limit-migration.spec.ts
 
       - name: Manual bank transfer security tests
         run: npm test -- --runInBand modules/payments/bank-transfer modules/payments/bank-receipt-access modules/access/course-access.service modules/memberships/service-entitlement modules/memberships/membership-continuity modules/memberships/membership-checkout.service
