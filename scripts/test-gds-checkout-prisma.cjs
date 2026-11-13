@@ -21,6 +21,10 @@ async function main() {
   const { MembershipContinuityService } = require('../dist/src/modules/memberships/membership-continuity.service.js');
   const { LegacyMembershipReportService } = require('../dist/src/modules/memberships/legacy-membership-report.service.js');
   const { LegacyMembershipInventoryService } = require('../dist/src/modules/memberships/legacy-membership-inventory.service.js');
+  const { LearningPathService } = require('../dist/src/modules/courses/learning-path.service.js');
+  const { CourseCompletionService } = require('../dist/src/modules/courses/course-completion.service.js');
+  const { UpdateLessonProgressDto } = require('../dist/src/modules/courses/dto/update-lesson-progress.dto.js');
+  const { validateSync } = require('class-validator');
   const { GdsInternalCheckoutService } = require('../dist/src/modules/wallet/gds-internal-checkout.service.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
@@ -109,6 +113,32 @@ async function main() {
       assert.equal(await db.commerceSettlement.count({where:{orderId}}),1);
       assert.equal(await db.commercePaymentAttempt.count({where:{orderId}}),0);
       assert.equal((await access.decide({user:{id:buyerId,roles:['student']},courseId:ids.course,operation:'FULL_LEARNING'})).allowed,true);
+      if (type === 'course') {
+        const lesson = await db.lesson.create({ data: { courseId: ids.course, title: 'Synthetic checkpoint lesson',
+          slug: 'checkpoint-' + randomUUID(), type: 'video', orderIndex: 1, durationMinutes: 1, isRequired: true } });
+        const completion = new CourseCompletionService({ issueForCompletion: async () => {
+          throw new Error('Partial progress must not issue a certificate');
+        } });
+        const learning = new LearningPathService(db, completion, access);
+        const user = { id: buyerId, roles: ['student'] };
+        const grantsBefore = await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } });
+        const invalid = Object.assign(new UpdateLessonProgressDto(), { watchedSeconds: 2.345678, durationSeconds: 60.123456, lastPositionSeconds: 2.345678 });
+        assert.equal(validateSync(invalid).length, 3);
+        for (const position of [2.35, 4.71, 2.35]) {
+          const input = Object.assign(new UpdateLessonProgressDto(), { watchedSeconds: position, durationSeconds: 60.12, lastPositionSeconds: position });
+          assert.equal(validateSync(input).length, 0);
+          const path = await learning.updateLessonProgress(user, lesson.id, input);
+          assert.equal(path.completed, false);
+        }
+        const reloaded = await new LearningPathService(db, completion, access).getLessonProgress(user, lesson.id);
+        assert.equal(reloaded.status, 'in_progress'); assert.equal(reloaded.watchedSeconds, 5);
+        assert.equal(reloaded.durationSeconds, 60); assert.equal(reloaded.lastPositionSeconds, 2);
+        assert.equal(reloaded.completedAt, null);
+        assert.equal(await db.learningProgress.count({ where: { userId: buyerId, lessonId: lesson.id } }), 1);
+        await assert.rejects(() => learning.getLessonProgress({ id: ids.buyerMember, roles: ['student'] }, lesson.id), error => error.getStatus() === 404);
+        assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
+        console.log('GDS_LEARNING_PROGRESS_POSTGRES_PERSISTENCE=PASS; DTO precision, checkpoints, reload, replay, ownership and unchanged purchased grants');
+      }
       if(type==='membership') {
         assert.equal(await db.membershipSubscription.count({where:{userId:buyerId,status:'active'}}),1);
         const before = await db.courseAccessGrant.findMany({where:{userId:buyerId},orderBy:{id:'asc'}});
