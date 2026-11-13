@@ -2,6 +2,7 @@ import type { Prisma } from '../../../generated/prisma/client';
 import { evaluateMembershipCard, type MembershipCardPolicy } from './membership-card.evaluator';
 import { membershipTopupSelect, type MembershipTopup } from './membership-topup.evaluator';
 import { samePlatformPolicyContent } from '../platform/platform-policy-content';
+import { cardServiceLimitDescriptor } from './membership-card-limits.policy';
 
 type SourceClient = Pick<Prisma.TransactionClient, 'commerceOrder' | 'gdsInternalTopup' | 'user'>;
 const MAX_SOURCE_ORDERS = 10000;
@@ -62,9 +63,14 @@ export async function computeMembershipCardImpact(client: SourceClient, policy: 
     const previous = options.beforePolicy ? evaluateMembershipCard(options.beforePolicy, options.beforeRevisionId ?? null, source, at, userTopups) : null;
     const comparable = previous && previous.status !== 'unavailable' && evaluation.status !== 'unavailable';
     const previousBenefits = previous?.tier?.benefits ?? [];
+    const previousServiceLimits = previous && options.beforePolicy
+      ? cardServiceLimitDescriptor(options.beforePolicy, previous.tier) : null;
+    const nextServiceLimits = cardServiceLimitDescriptor(policy, evaluation.tier);
     return { userId: user.id, evaluation, previousTierCode: previous?.tier?.code ?? null,
       previousBenefits: comparable ? previousBenefits : null,
       projectedBenefitsChanged: comparable ? !samePlatformPolicyContent(previousBenefits, evaluation.tier?.benefits ?? []) : null,
+      previousServiceLimits: comparable ? previousServiceLimits : null,
+      projectedServiceLimitsChanged: comparable ? !samePlatformPolicyContent(previousServiceLimits, nextServiceLimits) : null,
       projectedTierChanged: comparable ? previous.tier?.code !== evaluation.tier?.code : null };
   });
   return { status: items.some(item => item.evaluation.status === 'unavailable') ? 'unavailable' : 'evaluated',
@@ -72,6 +78,8 @@ export async function computeMembershipCardImpact(client: SourceClient, policy: 
     policyRevisionId: revisionId, preservesPurchasedAccess: true, totalUsers: count, evaluatedUsers: items.length,
     projectedChangesOnPage: items.filter(item => item.projectedTierChanged === true).length,
     projectedBenefitChangesOnPage: items.filter(item => item.projectedBenefitsChanged === true).length,
+    projectedServiceLimitChangesOnPage: items.filter(item => item.projectedServiceLimitsChanged === true).length,
+    serviceLimitImpactScope: 'configuration_only', serviceConsumptionProjected: false,
     items, nextCursor: hasNextPage ? selected[selected.length - 1]?.id ?? null : null,
     complete: !hasNextPage && !options.after, evaluatedAt: at.toISOString(),
     activationReady: false, activationBlockers: ['LEGACY_ENTITLEMENT_MIGRATION_NOT_VERIFIED', 'CARD_BENEFIT_FULFILLMENT_NOT_VERIFIED'] };

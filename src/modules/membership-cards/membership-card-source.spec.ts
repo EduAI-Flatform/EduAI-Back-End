@@ -1,5 +1,6 @@
 import { computeMembershipCardForUser, computeMembershipCardImpact } from './membership-card-source';
 import type { MembershipCardPolicy } from './membership-card.evaluator';
+import { DEFAULT_CARD_SERVICE_LIMITS } from './membership-card-limits.policy';
 const policy: MembershipCardPolicy = { enabled: true, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
   tiers: [{ code: 'member', name: { vi: 'Member', en: 'Member' }, threshold: 0, benefits: [] }] };
 function client() {
@@ -8,6 +9,16 @@ function client() {
   } };
 }
 describe('membership impact source', () => {
+  it('reports executable limit configuration separately and does not claim consumption projection', async () => {
+    const after = { ...policy, serviceLimits: { ...DEFAULT_CARD_SERVICE_LIMITS, enabled: true },
+      tiers: [{ ...policy.tiers[0], serviceLimits: [{ definitionId: 'definition', quota: '25' }] }] };
+    const result = await computeMembershipCardImpact(client() as any, after, 'new', { beforePolicy: policy, beforeRevisionId: 'old' });
+    expect(result).toMatchObject({ projectedBenefitChangesOnPage: 0, projectedServiceLimitChangesOnPage: 2,
+      serviceLimitImpactScope: 'configuration_only', serviceConsumptionProjected: false });
+    const disabled = await computeMembershipCardImpact(client() as any,
+      { ...after, serviceLimits: { ...after.serviceLimits, enabled: false } }, 'new', { beforePolicy: policy, beforeRevisionId: 'old' });
+    expect(disabled).toMatchObject({ projectedServiceLimitChangesOnPage: 0 });
+  });
   it('does not count reordered localized JSON object keys as changed benefits', async () => {
     const db = client();
     const before = { ...policy, tiers: [{ ...policy.tiers[0], benefits: [{ vi: 'A', en: 'B' }] }] };

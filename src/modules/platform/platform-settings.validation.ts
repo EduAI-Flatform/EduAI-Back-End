@@ -1,6 +1,8 @@
 import { BadRequestException } from "@nestjs/common";
 import { isISO8601 } from 'class-validator';
 import { SUPPORTED_POINT_EVENTS } from '../tmi/activity-point-policy';
+import { DEFAULT_CARD_SERVICE_LIMITS, validateCardServiceLimits, withCardServiceLimitDefaults } from '../membership-cards/membership-card-limits.policy';
+import type { MembershipCardPolicy } from '../membership-cards/membership-card.evaluator';
 import {
   DEFAULT_PLATFORM_SETTINGS,
   PLATFORM_GROUPS,
@@ -10,7 +12,8 @@ import {
 const localized = { vi: "", en: "" };
 const arrayTemplates: Record<string, unknown> = {
   navigation: DEFAULT_PLATFORM_SETTINGS.navigation[0],
-  tiers: DEFAULT_PLATFORM_SETTINGS.membership.tiers[0],
+  tiers: { ...DEFAULT_PLATFORM_SETTINGS.membership.tiers[0], serviceLimits: [] },
+  serviceLimits: { definitionId: '', quota: '' },
   benefits: localized,
   categories: localized,
   rules: { event: "", points: 0 },
@@ -34,6 +37,7 @@ const limits: Record<string, [number, number]> = {
   holdDays: [0, 365],
   descriptionMaxLength: [100, 4000],
   maxAttachmentMb: [1, 10],
+  termMonths: [0, 120],
 };
 function fail(path: string): never {
   throw new BadRequestException("Invalid configuration: " + path);
@@ -95,12 +99,14 @@ export function validatePlatformSettings(
 ): PlatformGroup {
   if (!(PLATFORM_GROUPS as readonly string[]).includes(group)) fail("group");
   if (!content || JSON.stringify(content).length > 100000) fail("size");
+  const validated = group === 'membership' ? withCardServiceLimitDefaults(content) : content;
   validateShape(
-    content,
-    DEFAULT_PLATFORM_SETTINGS[group as PlatformGroup],
+    validated,
+    group === 'membership' ? { ...DEFAULT_PLATFORM_SETTINGS.membership, serviceLimits: DEFAULT_CARD_SERVICE_LIMITS }
+      : DEFAULT_PLATFORM_SETTINGS[group as PlatformGroup],
     group,
   );
-  const c = content as Record<string, any>;
+  const c = validated as Record<string, any>;
   if (group === 'operations' && c.activities.some((activity: any) => activity.enabled && !activity.title.vi.trim()))
     fail('activity Vietnamese title is required when published');
   if (group === "affiliate" && (c.currency !== "VND" || c.commissionBase !== "net_paid_after_recorded_refunds" || c.attributionModel !== "first_touch" || c.subAffiliateEnabled))
@@ -110,6 +116,7 @@ export function validatePlatformSettings(
   if (group === "branding" && (!c.logoUrl || !c.name.trim()))
     fail("branding identity");
   if (group === "membership") {
+    validateCardServiceLimits(c as MembershipCardPolicy);
     if (c.currency !== "VND" || c.cycleMode !== "rolling")
       fail("membership currency/cycle mode");
     if (!["spend", "topup"].includes(c.basis) || !c.tiers.length)
