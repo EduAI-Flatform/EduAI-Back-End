@@ -36,6 +36,11 @@ async function main() {
     await db.$executeRawUnsafe(`GRANT INSERT ON platform_support_tickets,platform_support_replies,platform_partner_applications,audit_logs TO "${role}"`);
     await db.$executeRawUnsafe(`GRANT UPDATE(status,updated_at) ON platform_support_tickets,platform_partner_applications TO "${role}"`);
     runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
+    const [identity] = await runtime.$queryRaw`SELECT current_user AS name,
+      (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser,
+      has_table_privilege(current_user, 'commerce_orders', 'UPDATE') AS can_update_orders,
+      has_table_privilege(current_user, 'platform_policy_revisions', 'INSERT') AS can_create_policies`;
+    assert.deepEqual(identity, { name: role, superuser: false, can_update_orders: false, can_create_policies: false });
     const requests = new PlatformRequestsService(runtime, new PlatformSettingsService(runtime));
     const input = { title: 'Synthetic private support', content: 'Synthetic private body. '.repeat(20) };
     await assert.rejects(() => requests.createSupport(owner.id, input), error => error.getStatus() === 503);
