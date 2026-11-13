@@ -8,6 +8,23 @@ function client() {
   } };
 }
 describe('membership impact source', () => {
+  it('does not count reordered localized JSON object keys as changed benefits', async () => {
+    const db = client();
+    const before = { ...policy, tiers: [{ ...policy.tiers[0], benefits: [{ vi: 'A', en: 'B' }] }] };
+    const after = { ...policy, tiers: [{ ...policy.tiers[0], benefits: [{ en: 'B', vi: 'A' }] }] };
+    const result = await computeMembershipCardImpact(db as any, after, 'new', { beforePolicy: before, beforeRevisionId: 'old' });
+    expect(result).toMatchObject({ projectedChangesOnPage: 0, projectedBenefitChangesOnPage: 0 });
+    expect(result.items.every(item => item.projectedBenefitsChanged === false)).toBe(true);
+  });
+  it('still reports actual localized content and benefit-list order changes', async () => {
+    const before = { ...policy, tiers: [{ ...policy.tiers[0], benefits: [{ vi: 'A', en: 'B' }, { vi: 'C', en: 'D' }] }] };
+    for (const benefits of [[{ vi: 'A', en: 'Edited' }, { vi: 'C', en: 'D' }], [...before.tiers[0].benefits].reverse()]) {
+      const result = await computeMembershipCardImpact(client() as any,
+        { ...policy, tiers: [{ ...policy.tiers[0], benefits }] }, 'new', { beforePolicy: before, beforeRevisionId: 'old' });
+      expect(result).toMatchObject({ projectedChangesOnPage: 0, projectedBenefitChangesOnPage: 2 });
+      expect(result.items.every(item => item.projectedBenefitsChanged === true)).toBe(true);
+    }
+  });
   it('reports benefit changes even when the tier code is unchanged', async () => {
     const db = client();
     const updated = { ...policy, tiers: [{ ...policy.tiers[0], benefits: [{ vi: 'Ưu đãi mới', en: 'New benefit' }] }] };

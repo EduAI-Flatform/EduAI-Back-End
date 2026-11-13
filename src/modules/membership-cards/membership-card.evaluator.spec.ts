@@ -8,6 +8,14 @@ function order(id: string, amount: bigint, settledAt = at): MembershipSpendOrder
     confirmedSettlementId: `s-${id}`, confirmedSettlement: { id: `s-${id}`, orderId: id, amountMinor: amount, currency: 'VND', settledAt, kind: 'provider_collection', disposition: 'matched' }, refunds: [] };
 }
 describe('membership card evaluation', () => {
+  it('classifies an administrator-added tier without limiting cards to the three initial names', () => {
+    const custom = { ...policy, tiers: [...policy.tiers,
+      { code: 'diamond', name: { vi: 'Kim cuong', en: 'Diamond' }, threshold: 300, benefits: [{ vi: 'D', en: 'D' }] }] };
+    expect(evaluateMembershipCard(custom, 'custom-revision', [order('a', 300n)], at))
+      .toMatchObject({ policyRevisionId: 'custom-revision', tier: { code: 'diamond', threshold: 300 } });
+    expect(evaluateMembershipCard(custom, 'custom-revision', [order('a', 299n)], at))
+      .toMatchObject({ tier: { code: 'platinum' } });
+  });
   it('uses configured thresholds including the exact boundary and counts each order once', () => {
     const source = order('a', 100n);
     expect(evaluateMembershipCard(policy, 'revision-2', [source, source], at)).toMatchObject({ status: 'evaluated', policyRevisionId: 'revision-2', qualifyingAmountMinor: '100', tier: { code: 'gold' }, eligibleOrderCount: 1 });

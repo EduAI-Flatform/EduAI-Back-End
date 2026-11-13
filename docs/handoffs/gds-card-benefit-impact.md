@@ -1,0 +1,7 @@
+# GDS card benefit impact accuracy
+
+Card impact pages compared localized benefit arrays with raw JSON serialization, even after the generic policy editor/preview had been corrected. PostgreSQL JSONB may reorder the VI/EN keys; equal benefits could therefore be counted as changed for every evaluated user. Reuse the validated JSON comparison helper: object property order is ignored, while array order and actual translated content remain meaningful.
+
+The reordered-key regression failed before this correction, with two false benefit-change results. Tests retain positive coverage for real edits and reordered benefit lists. No settings, policy revisions, source digests, grants or history are rewritten. No new rate, threshold or entitlement is activated.
+
+The owner clarified that service limits come first, rather than course-benefit grants. Rank classification follows annual eligible spend or top-up criteria. The three initial tiers are defaults, not a fixed limit: additional Admin-defined tiers are already supported by the validator/evaluator and native form. New boundary coverage verifies a fourth custom tier at/below its threshold and rejects duplicate codes/overlapping thresholds. Service-limit periods must remain separate from annual rank qualification; no monthly limit is inferred from this correction. Executable service-limit provisioning and policy provenance remain the next implementation scope.
