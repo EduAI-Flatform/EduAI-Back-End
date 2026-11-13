@@ -97,6 +97,9 @@ jobs:
       - name: Verify concurrent last-unit card consumption across tiers
         run: node scripts/test-card-quota-postgres.cjs
 
+      - name: Verify private support intake and images with restricted Prisma role
+        run: node scripts/test-platform-requests-prisma.cjs
+
       - name: Verify private backup against the disposable replay database
         run: |
           node -e 'const {backupGdsPlatform}=require("./scripts/backup-gds-platform.cjs"); console.log(JSON.stringify(backupGdsPlatform({loadDatabaseUrl:()=>process.env.DATABASE_URL})));'
