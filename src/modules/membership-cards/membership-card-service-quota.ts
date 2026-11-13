@@ -4,9 +4,10 @@ import { validatePlatformSettings } from '../platform/platform-settings.validati
 import type { MembershipCardPolicy } from './membership-card.evaluator';
 import { computeMembershipCardForUser } from './membership-card-source';
 import { cardServiceLimitWindow } from './membership-card-limits.policy';
+import { isBoundCardRequestDefinition } from './card-service-bindings';
 
 // Stable server operation identities; these are bindings, not configurable business quotas.
-export const CARD_REQUEST_SERVICES = ['AI_CHAT', 'AI_SUMMARY', 'AI_QUIZ', 'AI_FLASHCARDS', 'AI_LEARNING_PATH'] as const;
+export { CARD_REQUEST_SERVICES } from './card-service-bindings';
 export type CardServiceGrant = Prisma.ServiceEntitlementGrantGetPayload<{ include: { definition: true } }>;
 type Client = Pick<Prisma.TransactionClient, 'platformPolicyRevision' | 'commerceOrder' | 'gdsInternalTopup'
   | 'user' | 'serviceEntitlementDefinition' | 'serviceEntitlementGrant'>;
@@ -39,8 +40,7 @@ export async function resolveCardServiceQuota(client: Client, userId: string, co
   });
   const grants: CardServiceGrant[] = [];
   for (const definition of definitions) {
-    if (!CARD_REQUEST_SERVICES.includes(definition.code as typeof CARD_REQUEST_SERVICES[number])
-      || definition.valueType !== 'metered' || definition.unitLabel !== 'request') continue;
+    if (!isBoundCardRequestDefinition(definition)) continue;
     const rule = rules.find(item => item.definitionId.toLowerCase() === definition.id.toLowerCase());
     if (!rule) continue;
     const window = cardServiceLimitWindow(definition.resetPeriod, policy.serviceLimits, at);

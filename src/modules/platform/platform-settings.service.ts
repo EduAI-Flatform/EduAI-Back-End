@@ -19,6 +19,7 @@ import { computeActivityPointImpact } from '../tmi/activity-point-impact';
 import { SUPPORTED_POINT_EVENTS, type ActivityPointPolicy } from '../tmi/activity-point-policy';
 import { readActivityPointReadiness } from '../tmi/activity-point.readiness';
 import { samePlatformPolicyContent } from './platform-policy-content';
+import { CARD_REQUEST_SERVICES, inspectCardServiceBindings, isBoundCardRequestDefinition } from '../membership-cards/card-service-bindings';
 
 const publicGroups = [
   "branding",
@@ -71,10 +72,17 @@ export class PlatformSettingsService {
       }),
     ]);
     const pointReadiness = await readActivityPointReadiness(this.prisma);
+    const cardDefinitions = await this.prisma.serviceEntitlementDefinition.findMany({
+      where: { code: { in: [...CARD_REQUEST_SERVICES] } }, orderBy: [{ displayOrder: 'asc' }, { code: 'asc' }],
+      select: { id: true, code: true, displayName: true, description: true, valueType: true, resetPeriod: true, unitLabel: true },
+    });
     return { ...current, revisions, groups: PLATFORM_GROUPS, pointCapabilities: {
       supportedEvents: [...SUPPORTED_POINT_EVENTS], historicalAwardsPreserved: true,
       reprocessesHistoricalEvents: false, impactWindowDays: 30,
       activationReady: pointReadiness.ready, activationBlocker: pointReadiness.reason,
+    }, cardServiceCapabilities: { supportedOperations: [...CARD_REQUEST_SERVICES],
+      definitions: cardDefinitions.map(definition => ({ ...definition, executable: isBoundCardRequestDefinition(definition) })),
+      activationReady: false, activationBlocker: 'CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED',
     } };
   }
 
@@ -138,9 +146,13 @@ export class PlatformSettingsService {
           beforeRevisionId: current.versions.points ?? null, afterRevisionId: row.id }),
         { isolationLevel: 'RepeatableRead' })
       : null;
+    const cardServiceBindings = row.group === 'membership'
+      ? await inspectCardServiceBindings(this.prisma, row.content as unknown as MembershipCardPolicy) : null;
     const blockers = await this.activationBlockers(
       row.group as PlatformGroup,
       row.content,
+      this.prisma,
+      cardServiceBindings,
     );
     return {
       revisionId: id,
@@ -153,6 +165,7 @@ export class PlatformSettingsService {
       blockers,
       preservesPurchasedAccess: true,
       membershipImpact,
+      cardServiceBindings,
       pointsImpact,
     };
   }
@@ -240,11 +253,15 @@ export class PlatformSettingsService {
     });
   }
 
-  private async activationBlockers(group: PlatformGroup, content: unknown, client: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma): Promise<string[]> {
+  private async activationBlockers(group: PlatformGroup, content: unknown,
+    client: Pick<Prisma.TransactionClient, '$queryRaw' | 'serviceEntitlementDefinition'> = this.prisma,
+    inspectedBindings?: Awaited<ReturnType<typeof inspectCardServiceBindings>> | null): Promise<string[]> {
     const c = content as Record<string, unknown>;
     if (["membership", "points", "affiliate"].includes(group) && c.enabled === false) return [];
-    if (group === 'membership' && (c.serviceLimits as { enabled?: boolean } | undefined)?.enabled === true)
-      return ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED'];
+    if (group === 'membership' && (c.serviceLimits as { enabled?: boolean } | undefined)?.enabled === true) {
+      const bindings = inspectedBindings ?? await inspectCardServiceBindings(client, content as MembershipCardPolicy);
+      return ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED', ...new Set(bindings.issues.map(issue => issue.reason))];
+    }
     if (group === "affiliate" && c.subAffiliateEnabled) {
       return ["SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED"];
     }

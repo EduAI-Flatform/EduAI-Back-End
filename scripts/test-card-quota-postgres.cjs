@@ -106,7 +106,16 @@ async function main() {
     assert.equal(firstGrant.cardTierCode, 'custom');
     assert.equal(await db.serviceEntitlementUsage.count({ where: { userId: user.id } }), 1);
     const nextAt = new Date('2026-11-16');
-    await runtimePolicy(5, new Date('2026-11-15'));
+    const raisedPolicy = await runtimePolicy(5, new Date('2026-11-15'));
+    const { loadCardServiceImpact } = require('../dist/src/modules/membership-cards/card-service-impact.js');
+    const { inspectCardServiceBindings } = require('../dist/src/modules/membership-cards/card-service-bindings.js');
+    assert.equal((await inspectCardServiceBindings(runtime, raisedPolicy.content)).ready, true);
+    const impact = await loadCardServiceImpact(runtime, [firstPolicy.content, raisedPolicy.content], [user.id], nextAt);
+    assert.equal(impact.complete, true);
+    assert.equal(impact.project(user.id, firstPolicy.content, firstPolicy.content.tiers[0])[0].remaining, '2');
+    assert.equal(impact.project(user.id, raisedPolicy.content, raisedPolicy.content.tiers[0])[0].remaining, '4');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id } }), 1, 'Impact must not create a new policy grant');
+    console.log('CARD_QUOTA_CONSUMED_IMPACT_AND_BINDINGS_RESTRICTED_PRISMA=PASS');
     assert.equal((await service.resolve(user.id, 'AI_CHAT', nextAt)).remaining, '4');
     assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, randomUUID(), nextAt)).remaining, '3');
     assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id } }), 2);

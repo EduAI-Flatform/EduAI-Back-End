@@ -4,11 +4,29 @@ import { DEFAULT_CARD_SERVICE_LIMITS } from './membership-card-limits.policy';
 const policy: MembershipCardPolicy = { enabled: true, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
   tiers: [{ code: 'member', name: { vi: 'Member', en: 'Member' }, threshold: 0, benefits: [] }] };
 function client() {
-  return { commerceOrder: { findMany: jest.fn().mockResolvedValue([]) }, gdsInternalTopup: { findMany: jest.fn().mockResolvedValue([]) }, user: {
+  return { serviceEntitlementDefinition: { findMany: jest.fn().mockResolvedValue([]) },
+    serviceEntitlementUsage: { findMany: jest.fn().mockResolvedValue([]) },
+    commerceOrder: { findMany: jest.fn().mockResolvedValue([]) }, gdsInternalTopup: { findMany: jest.fn().mockResolvedValue([]) }, user: {
     count: jest.fn().mockResolvedValue(2), findMany: jest.fn().mockResolvedValue([{ id: 'one' }, { id: 'two' }]),
   } };
 }
 describe('membership impact source', () => {
+  it('includes consumed quota in the per-user before/after projection while preserving independent purchases', async () => {
+    const db = client(); const definitionId = '00000000-0000-4000-8000-000000000001';
+    db.serviceEntitlementDefinition.findMany.mockResolvedValue([{ id: definitionId, code: 'AI_CHAT',
+      valueType: 'metered', unitLabel: 'request', resetPeriod: 'calendar_month' }]);
+    db.serviceEntitlementUsage.findMany.mockResolvedValue([{ userId: 'one', quantity: 2n, createdAt: new Date('2026-11-02'), grant: { definitionId } }]);
+    const before = { ...policy, serviceLimits: { ...DEFAULT_CARD_SERVICE_LIMITS, enabled: true },
+      tiers: [{ ...policy.tiers[0], serviceLimits: [{ definitionId, quota: '5' }] }] };
+    const after = { ...before, tiers: [{ ...before.tiers[0], serviceLimits: [{ definitionId, quota: '1' }] }] };
+    const result = await computeMembershipCardImpact(db as any, after, 'new', { beforePolicy: before, beforeRevisionId: 'old', at: new Date('2026-11-10') });
+    expect(result).toMatchObject({ serviceConsumptionProjected: true, serviceLimitImpactScope: 'consumption_included',
+      projectedServiceRemainingChangesOnPage: 2, preservesPurchasedAccess: true, items: [
+        { userId: 'one', previousServiceQuota: [{ consumed: '2', remaining: '3' }], projectedServiceQuota: [{ consumed: '2', remaining: '0', overLimit: true }] },
+        { userId: 'two', projectedServiceQuota: [{ consumed: '0', remaining: '1' }] },
+      ] });
+    expect(db.serviceEntitlementUsage.findMany).toHaveBeenCalledTimes(1);
+  });
   it('reports executable limit configuration separately and does not claim consumption projection', async () => {
     const after = { ...policy, serviceLimits: { ...DEFAULT_CARD_SERVICE_LIMITS, enabled: true },
       tiers: [{ ...policy.tiers[0], serviceLimits: [{ definitionId: 'definition', quota: '25' }] }] };
@@ -18,6 +36,16 @@ describe('membership impact source', () => {
     const disabled = await computeMembershipCardImpact(client() as any,
       { ...after, serviceLimits: { ...after.serviceLimits, enabled: false } }, 'new', { beforePolicy: policy, beforeRevisionId: 'old' });
     expect(disabled).toMatchObject({ projectedServiceLimitChangesOnPage: 0 });
+  });
+  it('does not claim a complete projection when usage exceeds the bounded source scan', async () => {
+    const db = client(); const definitionId = '00000000-0000-4000-8000-000000000001';
+    db.serviceEntitlementDefinition.findMany.mockResolvedValue([{ id: definitionId, code: 'AI_CHAT', valueType: 'metered', unitLabel: 'request', resetPeriod: 'none' }]);
+    db.serviceEntitlementUsage.findMany.mockResolvedValue(new Array(10001).fill({}));
+    const after = { ...policy, serviceLimits: { ...DEFAULT_CARD_SERVICE_LIMITS, enabled: true },
+      tiers: [{ ...policy.tiers[0], serviceLimits: [{ definitionId, quota: '5' }] }] };
+    expect(await computeMembershipCardImpact(db as any, after, 'new', { beforePolicy: policy, beforeRevisionId: 'old' }))
+      .toMatchObject({ status: 'unavailable', complete: false, serviceConsumptionProjected: false,
+        reason: 'CARD_SERVICE_USAGE_SCAN_LIMIT_EXCEEDED', items: [{ projectedServiceQuota: null }, { projectedServiceQuota: null }] });
   });
   it('does not count reordered localized JSON object keys as changed benefits', async () => {
     const db = client();

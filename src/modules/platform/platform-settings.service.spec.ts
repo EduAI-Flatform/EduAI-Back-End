@@ -15,6 +15,7 @@ function setup() {
     user: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     commerceOrder: { findMany: jest.fn().mockResolvedValue([]) },
     gdsInternalTopup: { findMany: jest.fn().mockResolvedValue([]) },
+    serviceEntitlementDefinition: { findMany: jest.fn().mockResolvedValue([]) },
     enrollment: { findMany: jest.fn().mockResolvedValue([]) },
     platformPolicyRevision: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -35,6 +36,35 @@ function setup() {
   };
 }
 describe("versioned platform policies", () => {
+  it('exposes the supported request catalog only in the Admin settings response', async () => {
+    const { service, tx } = setup();
+    tx.serviceEntitlementDefinition.findMany.mockResolvedValue([{ id: 'definition', code: 'AI_CHAT',
+      valueType: 'metered', resetPeriod: 'calendar_month', unitLabel: 'request', displayName: 'Chat' }]);
+    expect(await service.state()).toMatchObject({ cardServiceCapabilities: {
+      supportedOperations: expect.arrayContaining(['AI_CHAT', 'AI_SUMMARY']),
+      definitions: [{ id: 'definition', code: 'AI_CHAT', executable: true }],
+      activationReady: false,
+    } });
+    expect(await service.publicSettings()).not.toHaveProperty('cardServiceCapabilities');
+  });
+  it('reports missing request-service bindings to Admin and prevents scheduling the same invalid configuration', async () => {
+    const { service, revision, tx } = setup();
+    const definitionId = '00000000-0000-4000-8000-000000000001';
+    const content = { ...structuredClone(DEFAULT_PLATFORM_SETTINGS.membership), enabled: true,
+      serviceLimits: { enabled: true, consumptionPriority: 'purchased_first', termAnchorAt: '', termMonths: 0 },
+      tiers: DEFAULT_PLATFORM_SETTINGS.membership.tiers.map((tier, index) => ({ ...tier, threshold: index * 100,
+        serviceLimits: [{ definitionId, quota: '5' }] })),
+    };
+    Object.assign(revision, { group: 'membership', content, status: 'approved' });
+    expect(await service.preview('revision')).toMatchObject({ canSchedule: false,
+      cardServiceBindings: { ready: false, issues: [{ definitionId, reason: 'CARD_SERVICE_DEFINITION_NOT_FOUND' }] },
+      blockers: expect.arrayContaining(['CARD_SERVICE_DEFINITION_NOT_FOUND']),
+    });
+    await expect(service.schedule('actor', 'revision', new Date(Date.now() + 60000))).rejects.toMatchObject({
+      response: { blockers: expect.arrayContaining(['CARD_SERVICE_DEFINITION_NOT_FOUND']) },
+    });
+    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
+  });
   it('does not schedule executable card limits before runtime provisioning capability is implemented', async () => {
     const { service, revision, tx } = setup();
     const content = { ...structuredClone(DEFAULT_PLATFORM_SETTINGS.membership),
