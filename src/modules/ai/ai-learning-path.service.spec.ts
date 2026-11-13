@@ -33,6 +33,13 @@ function createService(content = JSON.stringify({ schemaVersion: 'v1', milestone
 }
 
 describe('AiLearningPathService', () => {
+  it('stops before provider invocation and persistence when request quota is denied', async () => {
+    const { service, prisma, quota, provider } = createService();
+    quota.consumeServiceRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service.regenerate(student)).rejects.toThrow('Quota denied');
+    expect(provider.complete).not.toHaveBeenCalled();
+    expect(prisma.aiLearningPath.create).not.toHaveBeenCalled();
+  });
   it('persists a validated new version using only accessible-course metadata', async () => {
     const { service, prisma, quota } = createService();
     await expect(service.regenerate(student)).resolves.toMatchObject({ id: 'path-1', version: 3 });

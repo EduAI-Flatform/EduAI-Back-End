@@ -37,6 +37,17 @@ describe('AiConversationService', () => {
 
   const input: CreateAiChatDto = { message: 'Explain recursion.' };
 
+  it('rejects another user conversation before quota and stops retrieval/provider calls when quota is exhausted', async () => {
+    const { service, transaction, quota, retrieval, openai } = createService();
+    await expect(service.createChat(user, { ...input, conversationId: 'not-owned' })).rejects.toBeInstanceOf(NotFoundException);
+    expect(quota.consumeServiceRequest).not.toHaveBeenCalled();
+    transaction.aiConversation.create.mockResolvedValue({ id: 'conversation-id' });
+    quota.consumeServiceRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service.createChat(user, input)).rejects.toThrow('Quota denied');
+    expect(retrieval.retrieve).not.toHaveBeenCalled();
+    expect(openai.complete).not.toHaveBeenCalled();
+  });
+
   it('stores the user message, generates an answer, and returns sources', async () => {
     const { service, transaction, quota, retrieval, prisma } = createService();
     transaction.aiConversation.create.mockResolvedValue({ id: 'conversation-id' });

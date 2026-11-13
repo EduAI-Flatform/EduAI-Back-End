@@ -26,8 +26,17 @@ describe('AiGenerationService', () => {
     };
     const rateLimit = { assertQuizAllowed: jest.fn(), assertFlashcardsAllowed: jest.fn(), consumeServiceRequest: jest.fn() };
     const summary = { resolveSource: jest.fn().mockResolvedValue({ title: 'Recursion', content: 'A function calls itself.' }) };
-    return { service: new AiGenerationService(prisma as never, openai as never, rateLimit as never, summary as never), prisma, rateLimit, summary };
+    return { service: new AiGenerationService(prisma as never, openai as never, rateLimit as never, summary as never), prisma, rateLimit, summary, openai };
   }
+
+  it.each(['generateQuiz', 'generateFlashcards'] as const)('does not invoke the provider or persist results when %s quota is denied', async operation => {
+    const { service, prisma, rateLimit, openai } = createService([]);
+    rateLimit.consumeServiceRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service[operation](user, input)).rejects.toThrow('Quota denied');
+    expect(openai.complete).not.toHaveBeenCalled();
+    expect(prisma.aiGeneratedQuiz.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 
   it('generates and persists structured quiz questions', async () => {
     const { service, prisma, rateLimit, summary } = createService([
