@@ -1,6 +1,7 @@
 import type { Prisma } from '../../../generated/prisma/client';
 import { evaluateMembershipCard, type MembershipCardPolicy } from './membership-card.evaluator';
 import { membershipTopupSelect, type MembershipTopup } from './membership-topup.evaluator';
+import { samePlatformPolicyContent } from '../platform/platform-policy-content';
 
 type SourceClient = Pick<Prisma.TransactionClient, 'commerceOrder' | 'gdsInternalTopup' | 'user'>;
 const MAX_SOURCE_ORDERS = 10000;
@@ -63,7 +64,7 @@ export async function computeMembershipCardImpact(client: SourceClient, policy: 
     const previousBenefits = previous?.tier?.benefits ?? [];
     return { userId: user.id, evaluation, previousTierCode: previous?.tier?.code ?? null,
       previousBenefits: comparable ? previousBenefits : null,
-      projectedBenefitsChanged: comparable ? JSON.stringify(previousBenefits) !== JSON.stringify(evaluation.tier?.benefits ?? []) : null,
+      projectedBenefitsChanged: comparable ? !samePlatformPolicyContent(previousBenefits, evaluation.tier?.benefits ?? []) : null,
       projectedTierChanged: comparable ? previous.tier?.code !== evaluation.tier?.code : null };
   });
   return { status: items.some(item => item.evaluation.status === 'unavailable') ? 'unavailable' : 'evaluated',

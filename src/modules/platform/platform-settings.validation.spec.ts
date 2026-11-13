@@ -67,6 +67,17 @@ describe("platform configuration validation", () => {
     c.tiers[0].threshold = 50;
     expect(() => validatePlatformSettings("membership", c)).toThrow();
   });
+  it('accepts additional administrator-defined tiers and rejects duplicate codes or overlapping thresholds', () => {
+    const c = structuredClone(DEFAULT_PLATFORM_SETTINGS.membership);
+    c.enabled = true;
+    c.tiers.forEach((tier, index) => { tier.threshold = index * 100; });
+    c.tiers.push({ code: 'diamond', name: { vi: 'Kim cuong', en: 'Diamond' }, threshold: 300, benefits: [] });
+    expect(validatePlatformSettings('membership', c)).toBe('membership');
+    c.tiers[3].code = 'gold';
+    expect(() => validatePlatformSettings('membership', c)).toThrow();
+    c.tiers[3].code = 'diamond'; c.tiers[3].threshold = 200;
+    expect(() => validatePlatformSettings('membership', c)).toThrow();
+  });
   it("rejects amounts beyond safe limits and invalid attachment sizes", () => {
     expect(() =>
       validatePlatformSettings("affiliate", {
