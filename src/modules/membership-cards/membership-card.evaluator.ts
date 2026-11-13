@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
 import { evaluateVerifiedTopups, type MembershipTopup } from './membership-topup.evaluator';
+import type { CardServiceLimitRule, CardServiceLimitSettings } from './membership-card-limits.policy';
 
 export interface MembershipCardTier {
   code: string; name: { vi: string; en: string }; threshold: number;
   benefits: Array<{ vi: string; en: string }>;
+  serviceLimits?: CardServiceLimitRule[];
 }
 export interface MembershipCardPolicy {
   enabled: boolean; basis: 'spend' | 'topup'; currency: string; cycleMode: 'rolling';
   cycleMonths: number; tiers: MembershipCardTier[];
+  serviceLimits?: CardServiceLimitSettings;
 }
 export interface MembershipSpendOrder {
   id: string; status: string; fulfillmentStatus: string; currency: string; payableAmountMinor: bigint;

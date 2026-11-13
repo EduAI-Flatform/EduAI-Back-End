@@ -243,6 +243,8 @@ export class PlatformSettingsService {
   private async activationBlockers(group: PlatformGroup, content: unknown, client: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma): Promise<string[]> {
     const c = content as Record<string, unknown>;
     if (["membership", "points", "affiliate"].includes(group) && c.enabled === false) return [];
+    if (group === 'membership' && (c.serviceLimits as { enabled?: boolean } | undefined)?.enabled === true)
+      return ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED'];
     if (group === "affiliate" && c.subAffiliateEnabled) {
       return ["SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED"];
     }

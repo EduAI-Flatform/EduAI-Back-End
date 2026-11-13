@@ -4,6 +4,37 @@ import {
   validatePlatformUrl,
 } from "./platform-settings.validation";
 describe("platform configuration validation", () => {
+  const quotaPolicy = () => ({ ...structuredClone(DEFAULT_PLATFORM_SETTINGS.membership),
+    serviceLimits: { enabled: false, consumptionPriority: 'purchased_first', termAnchorAt: '', termMonths: 0 },
+    tiers: DEFAULT_PLATFORM_SETTINGS.membership.tiers.map(tier => ({ ...tier,
+      serviceLimits: [{ definitionId: '00000000-0000-4000-8000-000000000001', quota: '25' }] })),
+  });
+  it('accepts typed service-limit drafts without activating them or changing historical policy content', () => {
+    const limits = quotaPolicy();
+    expect(validatePlatformSettings('membership', limits)).toBe('membership');
+    const original = structuredClone(DEFAULT_PLATFORM_SETTINGS.membership);
+    expect(validatePlatformSettings('membership', original)).toBe('membership');
+    expect(original).toEqual(DEFAULT_PLATFORM_SETTINGS.membership);
+    expect(original).not.toHaveProperty('serviceLimits');
+  });
+  it.each(['0', '-1', '1.5', '01', '9223372036854775808', '1e3'])('rejects unsupported service quota %s', quota => {
+    const value = quotaPolicy(); value.tiers[0].serviceLimits[0].quota = quota;
+    expect(() => validatePlatformSettings('membership', value)).toThrow();
+  });
+  it('rejects duplicate definitions, invalid references, extra rule properties and ambiguous fixed terms', () => {
+    const duplicate = quotaPolicy(); duplicate.tiers[0].serviceLimits.push({ ...duplicate.tiers[0].serviceLimits[0] });
+    expect(() => validatePlatformSettings('membership', duplicate)).toThrow();
+    const invalid = quotaPolicy(); invalid.tiers[0].serviceLimits[0].definitionId = 'not-a-definition';
+    expect(() => validatePlatformSettings('membership', invalid)).toThrow();
+    const extra = quotaPolicy(); Object.assign(extra.tiers[0].serviceLimits[0], { remaining: '100' });
+    expect(() => validatePlatformSettings('membership', extra)).toThrow();
+    const period = quotaPolicy(); period.serviceLimits.termMonths = 12;
+    expect(() => validatePlatformSettings('membership', period)).toThrow();
+    period.serviceLimits.termAnchorAt = '2026-01-31T00:00:00Z';
+    expect(validatePlatformSettings('membership', period)).toBe('membership');
+    period.serviceLimits.termAnchorAt = '2026-02-30T00:00:00Z';
+    expect(() => validatePlatformSettings('membership', period)).toThrow();
+  });
   it('accepts only registered point event codes and rejects duplicate rules', () => {
     const settings = { ...DEFAULT_PLATFORM_SETTINGS.points, rules: [{ event: 'course.completed', points: 80 }] };
     expect(validatePlatformSettings('points', settings)).toBe('points');
