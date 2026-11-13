@@ -43,6 +43,7 @@ describe("versioned platform policies", () => {
     expect(await service.state()).toMatchObject({ cardServiceCapabilities: {
       supportedOperations: expect.arrayContaining(['AI_CHAT', 'AI_SUMMARY']),
       definitions: [{ id: 'definition', code: 'AI_CHAT', executable: true }],
+      schemaReady: false, schemaBlocker: 'CARD_SERVICE_SCHEMA_NOT_VERIFIED',
       activationReady: false,
     } });
     expect(await service.publicSettings()).not.toHaveProperty('cardServiceCapabilities');
@@ -72,9 +73,9 @@ describe("versioned platform policies", () => {
     content.enabled = true; content.tiers.forEach((tier, index) => { tier.threshold = index * 100; });
     Object.assign(revision, { group: 'membership', content, status: 'approved' });
     expect(await service.preview('revision')).toMatchObject({ canSchedule: false,
-      blockers: ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED'] });
+      blockers: ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED', 'CARD_SERVICE_SCHEMA_NOT_VERIFIED'] });
     await expect(service.schedule('actor', 'revision', new Date(Date.now() + 86400000)))
-      .rejects.toMatchObject({ response: { message: 'Activation is not ready.', blockers: ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED'] } });
+      .rejects.toMatchObject({ response: { message: 'Activation is not ready.', blockers: ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED', 'CARD_SERVICE_SCHEMA_NOT_VERIFIED'] } });
     expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
   });
   it('does not report unchanged JSONB policy objects as changed when property order differs', async () => {

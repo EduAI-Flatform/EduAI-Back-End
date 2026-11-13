@@ -20,6 +20,7 @@ import { SUPPORTED_POINT_EVENTS, type ActivityPointPolicy } from '../tmi/activit
 import { readActivityPointReadiness } from '../tmi/activity-point.readiness';
 import { samePlatformPolicyContent } from './platform-policy-content';
 import { CARD_REQUEST_SERVICES, inspectCardServiceBindings, isBoundCardRequestDefinition } from '../membership-cards/card-service-bindings';
+import { readCardServiceReadiness } from '../membership-cards/card-service-readiness';
 
 const publicGroups = [
   "branding",
@@ -72,6 +73,7 @@ export class PlatformSettingsService {
       }),
     ]);
     const pointReadiness = await readActivityPointReadiness(this.prisma);
+    const cardReadiness = await readCardServiceReadiness(this.prisma);
     const cardDefinitions = await this.prisma.serviceEntitlementDefinition.findMany({
       where: { code: { in: [...CARD_REQUEST_SERVICES] } }, orderBy: [{ displayOrder: 'asc' }, { code: 'asc' }],
       select: { id: true, code: true, displayName: true, description: true, valueType: true, resetPeriod: true, unitLabel: true },
@@ -81,6 +83,7 @@ export class PlatformSettingsService {
       reprocessesHistoricalEvents: false, impactWindowDays: 30,
       activationReady: pointReadiness.ready, activationBlocker: pointReadiness.reason,
     }, cardServiceCapabilities: { supportedOperations: [...CARD_REQUEST_SERVICES],
+      schemaReady: cardReadiness.ready, schemaBlocker: cardReadiness.reason,
       definitions: cardDefinitions.map(definition => ({ ...definition, executable: isBoundCardRequestDefinition(definition) })),
       activationReady: false, activationBlocker: 'CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED',
     } };
@@ -260,7 +263,9 @@ export class PlatformSettingsService {
     if (["membership", "points", "affiliate"].includes(group) && c.enabled === false) return [];
     if (group === 'membership' && (c.serviceLimits as { enabled?: boolean } | undefined)?.enabled === true) {
       const bindings = inspectedBindings ?? await inspectCardServiceBindings(client, content as MembershipCardPolicy);
-      return ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED', ...new Set(bindings.issues.map(issue => issue.reason))];
+      const readiness = await readCardServiceReadiness(client);
+      return ['CARD_SERVICE_LIMIT_RUNTIME_NOT_IMPLEMENTED', ...(readiness.ready ? [] : [readiness.reason]),
+        ...new Set(bindings.issues.map(issue => issue.reason))];
     }
     if (group === "affiliate" && c.subAffiliateEnabled) {
       return ["SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED"];

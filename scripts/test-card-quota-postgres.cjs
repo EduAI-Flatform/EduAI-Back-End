@@ -84,6 +84,17 @@ async function main() {
     for (const table of ['users','platform_policy_revisions','service_entitlement_definitions','service_entitlement_grants'])
       await db.$executeRawUnsafe(`GRANT UPDATE(id) ON ${table} TO "${role}"`);
     runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
+    const { readCardServiceReadiness, CARD_QUOTA_SCHEMA_MIGRATION, CARD_QUOTA_SCHEMA_SHA256 } = require('../dist/src/modules/membership-cards/card-service-readiness.js');
+    const { REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS } = require('./run-production-migrations.cjs');
+    assert.deepEqual(REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS, [{ name: CARD_QUOTA_SCHEMA_MIGRATION, sha256: CARD_QUOTA_SCHEMA_SHA256 }]);
+    await db.$executeRawUnsafe(`GRANT SELECT(migration_name,checksum,finished_at,rolled_back_at) ON _prisma_migrations TO "${role}"`);
+    assert.equal((await readCardServiceReadiness(db)).ready, false, 'Owner/superuser is not an admissible runtime role');
+    assert.equal((await readCardServiceReadiness(runtime)).ready, true);
+    await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants DISABLE TRIGGER membership_card_grant_validate');
+    try { assert.equal((await readCardServiceReadiness(runtime)).ready, false); }
+    finally { await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants ENABLE TRIGGER membership_card_grant_validate'); }
+    assert.equal((await readCardServiceReadiness(runtime)).ready, true);
+    console.log('CARD_QUOTA_RUNTIME_PIN_GUARDS_AND_RESTRICTED_READINESS=PASS');
     const service = new ServiceEntitlementService(runtime, { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-card-operation-key'.repeat(3) } });
     const user = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic runtime learner' } });
     const definition = await db.serviceEntitlementDefinition.create({ data: { code: 'AI_CHAT', valueType: 'metered',
