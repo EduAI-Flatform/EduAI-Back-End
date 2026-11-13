@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { randomUUID, randomBytes } = require('node:crypto');
 const { Client } = require('pg');
+const { verifyCardQuotaSchema } = require('./verify-card-quota-schema.cjs');
 
 async function main() {
   const url = new URL(process.env.DATABASE_URL || 'http://invalid');
@@ -20,6 +21,11 @@ async function main() {
   const start = new Date('2026-11-01T00:00:00Z'), end = new Date('2026-12-01T00:00:00Z');
   try {
     await Promise.all(clients.map(client => client.connect()));
+    assert.equal((await verifyCardQuotaSchema(clients[0])).cardQuotaGuardsEnabled, true);
+    await clients[0].query('ALTER TABLE service_entitlement_grants DISABLE TRIGGER membership_card_grant_validate');
+    try { await assert.rejects(() => verifyCardQuotaSchema(clients[0]), /CARD_QUOTA_SCHEMA_NOT_READY/); }
+    finally { await clients[0].query('ALTER TABLE service_entitlement_grants ENABLE TRIGGER membership_card_grant_validate'); }
+    assert.equal((await verifyCardQuotaSchema(clients[0])).cardQuotaGuardsEnabled, true);
     const admin = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic quota operator' } });
     let version = (await db.platformPolicyRevision.aggregate({ where: { group: 'membership' }, _max: { version: true } }))._max.version ?? 0;
     for (let round = 0; round < 10; round++) {

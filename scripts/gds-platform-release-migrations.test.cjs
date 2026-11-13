@@ -46,9 +46,9 @@ test('rejects unknown artifacts, changed hashes, incomplete old financial releas
 test('parses explicit release flags once, defaults closed and rejects unknown or duplicate arguments', () => {
   const flag = '--authorize-reviewed-gds-platform-migrations';
   assert.equal(runner.GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT, flag);
-  assert.deepEqual(runner.parseMigrationApprovalArguments([]), { allowReviewedReceiptMigrations: false, allowReviewedGdsPlatformMigrations: false, allowReviewedPointMigrations: false });
-  assert.deepEqual(runner.parseMigrationApprovalArguments([flag]), { allowReviewedReceiptMigrations: false, allowReviewedGdsPlatformMigrations: true, allowReviewedPointMigrations: false });
-  assert.deepEqual(runner.parseMigrationApprovalArguments(['--authorize-reviewed-receipt-migrations', flag]), { allowReviewedReceiptMigrations: true, allowReviewedGdsPlatformMigrations: true, allowReviewedPointMigrations: false });
+  assert.deepEqual(runner.parseMigrationApprovalArguments([]), { allowReviewedReceiptMigrations: false, allowReviewedGdsPlatformMigrations: false, allowReviewedPointMigrations: false, allowReviewedCardServiceLimitMigrations: false });
+  assert.deepEqual(runner.parseMigrationApprovalArguments([flag]), { allowReviewedReceiptMigrations: false, allowReviewedGdsPlatformMigrations: true, allowReviewedPointMigrations: false, allowReviewedCardServiceLimitMigrations: false });
+  assert.deepEqual(runner.parseMigrationApprovalArguments(['--authorize-reviewed-receipt-migrations', flag]), { allowReviewedReceiptMigrations: true, allowReviewedGdsPlatformMigrations: true, allowReviewedPointMigrations: false, allowReviewedCardServiceLimitMigrations: false });
   for (const args of [[flag, flag], ['--unreviewed'], ['--authorize-reviewed-receipt-migrations', '--authorize-reviewed-receipt-migrations']]) {
     assert.throws(() => runner.parseMigrationApprovalArguments(args), { failureClass: 'MIGRATION_ARGUMENT_INVALID' });
   }
