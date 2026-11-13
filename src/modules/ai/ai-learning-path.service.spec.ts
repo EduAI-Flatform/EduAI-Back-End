@@ -26,17 +26,25 @@ function createService(content = JSON.stringify({ schemaVersion: 'v1', milestone
     },
     aiLearningPath: { findFirst: jest.fn().mockResolvedValue({ version: 2 }), create: jest.fn().mockResolvedValue({ id: 'path-1', version: 3 }) },
   };
-  const quota = { assertLearningPathAllowed: jest.fn() };
+  const quota = { assertLearningPathAllowed: jest.fn(), consumeServiceRequest: jest.fn() };
   const provider = { complete: jest.fn().mockResolvedValue({ content }), getModel: jest.fn().mockReturnValue('mock') };
   const courseAccess = { decide: jest.fn().mockResolvedValue({ allowed: true }) };
   return { service: new AiLearningPathService(prisma as never, quota as never, provider as never, courseAccess as never), prisma, quota, provider, courseAccess };
 }
 
 describe('AiLearningPathService', () => {
+  it('stops before provider invocation and persistence when request quota is denied', async () => {
+    const { service, prisma, quota, provider } = createService();
+    quota.consumeServiceRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service.regenerate(student)).rejects.toThrow('Quota denied');
+    expect(provider.complete).not.toHaveBeenCalled();
+    expect(prisma.aiLearningPath.create).not.toHaveBeenCalled();
+  });
   it('persists a validated new version using only accessible-course metadata', async () => {
     const { service, prisma, quota } = createService();
     await expect(service.regenerate(student)).resolves.toMatchObject({ id: 'path-1', version: 3 });
     expect(quota.assertLearningPathAllowed).toHaveBeenCalledWith('student-id');
+    expect(quota.consumeServiceRequest).toHaveBeenCalledWith('student-id', 'AI_LEARNING_PATH');
     expect(prisma.course.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: 'published' }),
       select: expect.objectContaining({

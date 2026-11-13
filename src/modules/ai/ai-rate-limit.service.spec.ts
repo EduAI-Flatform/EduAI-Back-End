@@ -2,10 +2,20 @@ import { HttpException, HttpStatus, ServiceUnavailableException } from '@nestjs/
 import { AiRateLimitService } from './ai-rate-limit.service';
 
 describe('AiRateLimitService', () => {
+  it('delegates the server request to quota consumption and propagates denial', async () => {
+    const entitlements = { consumeServerRequest: jest.fn().mockResolvedValue({ allowed: true }) };
+    const service = new AiRateLimitService({ getClient: () => undefined } as never,
+      { app: { nodeEnv: 'test' } } as never, entitlements as never);
+    await service.consumeServiceRequest('owner', 'AI_SUMMARY');
+    expect(entitlements.consumeServerRequest).toHaveBeenCalledWith('owner', 'AI_SUMMARY');
+    entitlements.consumeServerRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service.consumeServiceRequest('owner', 'AI_SUMMARY')).rejects.toThrow('Quota denied');
+  });
   it('enforces the daily limit when Redis is unavailable', async () => {
     const service = new AiRateLimitService(
       { getClient: () => undefined } as never,
       { app: { nodeEnv: 'test' } } as never,
+      {} as never,
     );
     for (let index = 0; index < 30; index += 1) await service.assertChatAllowed('rate-limit-test-user');
     try {
@@ -21,6 +31,7 @@ describe('AiRateLimitService', () => {
     const service = new AiRateLimitService(
       { getClient: () => undefined } as never,
       { app: { nodeEnv: 'production' } } as never,
+      {} as never,
     );
 
     await expect(service.assertChatAllowed('user-id')).rejects.toBeInstanceOf(
@@ -33,6 +44,7 @@ describe('AiRateLimitService', () => {
     const service = new AiRateLimitService(
       { getClient: () => redis } as never,
       { app: { nodeEnv: 'production' } } as never,
+      {} as never,
     );
 
     await expect(service.assertSummaryAllowed('user-id')).resolves.toBeUndefined();

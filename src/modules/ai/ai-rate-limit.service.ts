@@ -2,6 +2,8 @@ import { HttpException, HttpStatus, Injectable, ServiceUnavailableException } fr
 import { createHash } from 'node:crypto';
 import { RedisConfigService } from '../../config/redis-config.service';
 import { AppConfigService } from '../../config/app-config.service';
+import { ServiceEntitlementService } from '../memberships/service-entitlement.service';
+import type { CARD_REQUEST_SERVICES } from '../membership-cards/membership-card-service-quota';
 
 const DAILY_LIMIT = 30;
 @Injectable()
@@ -11,7 +13,13 @@ export class AiRateLimitService {
   constructor(
     private readonly redisConfig: RedisConfigService,
     private readonly appConfig: AppConfigService,
+    private readonly entitlements: ServiceEntitlementService,
   ) {}
+
+  /** Called after source/ownership validation and before a provider attempt. Daily abuse guards remain separate. */
+  async consumeServiceRequest(userId: string, code: typeof CARD_REQUEST_SERVICES[number]): Promise<void> {
+    await this.entitlements.consumeServerRequest(userId, code);
+  }
 
   async assertChatAllowed(userId: string): Promise<void> {
     return this.assertAllowed(userId, 'chat');

@@ -24,10 +24,19 @@ describe('AiGenerationService', () => {
           content: typeof payload === 'string' ? payload : JSON.stringify(payload),
         }),
     };
-    const rateLimit = { assertQuizAllowed: jest.fn(), assertFlashcardsAllowed: jest.fn() };
+    const rateLimit = { assertQuizAllowed: jest.fn(), assertFlashcardsAllowed: jest.fn(), consumeServiceRequest: jest.fn() };
     const summary = { resolveSource: jest.fn().mockResolvedValue({ title: 'Recursion', content: 'A function calls itself.' }) };
-    return { service: new AiGenerationService(prisma as never, openai as never, rateLimit as never, summary as never), prisma, rateLimit, summary };
+    return { service: new AiGenerationService(prisma as never, openai as never, rateLimit as never, summary as never), prisma, rateLimit, summary, openai };
   }
+
+  it.each(['generateQuiz', 'generateFlashcards'] as const)('does not invoke the provider or persist results when %s quota is denied', async operation => {
+    const { service, prisma, rateLimit, openai } = createService([]);
+    rateLimit.consumeServiceRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service[operation](user, input)).rejects.toThrow('Quota denied');
+    expect(openai.complete).not.toHaveBeenCalled();
+    expect(prisma.aiGeneratedQuiz.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 
   it('generates and persists structured quiz questions', async () => {
     const { service, prisma, rateLimit, summary } = createService([
@@ -39,6 +48,7 @@ describe('AiGenerationService', () => {
       quizId: 'quiz-id', sourceType: 'lesson', sourceId: 'lesson-id', questions: expect.any(Array),
     });
     expect(rateLimit.assertQuizAllowed).toHaveBeenCalledWith(user.id);
+    expect(rateLimit.consumeServiceRequest).toHaveBeenCalledWith(user.id, 'AI_QUIZ');
     expect(summary.resolveSource).toHaveBeenCalledWith(user, input);
     expect(prisma.aiGeneratedQuiz.create).toHaveBeenCalled();
   });
@@ -56,6 +66,7 @@ describe('AiGenerationService', () => {
       ],
     });
     expect(rateLimit.assertFlashcardsAllowed).toHaveBeenCalledWith(user.id);
+    expect(rateLimit.consumeServiceRequest).toHaveBeenCalledWith(user.id, 'AI_FLASHCARDS');
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 

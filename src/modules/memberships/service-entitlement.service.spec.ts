@@ -6,6 +6,12 @@ import {
 } from '../../../generated/prisma/client';
 import { ServiceEntitlementService } from './service-entitlement.service';
 import { ensureReceiptQuotaPool } from './receipt-quota-pool';
+import { provisionCardServiceGrant, resolveCardServiceQuota } from '../membership-cards/membership-card-service-quota';
+
+jest.mock('../membership-cards/membership-card-service-quota', () => ({
+  CARD_REQUEST_SERVICES: ['AI_CHAT', 'AI_SUMMARY', 'AI_QUIZ', 'AI_FLASHCARDS', 'AI_LEARNING_PATH'],
+  resolveCardServiceQuota: jest.fn(), provisionCardServiceGrant: jest.fn(),
+}));
 
 const now = new Date('2026-08-24T12:00:00.000Z');
 
@@ -63,6 +69,11 @@ function harness(grants = [grant()]) {
 }
 
 describe('ServiceEntitlementService', () => {
+  beforeEach(() => {
+    jest.mocked(resolveCardServiceQuota).mockResolvedValue({ configured: false, priority: 'purchased_first', grants: [] });
+    jest.mocked(provisionCardServiceGrant).mockImplementation(async (_client, candidate) => ({ ...candidate, id: 'persisted-card' }));
+    jest.mocked(provisionCardServiceGrant).mockClear();
+  });
   const env = { ...process.env };
   afterEach(() => { process.env = { ...env }; });
   const earlyFlags = () => {
@@ -71,6 +82,72 @@ describe('ServiceEntitlementService', () => {
     process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED = 'true';
     process.env.BANK_RECEIPT_SYNTHETIC_BUYER_IDS = 'student-id';
   };
+  it('lists current card quota separately when purchased quota takes consumption priority, without provisioning', async () => {
+    const { service, tx } = harness();
+    const card = grant({ id: '', sourceType: 'MEMBERSHIP_CARD', quota: 5n });
+    jest.mocked(resolveCardServiceQuota).mockResolvedValue({ configured: true, priority: 'purchased_first', grants: [card as never] });
+    tx.serviceEntitlementUsage.aggregate.mockResolvedValue({ _sum: { quantity: 2n } });
+    const result = await service.listForUser('student-id', now);
+    expect(result.items[0]).toMatchObject({ source: 'independent', quota: '3', consumed: '2', remaining: '1' });
+    expect(result).toMatchObject({ cardItems: [{ source: 'card', code: 'AI_CHAT', quota: '5', consumed: '2', remaining: '3' }] });
+    expect(tx.serviceEntitlementGrant.createMany).not.toHaveBeenCalled();
+    expect(tx.serviceEntitlementUsage.create).not.toHaveBeenCalled();
+    expect(provisionCardServiceGrant).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain('cardQualification');
+  });
+  it('consumes the current card first when configured, pooling across old card grants in the service period', async () => {
+    const { service, tx } = harness();
+    const card = grant({ id: '', sourceType: 'MEMBERSHIP_CARD', quota: 5n });
+    jest.mocked(resolveCardServiceQuota).mockResolvedValue({ configured: true, priority: 'card_first', grants: [card as never] });
+    tx.serviceEntitlementUsage.aggregate.mockResolvedValue({ _sum: { quantity: 2n } });
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'card-operation-1', now)).resolves.toMatchObject({ remaining: '2' });
+    expect(tx.serviceEntitlementUsage.aggregate).toHaveBeenCalledWith({ where: { userId: 'student-id',
+      grant: { sourceType: 'MEMBERSHIP_CARD', userId: 'student-id', definitionId: 'definition-id' },
+      createdAt: { gte: new Date('2026-08-01'), lt: new Date('2026-09-01') } }, _sum: { quantity: true } });
+    expect(provisionCardServiceGrant).toHaveBeenCalledWith(tx, card);
+    expect(tx.serviceEntitlementUsage.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ grantId: 'persisted-card' }) }));
+  });
+  it('keeps purchased quota first when configured and never provisions an unused card grant', async () => {
+    const { service, tx } = harness();
+    jest.mocked(resolveCardServiceQuota).mockResolvedValue({ configured: true, priority: 'purchased_first', grants: [grant({ id: '', sourceType: 'MEMBERSHIP_CARD' }) as never] });
+    await service.consume('student-id', 'AI_CHAT', 1n, 'paid-operation-1', now);
+    expect(provisionCardServiceGrant).not.toHaveBeenCalled();
+    expect(tx.serviceEntitlementUsage.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ grantId: 'grant-id' }) }));
+  });
+  it('ignores stale active card grants when no current card quota is available', async () => {
+    const { service, tx } = harness([grant({ sourceType: 'MEMBERSHIP_CARD' })]);
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'old-card-operation', now)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.serviceEntitlementUsage.create).not.toHaveBeenCalled();
+  });
+  it('counts lifetime card usage without filtering by a new policy start or old grant status', async () => {
+    const { service, tx } = harness([]);
+    jest.mocked(resolveCardServiceQuota).mockResolvedValue({ configured: true, priority: 'card_first', grants: [grant({
+      id: '', sourceType: 'MEMBERSHIP_CARD', resetPeriod: 'none', quota: 2n, endsAt: null,
+    }) as never] });
+    tx.serviceEntitlementUsage.aggregate.mockResolvedValue({ _sum: { quantity: 3n } });
+    await expect(service.consume('student-id', 'AI_CHAT', 1n, 'lifetime-card-operation', now)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.serviceEntitlementUsage.aggregate).toHaveBeenCalledWith({ where: { userId: 'student-id',
+      grant: { sourceType: 'MEMBERSHIP_CARD', userId: 'student-id', definitionId: 'definition-id' } }, _sum: { quantity: true } });
+    expect(provisionCardServiceGrant).not.toHaveBeenCalled();
+  });
+  it('does not debit purchased rights or require a commerce secret when request policy is disabled', async () => {
+    const { service, tx } = harness();
+    (service as unknown as { config: { commerce: { idempotencySecret: string } } }).config.commerce.idempotencySecret = '';
+    await expect(service.consumeServerRequest('student-id', 'AI_CHAT', now)).resolves.toMatchObject({ allowed: true, consumed: '0', policyConfigured: false });
+    expect(tx.serviceEntitlementUsage.create).not.toHaveBeenCalled();
+    expect(tx.serviceEntitlementUsage.findUnique).not.toHaveBeenCalled();
+  });
+  it('counts separate server requests separately, without taking a client replay key', async () => {
+    const { service, tx } = harness();
+    jest.mocked(resolveCardServiceQuota).mockResolvedValue({ priority: 'card_first', configured: true, grants: [grant({
+      id: '', sourceType: 'MEMBERSHIP_CARD',
+    }) as never] });
+    await service.consumeServerRequest('student-id', 'AI_CHAT', now);
+    await service.consumeServerRequest('student-id', 'AI_CHAT', now);
+    const calls = tx.serviceEntitlementUsage.create.mock.calls as unknown as Array<[{ data: { operationKeyHash: string } }]>;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0].data.operationKeyHash).not.toBe(calls[1][0].data.operationKeyHash);
+  });
   it('immediately excludes early service grants when the capability is OFF', async () => {
     delete process.env.BANK_RECEIPT_EARLY_ACCESS_ENABLED;
     const { service, tx } = harness([grant({ sourceType: 'UNVERIFIED_RECEIPT_ACCESS', sourceId: 'generation:line', quotaPoolId: 'pool-id' })]);

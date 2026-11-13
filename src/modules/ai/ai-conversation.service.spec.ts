@@ -21,7 +21,7 @@ describe('AiConversationService', () => {
       aiMessage: { create: jest.fn().mockResolvedValue(assistantMessage) },
       course: { findFirst: jest.fn().mockResolvedValue({ id: 'course-id', lessons: [] }) },
     };
-    const quota = { assertChatAllowed: jest.fn() };
+    const quota = { assertChatAllowed: jest.fn(), consumeServiceRequest: jest.fn() };
     const retrieval = { retrieve: jest.fn().mockResolvedValue([]) };
     const openai = {
       getModel: jest.fn().mockReturnValue('gpt-5.4-mini'),
@@ -37,6 +37,17 @@ describe('AiConversationService', () => {
 
   const input: CreateAiChatDto = { message: 'Explain recursion.' };
 
+  it('rejects another user conversation before quota and stops retrieval/provider calls when quota is exhausted', async () => {
+    const { service, transaction, quota, retrieval, openai } = createService();
+    await expect(service.createChat(user, { ...input, conversationId: 'not-owned' })).rejects.toBeInstanceOf(NotFoundException);
+    expect(quota.consumeServiceRequest).not.toHaveBeenCalled();
+    transaction.aiConversation.create.mockResolvedValue({ id: 'conversation-id' });
+    quota.consumeServiceRequest.mockRejectedValue(new Error('Quota denied'));
+    await expect(service.createChat(user, input)).rejects.toThrow('Quota denied');
+    expect(retrieval.retrieve).not.toHaveBeenCalled();
+    expect(openai.complete).not.toHaveBeenCalled();
+  });
+
   it('stores the user message, generates an answer, and returns sources', async () => {
     const { service, transaction, quota, retrieval, prisma } = createService();
     transaction.aiConversation.create.mockResolvedValue({ id: 'conversation-id' });
@@ -49,6 +60,7 @@ describe('AiConversationService', () => {
       grounding: 'general',
     });
     expect(quota.assertChatAllowed).toHaveBeenCalledWith(user.id);
+    expect(quota.consumeServiceRequest).toHaveBeenCalledWith(user.id, 'AI_CHAT');
     expect(retrieval.retrieve).toHaveBeenCalledWith(user, input.message);
     expect(transaction.aiMessage.create).toHaveBeenCalledWith(expect.objectContaining({
       data: { conversationId: 'conversation-id', role: 'user', content: input.message },

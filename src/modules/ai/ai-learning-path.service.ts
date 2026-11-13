@@ -170,6 +170,7 @@ export class AiLearningPathService {
           })).allowed,
       })))
     ).filter(({ allowed }) => allowed).map(({ course }) => course);
+    await this.rateLimit.consumeServiceRequest(user.id, 'AI_LEARNING_PATH');
     const input = {
       profile,
       courses: accessibleCourses.map((course) => ({

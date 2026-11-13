@@ -19,6 +19,8 @@ async function main() {
   const hash = () => randomBytes(32).toString('hex');
   const at = new Date('2026-11-10T00:00:00Z');
   const start = new Date('2026-11-01T00:00:00Z'), end = new Date('2026-12-01T00:00:00Z');
+  const role = 'card_' + randomUUID().replaceAll('-', '');
+  let runtime;
   try {
     await Promise.all(clients.map(client => client.connect()));
     assert.equal((await verifyCardQuotaSchema(clients[0])).cardQuotaGuardsEnabled, true);
@@ -71,8 +73,169 @@ async function main() {
       assert.equal(usage._count, 1);
     }
     console.log('CARD_CROSS_TIER_LAST_UNIT_SERIALIZABLE_RACES=PASS rounds=10');
+
+    const { ServiceEntitlementService } = require('../dist/src/modules/memberships/service-entitlement.service.js');
+    await db.$executeRawUnsafe(`CREATE ROLE "${role}" NOLOGIN`);
+    await db.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT SELECT ON users,commerce_orders,commerce_settlements,commerce_refunds,
+      platform_policy_revisions,service_entitlement_definitions,service_entitlement_grants,service_entitlement_usage,library_resources TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT INSERT ON service_entitlement_grants,service_entitlement_usage TO "${role}"`);
+    // Row locks require an UPDATE privilege; immutable fact triggers still forbid changing these facts.
+    for (const table of ['users','platform_policy_revisions','service_entitlement_definitions','service_entitlement_grants'])
+      await db.$executeRawUnsafe(`GRANT UPDATE(id) ON ${table} TO "${role}"`);
+    runtime = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, options: `-c role=${role}` }) });
+    const { readCardServiceReadiness, CARD_QUOTA_SCHEMA_MIGRATION, CARD_QUOTA_SCHEMA_SHA256 } = require('../dist/src/modules/membership-cards/card-service-readiness.js');
+    const { REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS } = require('./run-production-migrations.cjs');
+    assert.deepEqual(REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS, [{ name: CARD_QUOTA_SCHEMA_MIGRATION, sha256: CARD_QUOTA_SCHEMA_SHA256 }]);
+    await db.$executeRawUnsafe(`GRANT SELECT(migration_name,checksum,finished_at,rolled_back_at) ON _prisma_migrations TO "${role}"`);
+    assert.equal((await readCardServiceReadiness(db)).ready, false, 'Owner/superuser is not an admissible runtime role');
+    assert.equal((await readCardServiceReadiness(runtime)).ready, true);
+    await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants DISABLE TRIGGER membership_card_grant_validate');
+    try { assert.equal((await readCardServiceReadiness(runtime)).ready, false); }
+    finally { await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants ENABLE TRIGGER membership_card_grant_validate'); }
+    assert.equal((await readCardServiceReadiness(runtime)).ready, true);
+    console.log('CARD_QUOTA_RUNTIME_PIN_GUARDS_AND_RESTRICTED_READINESS=PASS');
+    const service = new ServiceEntitlementService(runtime, { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-card-operation-key'.repeat(3) } });
+    const user = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic runtime learner' } });
+    const definition = await db.serviceEntitlementDefinition.create({ data: { code: 'AI_CHAT', valueType: 'metered',
+      resetPeriod: 'calendar_month', unitLabel: 'request', displayName: 'Synthetic request quota', createdById: admin.id } });
+    const runtimePolicy = async (quota, effectiveAt, priority = 'card_first', enabled = true) => db.platformPolicyRevision.create({
+      data: { group: 'membership', version: ++version, status: 'scheduled', createdById: admin.id, approvedById: admin.id,
+        createdAt: new Date('2026-10-28'), approvedAt: new Date('2026-10-29'), effectiveAt,
+        content: { enabled, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
+          serviceLimits: { enabled: true, consumptionPriority: priority, termAnchorAt: '', termMonths: 0 },
+          tiers: [{ code: 'custom', name: { vi: 'Synthetic', en: 'Synthetic' }, threshold: 0, benefits: [],
+            serviceLimits: [{ definitionId: definition.id, quota: String(quota) }] }] } } });
+    const firstPolicy = await runtimePolicy(3, start);
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', at)).remaining, '3');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id } }), 0, 'Read resolution must not create grants');
+    const key = randomUUID();
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, key, at)).remaining, '2');
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, key, at)).idempotent, true);
+    const firstGrant = await db.serviceEntitlementGrant.findFirstOrThrow({ where: { userId: user.id } });
+    assert.equal(firstGrant.cardPolicyRevisionId, firstPolicy.id);
+    assert.equal(firstGrant.cardTierCode, 'custom');
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { userId: user.id } }), 1);
+    const nextAt = new Date('2026-11-16');
+    const raisedPolicy = await runtimePolicy(5, new Date('2026-11-15'));
+    const { loadCardServiceImpact } = require('../dist/src/modules/membership-cards/card-service-impact.js');
+    const { inspectCardServiceBindings } = require('../dist/src/modules/membership-cards/card-service-bindings.js');
+    assert.equal((await inspectCardServiceBindings(runtime, raisedPolicy.content)).ready, true);
+    const impact = await loadCardServiceImpact(runtime, [firstPolicy.content, raisedPolicy.content], [user.id], nextAt);
+    assert.equal(impact.complete, true);
+    assert.equal(impact.project(user.id, firstPolicy.content, firstPolicy.content.tiers[0])[0].remaining, '2');
+    assert.equal(impact.project(user.id, raisedPolicy.content, raisedPolicy.content.tiers[0])[0].remaining, '4');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id } }), 1, 'Impact must not create a new policy grant');
+    console.log('CARD_QUOTA_CONSUMED_IMPACT_AND_BINDINGS_RESTRICTED_PRISMA=PASS');
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', nextAt)).remaining, '4');
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, randomUUID(), nextAt)).remaining, '3');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id } }), 2);
+    const runtimeRace = await Promise.allSettled([service.consume(user.id, 'AI_CHAT', 2n, randomUUID(), nextAt),
+      service.consume(user.id, 'AI_CHAT', 2n, randomUUID(), nextAt)]);
+    assert.equal(runtimeRace.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(runtimeRace.find(result => result.status === 'rejected').reason.getStatus(), 403);
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', nextAt)).remaining, '1');
+    const purchased = await db.serviceEntitlementGrant.create({ data: { userId: user.id, definitionId: definition.id,
+      sourceType: 'ADMIN', sourceId: hash(), valueType: 'metered', resetPeriod: 'calendar_month', quota: 9n, startsAt: start, endsAt: end } });
+    const paidFirstAt = new Date('2026-11-21');
+    await runtimePolicy(7, new Date('2026-11-20'), 'purchased_first');
+    const paidKey = randomUUID();
+    assert.equal((await service.consume(user.id, 'AI_CHAT', 1n, paidKey, paidFirstAt)).remaining, '8');
+    assert.equal((await db.serviceEntitlementUsage.findUniqueOrThrow({ where: { userId_operationKeyHash: {
+      userId: user.id, operationKeyHash: service.operationKeyHash(paidKey) } } })).grantId, purchased.id);
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id, sourceType: 'MEMBERSHIP_CARD' } }), 2,
+      'Unused card quota must not be provisioned when purchased quota is selected');
+    const ownQuotas = await service.listForUser(user.id, paidFirstAt);
+    assert.equal(ownQuotas.items[0].source, 'independent');
+    assert.equal(ownQuotas.items[0].remaining, '8');
+    assert.equal(ownQuotas.cardItems.length, 1);
+    assert.equal(ownQuotas.cardItems[0].quota, '7');
+    assert.equal(ownQuotas.cardItems[0].consumed, '4');
+    assert.equal(ownQuotas.cardItems[0].remaining, '3');
+    assert.equal(await db.serviceEntitlementGrant.count({ where: { userId: user.id, sourceType: 'MEMBERSHIP_CARD' } }), 2,
+      'Own-quota reads must not provision the unused current card context');
+    console.log('CARD_QUOTA_OWN_READ_SEPARATE_FROM_PAID_PRIORITY=PASS');
+    await runtimePolicy(7, new Date('2026-11-25'), 'card_first', false);
+    assert.equal((await service.resolve(user.id, 'AI_CHAT', new Date('2026-11-26'))).remaining, '8', 'Disabling card preserves purchased service quota');
+    const usageBeforeDisabledRequest = await db.serviceEntitlementUsage.count({ where: { userId: user.id } });
+    assert.equal((await service.consumeServerRequest(user.id, 'AI_CHAT', new Date('2026-11-26'))).consumed, '0');
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { userId: user.id } }), usageBeforeDisabledRequest);
+    console.log('CARD_RUNTIME_PRISMA_READ_ONLY_PROVENANCE_REPLAY_POOLING_PRIORITY_AND_RACE=PASS');
+
+    const { AiRateLimitService } = require('../dist/src/modules/ai/ai-rate-limit.service.js');
+    const { AiSummaryService } = require('../dist/src/modules/ai/ai-summary.service.js');
+    const summaryDefinition = await db.serviceEntitlementDefinition.create({ data: { code: 'AI_SUMMARY', valueType: 'metered',
+      resetPeriod: 'calendar_month', unitLabel: 'request', displayName: 'Synthetic summary request', createdById: admin.id } });
+    await db.platformPolicyRevision.create({ data: { group: 'membership', version: ++version, status: 'scheduled',
+      createdById: admin.id, approvedById: admin.id, createdAt: new Date('2026-10-28'), approvedAt: new Date('2026-10-29'), effectiveAt: new Date('2026-11-27'),
+      content: { enabled: true, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
+        serviceLimits: { enabled: true, consumptionPriority: 'card_first', termAnchorAt: '', termMonths: 0 },
+        tiers: [{ code: 'custom', name: { vi: 'Synthetic', en: 'Synthetic' }, threshold: 0, benefits: [],
+          serviceLimits: [{ definitionId: summaryDefinition.id, quota: '1' }] }] } } });
+    const category = await db.libraryCategory.create({ data: { name: 'Synthetic source', slug: randomUUID() } });
+    const resource = await db.libraryResource.create({ data: { ownerId: user.id, categoryId: category.id,
+      title: 'Synthetic private source', description: 'Only supplied synthetic content', type: 'document', visibility: 'private' } });
+    let providerCalls = 0;
+    const mockProvider = { complete: async () => { providerCalls++; return { content: 'Synthetic summary' }; } };
+    const limiter = new AiRateLimitService({ getClient: () => undefined }, { app: { nodeEnv: 'test' } }, {
+      consumeServerRequest: (userId, code) => service.consumeServerRequest(userId, code, new Date('2026-11-28')),
+    });
+    const summary = new AiSummaryService(runtime, mockProvider, limiter, {});
+    const summaryInput = { sourceType: 'library_resource', sourceId: resource.id };
+    const beforeDeniedSource = await db.serviceEntitlementUsage.count({ where: { userId: user.id } });
+    await assert.rejects(() => summary.summarize({ id: admin.id, roles: ['student'] }, summaryInput), error => error.getStatus() === 404);
+    assert.equal(providerCalls, 0);
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { userId: user.id } }), beforeDeniedSource);
+    assert.equal((await summary.summarize({ id: user.id, roles: ['student'] }, summaryInput)).summary, 'Synthetic summary');
+    await assert.rejects(() => summary.summarize({ id: user.id, roles: ['student'] }, summaryInput), error => error.getStatus() === 403);
+    assert.equal(providerCalls, 1, 'Exhausted service quota must stop before a repeated provider attempt');
+    const summaryGrants = await db.serviceEntitlementGrant.findMany({ where: { userId: user.id, definitionId: summaryDefinition.id } });
+    assert.equal(summaryGrants.length, 1);
+    assert.equal(await db.serviceEntitlementUsage.count({ where: { grantId: summaryGrants[0].id } }), 1);
+    console.log('CARD_AI_SUMMARY_REAL_PRISMA_SOURCE_ACCESS_AND_PROVIDER_ADMISSION=PASS');
+
+    // Exercise the actual policy lifecycle with production-shaped lifecycle-only privileges.
+    // This disposable fixture never activates a production policy or calls a real provider.
+    await db.$executeRawUnsafe(`GRANT SELECT,INSERT ON audit_logs TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT INSERT ON platform_policy_revisions TO "${role}"`);
+    await db.$executeRawUnsafe(`GRANT UPDATE(status,approved_by_id,approved_at,effective_at) ON platform_policy_revisions TO "${role}"`);
+    const { PlatformSettingsService } = require('../dist/src/modules/platform/platform-settings.service.js');
+    const settings = new PlatformSettingsService(runtime);
+    const countsBeforeGovernance = [await db.serviceEntitlementGrant.count(), await db.serviceEntitlementUsage.count()];
+    const draft = await settings.create(admin.id, 'membership', {
+      enabled: true, basis: 'spend', currency: 'VND', cycleMode: 'rolling', cycleMonths: 12,
+      serviceLimits: { enabled: true, consumptionPriority: 'card_first', termAnchorAt: '', termMonths: 0 },
+      tiers: [{ code: 'custom', name: { vi: 'Synthetic', en: 'Synthetic' }, threshold: 0, benefits: [],
+        serviceLimits: [{ definitionId: summaryDefinition.id, quota: '2' }] }],
+    });
+    assert.equal((await settings.state()).cardServiceCapabilities.activationReady, true);
+    const preview = await settings.preview(draft.id);
+    assert.equal(preview.canSchedule, true);
+    assert.equal(preview.membershipImpact.activationReady, true);
+    assert.deepEqual(preview.membershipImpact.activationBlockers, []);
+    const effectiveAt = new Date(Date.now() + 86400000);
+    await assert.rejects(() => settings.schedule(admin.id, draft.id, effectiveAt), error => error.getStatus() === 409);
+    await settings.approve(admin.id, draft.id);
+    await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants DISABLE TRIGGER membership_card_grant_validate');
+    try {
+      await assert.rejects(() => settings.schedule(admin.id, draft.id, effectiveAt),
+        error => error.getStatus() === 400 && error.getResponse().blockers.includes('CARD_SERVICE_SCHEMA_NOT_VERIFIED'));
+    } finally { await db.$executeRawUnsafe('ALTER TABLE service_entitlement_grants ENABLE TRIGGER membership_card_grant_validate'); }
+    assert.equal((await db.platformPolicyRevision.findUniqueOrThrow({ where: { id: draft.id } })).status, 'approved');
+    await settings.schedule(admin.id, draft.id, effectiveAt);
+    const scheduled = await db.platformPolicyRevision.findUniqueOrThrow({ where: { id: draft.id } });
+    assert.equal(scheduled.status, 'scheduled');
+    assert.equal(scheduled.effectiveAt.getTime(), effectiveAt.getTime());
+    assert.deepEqual([await db.serviceEntitlementGrant.count(), await db.serviceEntitlementUsage.count()], countsBeforeGovernance);
+    assert.equal(await db.auditLog.count({ where: { targetId: draft.id, action: { in: [
+      'PLATFORM_POLICY_DRAFT_CREATED', 'PLATFORM_POLICY_APPROVED', 'PLATFORM_POLICY_SCHEDULED',
+    ] } } }), 3);
+    console.log('CARD_QUOTA_RESTRICTED_POLICY_LIFECYCLE_READINESS_AND_NO_USAGE_WRITES=PASS');
   } finally {
     await Promise.allSettled(clients.map(client => client.end()));
+    await runtime?.$disconnect();
+    await db.$executeRawUnsafe(`DROP OWNED BY "${role}"`).catch(() => {});
+    await db.$executeRawUnsafe(`DROP ROLE IF EXISTS "${role}"`).catch(() => {});
     await db.$disconnect();
   }
 }

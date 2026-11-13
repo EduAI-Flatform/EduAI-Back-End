@@ -39,6 +39,7 @@ export class AiSummaryService {
     const source = await this.resolveSource(user, input);
 
     if (!source) throw new NotFoundException('AI summary source not found');
+    await this.rateLimit.consumeServiceRequest(user.id, 'AI_SUMMARY');
 
     const completion = await this.aiProvider.complete({
       messages: [
