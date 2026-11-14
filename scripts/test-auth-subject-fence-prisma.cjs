@@ -215,7 +215,11 @@ module.exports = async function verifyAuthSubjectFence(db, actorId) {
       try { await bounded(Promise.all(counted.map(item => item.promise)), 'both last-admin counts'); }
       finally { releaseCounts.resolve(); }
       const removals = await Promise.all(pendingRemovals);
-      assert.equal(removals.filter(outcome => outcome.result).length, 1);
+      for (const outcome of removals) {
+        if (outcome.error && outcome.error.getStatus?.() !== 409) throw outcome.error;
+      }
+      assert.equal(removals.filter(outcome => outcome.result).length, 1,
+        'Last-admin outcomes: ' + removals.map(outcome => outcome.result ? 'committed' : 'conflict').join(','));
       assert.equal(removals.filter(outcome => outcome.error?.getStatus?.() === 409).length, 1);
       assert.equal(await db.user.count({ where: { status: 'active', deletedAt: null,
         roles: { some: { role: { name: 'platform_admin' } } } } }), 1);
