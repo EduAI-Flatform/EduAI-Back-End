@@ -25,6 +25,9 @@ async function main() {
   const { CourseCompletionService } = require('../dist/src/modules/courses/course-completion.service.js');
   const { UpdateLessonProgressDto } = require('../dist/src/modules/courses/dto/update-lesson-progress.dto.js');
   const { validateSync } = require('class-validator');
+  const { PlatformSettingsService } = require('../dist/src/modules/platform/platform-settings.service.js');
+  const { DEFAULT_PLATFORM_SETTINGS } = require('../dist/src/modules/platform/platform-settings.defaults.js');
+  const { QuizzesService } = require('../dist/src/modules/quizzes/quizzes.service.js');
   const { GdsInternalCheckoutService } = require('../dist/src/modules/wallet/gds-internal-checkout.service.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
@@ -138,6 +141,35 @@ async function main() {
         await assert.rejects(() => learning.getLessonProgress({ id: ids.buyerMember, roles: ['student'] }, lesson.id), error => error.getStatus() === 404);
         assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
         console.log('GDS_LEARNING_PROGRESS_POSTGRES_PERSISTENCE=PASS; DTO precision, checkpoints, reload, replay, ownership and unchanged purchased grants');
+        const teacher = await db.user.create({ data: { email: randomUUID() + '@synthetic.invalid', fullName: 'Synthetic quiz policy teacher' } });
+        const instructorRole = await db.role.upsert({ where: { name: 'instructor' }, create: { name: 'instructor' }, update: {} });
+        await db.userRole.create({ data: { userId: teacher.id, roleId: instructorRole.id } });
+        const draft = await db.course.create({ data: { instructorId: teacher.id, title: 'Synthetic quiz defaults draft',
+          slug: 'quiz-policy-' + randomUUID(), level: 'beginner', visibility: 'private' } });
+        const settings = new PlatformSettingsService(db);
+        const createPolicy = async passingScore => {
+          const content = structuredClone(DEFAULT_PLATFORM_SETTINGS.courses);
+          Object.assign(content.quizDefaults, { passingScore, maxAttempts: 2, allowInstructorOverrides: false });
+          const revision = await settings.create(ids.seller, 'courses', content);
+          const impact = await settings.preview(revision.id);
+          assert.equal(impact.canSchedule, true); assert.equal(impact.preservesPurchasedAccess, true);
+          await settings.approve(ids.seller, revision.id);
+          await settings.schedule(ids.seller, revision.id, new Date());
+          return revision;
+        };
+        await createPolicy(85);
+        const quizzes = new QuizzesService(db, audit, completion, access, undefined, settings);
+        const teacherUser = { id: teacher.id, roles: ['instructor'] };
+        const firstQuiz = await quizzes.createQuiz(teacherUser, draft.id, { title: 'First governed quiz' });
+        assert.equal(firstQuiz.passingScore, 85); assert.equal(firstQuiz.maxAttempts, 2);
+        await createPolicy(90);
+        const secondQuiz = await quizzes.createQuiz(teacherUser, draft.id, { title: 'Second governed quiz' });
+        assert.equal(secondQuiz.passingScore, 90);
+        await assert.rejects(() => quizzes.updateQuiz(teacherUser, firstQuiz.id, { passingScore: 90 }), error => error.getStatus() === 403);
+        await quizzes.updateQuiz(teacherUser, firstQuiz.id, { title: 'Historical settings retained' });
+        assert.equal((await db.quiz.findUniqueOrThrow({ where: { id: firstQuiz.id } })).passingScore, 85);
+        assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
+        console.log('GDS_GOVERNED_QUIZ_DEFAULTS_POSTGRES=PASS; draft-preview-approve-effective, API lock, future-only defaults and unchanged purchased grants');
       }
       if(type==='membership') {
         assert.equal(await db.membershipSubscription.count({where:{userId:buyerId,status:'active'}}),1);

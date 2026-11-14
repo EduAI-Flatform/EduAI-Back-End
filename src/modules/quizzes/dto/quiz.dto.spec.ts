@@ -11,6 +11,10 @@ async function validationMessages(dtoClass: new () => object, payload: object) {
 }
 
 describe('Quiz DTO validation', () => {
+  it('allows omitted administrator defaults but rejects an explicit null passing score', async () => {
+    await expect(validationMessages(CreateQuizDto, { title: 'Policy defaults' })).resolves.toEqual([]);
+    await expect(validationMessages(CreateQuizDto, { title: 'Invalid', passingScore: null })).resolves.not.toEqual([]);
+  });
   it('accepts valid quiz and JSON question inputs', async () => {
     await expect(
       validationMessages(CreateQuizDto, {

@@ -4,9 +4,10 @@ import { AuthModule } from '../auth/auth.module';
 import { CoursesModule } from '../courses/courses.module';
 import { QuizzesController } from './quizzes.controller';
 import { QuizzesService } from './quizzes.service';
+import { PlatformModule } from '../platform/platform.module';
 
 @Module({
-  imports: [AuthModule, AuditModule, CoursesModule],
+  imports: [AuthModule, AuditModule, CoursesModule, PlatformModule],
   controllers: [QuizzesController],
   providers: [QuizzesService],
   exports: [QuizzesService],
