@@ -9,6 +9,16 @@ export const PLATFORM_GROUPS = [
   "operations",
 ] as const;
 export type PlatformGroup = (typeof PLATFORM_GROUPS)[number];
+export const PARTNER_CONNECTION_STATUSES = ['unconfigured', 'preparing', 'testing', 'connected', 'suspended'] as const;
+export type PartnerConnectionStatus = (typeof PARTNER_CONNECTION_STATUSES)[number];
+export function withPartnerConnectionDefaults(content: unknown): unknown {
+  if (!content || typeof content !== 'object' || Array.isArray(content)) return content;
+  const value = content as Record<string, unknown>;
+  return { ...value, items: Array.isArray(value.items) ? value.items.map(item =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? { ...item, connectionStatus: item.connectionStatus === undefined ? 'unconfigured' : item.connectionStatus }
+      : item) : value.items };
+}
 export const DEFAULT_QUIZ_DEFAULTS = {
   passingScore: 70, timeLimitMinutes: 30, maxAttempts: 0,
   randomizeQuestions: false, randomizeOptions: false, showCorrectAnswers: true,
@@ -132,6 +142,7 @@ export const DEFAULT_PLATFORM_SETTINGS = {
       logoUrl: string;
       url: string;
       category: string;
+      connectionStatus?: PartnerConnectionStatus;
     }>,
   },
   affiliate: {

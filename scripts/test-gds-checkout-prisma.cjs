@@ -170,6 +170,18 @@ async function main() {
         assert.equal((await db.quiz.findUniqueOrThrow({ where: { id: firstQuiz.id } })).passingScore, 85);
         assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
         console.log('GDS_GOVERNED_QUIZ_DEFAULTS_POSTGRES=PASS; draft-preview-approve-effective, API lock, future-only defaults and unchanged purchased grants');
+        const operationsBefore = (await settings.current()).settings.operations;
+        const partnerContent = { enabled: false, items: [{ name: 'Synthetic School', logoUrl: '/gds-logo.png',
+          url: 'https://example.test', category: 'school', connectionStatus: 'testing' }] };
+        const partnerRevision = await settings.create(ids.seller, 'partners', partnerContent);
+        assert.equal((await settings.preview(partnerRevision.id)).preservesPurchasedAccess, true);
+        await settings.approve(ids.seller, partnerRevision.id);
+        await settings.schedule(ids.seller, partnerRevision.id, new Date());
+        const reloadedSettings = new PlatformSettingsService(db);
+        assert.deepEqual((await reloadedSettings.publicSettings()).settings.partners, partnerContent);
+        assert.deepEqual((await reloadedSettings.current()).settings.operations, operationsBefore);
+        assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
+        console.log('GDS_PARTNER_CONNECTION_METADATA_POSTGRES=PASS; governed persistence, reload and unchanged intake flags and purchased grants');
       }
       if(type==='membership') {
         assert.equal(await db.membershipSubscription.count({where:{userId:buyerId,status:'active'}}),1);
