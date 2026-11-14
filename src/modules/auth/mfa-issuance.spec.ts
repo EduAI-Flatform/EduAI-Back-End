@@ -15,7 +15,8 @@ describe('MFA central token issuance', () => {
     };
     prisma.$transaction = jest.fn((callback: any) => callback(prisma));
     const jwt = { signAsync: jest.fn().mockResolvedValue('signed'), verifyAsync: jest.fn().mockResolvedValue({ sub: user.id, mfaRevision: 3, mfaVerified: false, authTime: 123 }) };
-    const mfa = { claims: jest.fn().mockResolvedValue({ mfaRevision: 3, mfaVerified: false, mfaRequired: true, authTime: 123 }) };
+    const mfa = { claims: jest.fn().mockResolvedValue({ mfaRevision: 3, mfaVerified: false, mfaRequired: true, authTime: 123 }),
+      assertFreshPrimary: jest.fn(), verify: jest.fn().mockResolvedValue(2) };
     const service = new AuthService(prisma, { comparePassword: jest.fn().mockResolvedValue(true), hashPassword: jest.fn().mockResolvedValue('hash') } as any, jwt as any, { jwt: { accessSecret: 'access', refreshSecret: 'refresh' } } as any, { record: jest.fn() } as any, undefined, mfa as any);
     return { service, prisma, jwt, mfa };
   }
@@ -40,9 +41,9 @@ describe('MFA central token issuance', () => {
     expect(mfa.claims).toHaveBeenCalledWith(user.id, expect.objectContaining({ mfaVerified: true, authTime: 123 }), expect.objectContaining({ userMfa: expect.any(Object) }));
     expect(result.mfaRequired).toBe(false);
   });
-  it('does not issue a verified session if the factor changed after proof consumption', async () => {
+  it('does not issue a verified session for an inconsistent proof revision', async () => {
     const { service, jwt } = setup();
-    await expect(service.issueMfaSession(user.id, 2, 123)).rejects.toThrow();
+    await expect(service.verifyMfa({ id: user.id, roles: ['student'], mfaRevision: 3, authTime: 123 }, '123456')).rejects.toThrow();
     expect(jwt.signAsync).not.toHaveBeenCalled();
   });
 });

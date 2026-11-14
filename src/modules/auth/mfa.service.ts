@@ -64,20 +64,19 @@ export class MfaService {
       otpauthUri: 'otpauth://totp/' + encodeURIComponent('GDS:' + email) + '?secret=' + secret + '&issuer=GDS&algorithm=SHA1&digits=6&period=30',
     };
   }
-  async confirm(userId: string, code: string, authTime: number | undefined) {
+  async confirm(userId: string, code: string, authTime: number | undefined, transaction?: Prisma.TransactionClient) {
     this.assertFreshPrimary(authTime);
     const key = this.key();
-    const state = await this.prisma.userMfa.findUnique({ where: { userId } });
-    if (!state || state.enabled || !state.pendingSecretEncrypted || !state.pendingExpiresAt || state.pendingExpiresAt.getTime() <= Date.now()) {
-      throw new BadRequestException('Authenticator setup has expired. Start again.');
-    }
-    const secret = decryptMfaSecret(state.pendingSecretEncrypted, key, userId);
-    const step = matchTotpStep(secret, code, Date.now(), null);
-    if (step === null) throw new UnauthorizedException('Invalid authenticator code.');
-    const recovery = createRecoveryCodes(userId);
-    const revision = state.revision + 1;
-    await this.prisma.$transaction(async tx => {
-      await lockActiveAuthSubject(tx, userId);
+    return this.inSubjectTransaction(userId, async tx => {
+      const state = await tx.userMfa.findUnique({ where: { userId } });
+      if (!state || state.enabled || !state.pendingSecretEncrypted || !state.pendingExpiresAt || state.pendingExpiresAt.getTime() <= Date.now()) {
+        throw new BadRequestException('Authenticator setup has expired. Start again.');
+      }
+      const secret = decryptMfaSecret(state.pendingSecretEncrypted, key, userId);
+      const step = matchTotpStep(secret, code, Date.now(), null);
+      if (step === null) throw new UnauthorizedException('Invalid authenticator code.');
+      const recovery = createRecoveryCodes(userId);
+      const revision = state.revision + 1;
       const result = await tx.userMfa.updateMany({
         where: { userId, enabled: false, revision: state.revision, pendingSecretEncrypted: state.pendingSecretEncrypted, pendingExpiresAt: { gt: new Date() } },
         data: { enabled: true, revision, secretEncrypted: encryptMfaSecret(secret, key, userId), pendingSecretEncrypted: null, pendingExpiresAt: null, lastUsedStep: step, recoveryCodeHashes: recovery.hashes, enabledAt: new Date() },
@@ -85,18 +84,17 @@ export class MfaService {
       if (result.count !== 1) throw new ConflictException('Authenticator setup changed. Start again.');
       await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
       await this.audit(tx, userId, 'MFA_ENABLED');
-    });
-    return { revision, recoveryCodes: recovery.codes };
+      return { revision, recoveryCodes: recovery.codes };
+    }, transaction);
   }
-  async verify(userId: string, code: string, expectedRevision: number | undefined) {
+  async verify(userId: string, code: string, expectedRevision: number | undefined, transaction?: Prisma.TransactionClient) {
     this.key();
-    return this.prisma.$transaction(async tx => {
-      await lockActiveAuthSubject(tx, userId);
+    return this.inSubjectTransaction(userId, async tx => {
       const state = await tx.userMfa.findUnique({ where: { userId } });
       if (!state?.enabled || state.revision !== expectedRevision) throw new UnauthorizedException('Authenticator session changed. Sign in again.');
       await this.consumeProof(tx, state, code);
       return state.revision;
-    });
+    }, transaction);
   }
   async disable(userId: string, code: string, authTime: number | undefined) {
     this.assertFreshPrimary(authTime);
@@ -116,12 +114,11 @@ export class MfaService {
     });
     return { disabled: true as const };
   }
-  async regenerateRecoveryCodes(userId: string, code: string, authTime: number | undefined) {
+  async regenerateRecoveryCodes(userId: string, code: string, authTime: number | undefined, transaction?: Prisma.TransactionClient) {
     this.assertFreshPrimary(authTime);
     this.key();
     const recovery = createRecoveryCodes(userId);
-    const revision = await this.prisma.$transaction(async tx => {
-      await lockActiveAuthSubject(tx, userId);
+    return this.inSubjectTransaction(userId, async tx => {
       const state = await tx.userMfa.findUnique({ where: { userId } });
       if (!state?.enabled) throw new BadRequestException('Authenticator is not enabled.');
       await this.consumeProof(tx, state, code);
@@ -132,9 +129,16 @@ export class MfaService {
       if (changed.count !== 1) throw new ConflictException('Authenticator settings changed.');
       await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
       await this.audit(tx, userId, 'MFA_RECOVERY_CODES_REPLACED');
-      return state.revision + 1;
-    });
-    return { revision, recoveryCodes: recovery.codes };
+      return { revision: state.revision + 1, recoveryCodes: recovery.codes };
+    }, transaction);
+  }
+
+  private inSubjectTransaction<T>(userId: string, work: (tx: Prisma.TransactionClient) => Promise<T>, transaction?: Prisma.TransactionClient): Promise<T> {
+    const run = async (tx: Prisma.TransactionClient) => {
+      await lockActiveAuthSubject(tx, userId);
+      return work(tx);
+    };
+    return transaction ? run(transaction) : this.prisma.$transaction(run);
   }
 
   private async consumeProof(tx: Prisma.TransactionClient, state: UserMfa, code: string) {

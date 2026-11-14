@@ -36,8 +36,7 @@ export class MfaController {
   @Header('Cache-Control', 'no-store')
   @RateLimit({ identity: 'user', limit: 5, name: 'mfa-confirm', windowSeconds: 300 })
   async confirm(@CurrentUser() user: AuthenticatedUser, @Body() body: MfaCodeDto) {
-    const result = await this.mfa.confirm(user.id, body.code, user.authTime);
-    return { recoveryCodes: result.recoveryCodes, session: await this.auth.issueMfaSession(user.id, result.revision, user.authTime) };
+    return this.auth.confirmMfa(user, body.code);
   }
 
   @Post('verify')
@@ -45,9 +44,7 @@ export class MfaController {
   @AllowMfaPending()
   @RateLimit({ identity: 'user', limit: 5, name: 'mfa-verify', windowSeconds: 300 })
   async verify(@CurrentUser() user: AuthenticatedUser, @Body() body: MfaCodeDto) {
-    this.mfa.assertFreshPrimary(user.authTime);
-    const revision = await this.mfa.verify(user.id, body.code, user.mfaRevision);
-    return this.auth.issueMfaSession(user.id, revision, user.authTime);
+    return this.auth.verifyMfa(user, body.code);
   }
 
   @Post('disable')
@@ -60,7 +57,6 @@ export class MfaController {
   @Header('Cache-Control', 'no-store')
   @RateLimit({ identity: 'user', limit: 5, name: 'mfa-recovery', windowSeconds: 300 })
   async recovery(@CurrentUser() user: AuthenticatedUser, @Body() body: MfaCodeDto) {
-    const result = await this.mfa.regenerateRecoveryCodes(user.id, body.code, user.authTime);
-    return { recoveryCodes: result.recoveryCodes, session: await this.auth.issueMfaSession(user.id, result.revision, user.authTime) };
+    return this.auth.regenerateMfaRecoveryCodes(user, body.code);
   }
 }
