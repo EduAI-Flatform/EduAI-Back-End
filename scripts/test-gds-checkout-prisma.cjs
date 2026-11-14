@@ -31,6 +31,7 @@ async function main() {
   const { JwtService } = require('@nestjs/jwt');
   const { AuthService } = require('../dist/src/modules/auth/auth.service.js');
   const { MfaService } = require('../dist/src/modules/auth/mfa.service.js');
+  const { encodeBase32, encryptMfaSecret } = require('../dist/src/modules/auth/mfa-crypto.js');
   const { PasswordService } = require('../dist/src/modules/auth/password.service.js');
   const { GdsInternalCheckoutService } = require('../dist/src/modules/wallet/gds-internal-checkout.service.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
@@ -173,7 +174,8 @@ async function main() {
         const mfaAuth = new AuthService(db, passwords, jwt, authConfig, audit, undefined, mfa);
         // A new primary session takes the current revision; rotation must never
         // replace an older revision, including after the factor was disabled.
-        await db.userMfa.create({ data: { userId: buyerId, enabled: true, revision: 1 } });
+        const syntheticFactor = { secretEncrypted: encryptMfaSecret(encodeBase32(Buffer.alloc(20, 3)), Buffer.alloc(32, 9), buyerId), enabledAt: new Date() };
+        await db.userMfa.create({ data: { userId: buyerId, enabled: true, revision: 1, ...syntheticFactor } });
         const primary = await db.$transaction(async tx => mfaAuth.issueSessionForUser(
           await tx.user.findUniqueOrThrow({ where: { id: buyerId }, include: { roles: { include: { role: true } } } }), tx));
         assert.equal(primary.mfaRequired, true);
@@ -183,7 +185,8 @@ async function main() {
         assert.equal(primaryClaims.authTime, (await jwt.verifyAsync(primary.refreshToken, { secret: authConfig.jwt.refreshSecret })).authTime);
         const rowsBeforeMfaChange = await db.refreshToken.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } });
         for (const enabled of [true, false]) {
-          await db.userMfa.update({ where: { userId: buyerId }, data: { enabled, revision: 2 } });
+          await db.userMfa.update({ where: { userId: buyerId }, data: { enabled, revision: 2,
+            ...(enabled ? syntheticFactor : { secretEncrypted: null, enabledAt: null }) } });
           await assert.rejects(() => mfaAuth.refresh({ refreshToken: sameRevision.refreshToken }), error => error.getStatus?.() === 401);
           // The consumed predecessor and all independent sessions are unchanged
           // when stale claims abort rotation inside the real transaction.
