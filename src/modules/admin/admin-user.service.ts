@@ -14,6 +14,7 @@ import {
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isTransactionWriteConflict } from '../../prisma/transaction-conflict';
 import { lockAuthSubject } from '../auth/auth-subject-lock';
 
 const adminUserSelect = {
@@ -285,9 +286,7 @@ export class AdminUserService {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         });
       } catch (error: unknown) {
-        const retryable =
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2034';
+        const retryable = isTransactionWriteConflict(error);
         if (!retryable || attempt === 2) throw error;
       }
     }

@@ -20,6 +20,15 @@ moderate. Fresh-context review caught the Firebase error-shape regression; its
 correction and explicit regression test are included. Cross-model CLI skipped
 in autonomous context.
 
+Real replay exposed an additional commit-time adapter conflict in overlapping
+last-admin mutations. Admin's P2034-only retry did not recognize the native
+DriverAdapterError/TransactionWriteConflict. The existing wallet serialization
+classifier is now shared at the Prisma layer; Admin retries that exact conflict
+family within its existing three-attempt whole-Serializable boundary. The wallet
+wrapper keeps its existing additional P2002 behavior; Admin does not retry unique,
+timeout, authentication or invariant errors. Its native-adapter regression failed
+before correction; focused30 classifier/Admin/wallet tests and build passed.
+
 The guarded disposable full-schema PostgreSQL replay runs forced lock waits for
 both orders of refresh against password, provider-password, MFA confirm/disable/
 recovery, Admin role and status revocation. It also exercises old-password proof

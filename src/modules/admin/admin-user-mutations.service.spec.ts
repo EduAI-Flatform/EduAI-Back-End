@@ -160,6 +160,23 @@ describe('AdminUserService status mutations', () => {
     ).resolves.toEqual(expect.objectContaining({ status: UserStatus.suspended }));
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
   });
+
+  it('retries a native Prisma pg commit conflict before rechecking the last administrator', async () => {
+    const { service, prisma } = createMutationService({ otherActiveAdmins: 0 });
+    prisma.$transaction.mockRejectedValueOnce(Object.assign(new Error('TransactionWriteConflict'), {
+      name: 'DriverAdapterError', cause: { kind: 'TransactionWriteConflict' },
+    }));
+    await expect(service.setRoles('actor-id', baseUser.id, [RoleName.instructor])).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['P2002', 'P2028'])('does not retry non-serialization failures %s', async code => {
+    const { service, prisma } = createMutationService();
+    const failure = new Prisma.PrismaClientKnownRequestError('non-serialization failure', { code, clientVersion: 'test' });
+    prisma.$transaction.mockRejectedValueOnce(failure);
+    await expect(service.setStatus('actor-id', baseUser.id, UserStatus.suspended)).rejects.toBe(failure);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('AdminUserService role mutations', () => {
