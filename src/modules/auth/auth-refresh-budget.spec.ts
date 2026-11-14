@@ -9,7 +9,8 @@ describe('refresh with several remembered device sessions', () => {
     const user = { id: 'synthetic-user', email: 'synthetic@example.test', fullName: 'Synthetic', status: 'active', deletedAt: null,
       createdAt: new Date(), updatedAt: new Date(), roles: [{ role: { name: 'student' } }],
       refreshTokens: [{ id: 'other-1', tokenHash: 'other-1' }, { id: 'other-2', tokenHash: 'other-2' }, { id: 'current', tokenHash: 'matching' }] };
-    const tx = { user: { findUnique: jest.fn(async () => { checkBudget(); return user; }) },
+    const tx = { $queryRaw: jest.fn(async () => { checkBudget(); return [{ status: 'active', deletedAt: null }]; }),
+      user: { findUnique: jest.fn(async () => { checkBudget(); return user; }) },
       refreshToken: { updateMany: jest.fn(async () => { checkBudget(); return { count: 1 }; }),
         create: jest.fn(async () => { checkBudget(); return { id: 'successor' }; }) } };
     const prisma = { ...tx, $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => {

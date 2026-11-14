@@ -14,6 +14,7 @@ import {
 import { AuditAction } from '../../common/audit/audit.constants';
 import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { lockAuthSubject } from '../auth/auth-subject-lock';
 
 const adminUserSelect = {
   id: true,
@@ -246,6 +247,7 @@ export class AdminUserService {
     tx: Prisma.TransactionClient,
     userId: string,
   ): Promise<AdminUserRecord> {
+    await lockAuthSubject(tx, userId);
     const user = await tx.user.findFirst({
       where: { id: userId, deletedAt: null },
       select: adminUserSelect,

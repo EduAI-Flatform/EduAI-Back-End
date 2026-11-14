@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, ServiceUnavailableE
 import { randomBytes } from 'node:crypto';
 import { Prisma, UserMfa } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { lockActiveAuthSubject } from './auth-subject-lock';
 import { createRecoveryCodes, decryptMfaSecret, encodeBase32, encryptMfaSecret, matchTotpStep, recoveryDigest } from './mfa-crypto';
 
 export interface MfaClaims { mfaRevision?: number; mfaVerified?: boolean; authTime?: number; }
@@ -51,6 +52,7 @@ export class MfaService {
     const pendingSecretEncrypted = encryptMfaSecret(secret, key, userId);
     const pendingExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       await tx.userMfa.upsert({ where: { userId }, create: { userId }, update: {} });
       const result = await tx.userMfa.updateMany({
         where: { userId, enabled: false }, data: { pendingSecretEncrypted, pendingExpiresAt },
@@ -75,6 +77,7 @@ export class MfaService {
     const recovery = createRecoveryCodes(userId);
     const revision = state.revision + 1;
     await this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       const result = await tx.userMfa.updateMany({
         where: { userId, enabled: false, revision: state.revision, pendingSecretEncrypted: state.pendingSecretEncrypted, pendingExpiresAt: { gt: new Date() } },
         data: { enabled: true, revision, secretEncrypted: encryptMfaSecret(secret, key, userId), pendingSecretEncrypted: null, pendingExpiresAt: null, lastUsedStep: step, recoveryCodeHashes: recovery.hashes, enabledAt: new Date() },
@@ -88,6 +91,7 @@ export class MfaService {
   async verify(userId: string, code: string, expectedRevision: number | undefined) {
     this.key();
     return this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       const state = await tx.userMfa.findUnique({ where: { userId } });
       if (!state?.enabled || state.revision !== expectedRevision) throw new UnauthorizedException('Authenticator session changed. Sign in again.');
       await this.consumeProof(tx, state, code);
@@ -98,6 +102,7 @@ export class MfaService {
     this.assertFreshPrimary(authTime);
     this.key();
     await this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       const state = await tx.userMfa.findUnique({ where: { userId } });
       if (!state?.enabled) throw new BadRequestException('Authenticator is not enabled.');
       await this.consumeProof(tx, state, code);
@@ -116,6 +121,7 @@ export class MfaService {
     this.key();
     const recovery = createRecoveryCodes(userId);
     const revision = await this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       const state = await tx.userMfa.findUnique({ where: { userId } });
       if (!state?.enabled) throw new BadRequestException('Authenticator is not enabled.');
       await this.consumeProof(tx, state, code);

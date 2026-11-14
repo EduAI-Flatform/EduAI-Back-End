@@ -3,7 +3,7 @@ import { AuthSecurityService } from './auth-security.service';
 describe('account password changes', () => {
   function setup() {
     const user = { id: 'owner', passwordHash: 'old-hash', firebaseUid: null, authProvider: 'local', status: 'active' };
-    const tx = { user: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn().mockResolvedValue({ firebaseUid: 'firebase-owner', status: 'active' }) }, refreshToken: { updateMany: jest.fn() }, auditLog: { create: jest.fn() } };
+    const tx = { $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]), user: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn().mockResolvedValue({ firebaseUid: 'firebase-owner', status: 'active' }) }, refreshToken: { updateMany: jest.fn() }, auditLog: { create: jest.fn() } };
     const prisma = { user: { findUnique: jest.fn().mockResolvedValue(user) }, $transaction: jest.fn(async (fn: any) => fn(tx)) };
     const passwords = { comparePassword: jest.fn().mockResolvedValue(true), hashPassword: jest.fn().mockResolvedValue('new-hash') };
     const firebase = { verifyIdToken: jest.fn() };
@@ -12,7 +12,7 @@ describe('account password changes', () => {
   it('changes the owner password and revokes refresh sessions in one transaction', async () => {
     const { service, tx } = setup();
     await expect(service.changePassword('owner', 'old-password', 'new-password')).resolves.toEqual({ changed: true, reauthenticate: true });
-    expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: 'owner', passwordHash: 'old-hash', firebaseUid: null, authProvider: 'local', status: 'active' }, data: { passwordHash: 'new-hash' } });
+    expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: 'owner', passwordHash: 'old-hash', firebaseUid: null, authProvider: 'local', status: 'active', deletedAt: null }, data: { passwordHash: 'new-hash' } });
     expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({ where: { userId: 'owner', revokedAt: null }, data: { revokedAt: expect.any(Date) } });
     expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorId: 'owner', action: 'AUTH_PASSWORD_CHANGED', metadataJson: {} }) });
   });

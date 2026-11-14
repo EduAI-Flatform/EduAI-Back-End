@@ -13,6 +13,7 @@ describe('refresh token device isolation', () => {
     };
     const storedHashes: string[] = [];
     const prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
       user: { findUnique: jest.fn().mockResolvedValue(user) },
       refreshToken: { create: jest.fn(async (input: { data: { tokenHash: string } }) => {
         storedHashes.push(input.data.tokenHash); return { id: String(storedHashes.length) };

@@ -29,6 +29,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { PasswordService } from './password.service';
 import { MfaService, MfaClaims } from './mfa.service';
+import { lockActiveAuthSubject, lockAuthSubject } from './auth-subject-lock';
 import {
   LoginResponse,
   LogoutResponse,
@@ -60,7 +61,7 @@ interface RefreshTokenRecord {
   tokenHash: string;
 }
 
-interface RefreshTokenWriter extends Pick<Prisma.TransactionClient, 'userMfa'> {
+interface RefreshTokenWriter extends Pick<Prisma.TransactionClient, '$queryRaw' | 'user' | 'userMfa'> {
   refreshToken: {
     create(input: {
       data: {
@@ -112,6 +113,7 @@ const FIREBASE_AUTH_ERROR_MESSAGES = {
 const FIREBASE_USER_SELECT = {
   avatarUrl: true,
   createdAt: true,
+  deletedAt: true,
   email: true,
   firebaseUid: true,
   fullName: true,
@@ -180,9 +182,10 @@ export class AuthService {
       throw this.invalidCredentialsException();
     }
 
+    const provenPasswordHash = user.passwordHash;
     const passwordMatches = await this.passwordService.comparePassword(
       input.password,
-      user.passwordHash,
+      provenPasswordHash,
     );
 
     if (!passwordMatches) {
@@ -190,7 +193,7 @@ export class AuthService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const response = await this.issueTokenResponse(user, tx);
+      const response = await this.issueTokenResponse(user, tx, undefined, provenPasswordHash);
       await this.auditService.record(
         {
           actorId: user.id,
@@ -282,14 +285,19 @@ export class AuthService {
           throw this.accountLinkConflictException();
         }
 
-        const existingUser = existingByFirebaseUid ?? existingByEmail;
+        let existingUser = existingByFirebaseUid ?? existingByEmail;
 
         if (!existingUser && !input.role) {
           throw this.accountRoleRequiredException();
         }
 
         if (existingUser) {
-          if (existingUser.status !== UserStatus.active) {
+          await lockAuthSubject(tx, existingUser.id);
+          existingUser = await tx.user.findUnique({ where: { id: existingUser.id }, select: FIREBASE_USER_SELECT });
+          if (!existingUser || (existingUser.firebaseUid && existingUser.firebaseUid !== uid)) {
+            throw this.accountLinkConflictException();
+          }
+          if (existingUser.status !== UserStatus.active || existingUser.deletedAt) {
             throw new ForbiddenException({
               error: 'ACCOUNT_BLOCKED',
               message: FIREBASE_AUTH_ERROR_MESSAGES.accountBlocked,
@@ -420,6 +428,7 @@ export class AuthService {
     if (!storedToken) throw new UnauthorizedException('Invalid refresh token');
 
     return this.prisma.$transaction(async (tx) => {
+      await lockActiveAuthSubject(tx, payload.sub);
       const user = await tx.user.findUnique({
         where: { id: payload.sub },
         select: {
@@ -668,6 +677,7 @@ export class AuthService {
   async issueMfaSession(userId: string, revision: number, authTime: number | undefined): Promise<LoginResponse> {
     if (!this.mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
     return this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       const [user, state] = await Promise.all([
         tx.user.findUnique({ where: { id: userId }, select: { ...FIREBASE_USER_SELECT, deletedAt: true } }),
         tx.userMfa.findUnique({ where: { userId } }),
@@ -683,8 +693,17 @@ export class AuthService {
     user: AuthUserRecord,
     refreshTokenWriter: RefreshTokenWriter,
     previousMfa?: MfaClaims,
+    provenPasswordHash?: string,
   ): Promise<LoginResponse> {
-    const responseUser = this.toRegisteredUserResponse(user);
+    await lockActiveAuthSubject(refreshTokenWriter, user.id);
+    const current = await refreshTokenWriter.user.findUnique({
+      where: { id: user.id }, select: { ...FIREBASE_USER_SELECT, passwordHash: true },
+    });
+    if (!current || current.deletedAt || current.status !== UserStatus.active ||
+      (provenPasswordHash !== undefined && current.passwordHash !== provenPasswordHash)) {
+      throw new UnauthorizedException('Account credentials changed. Please sign in again.');
+    }
+    const responseUser = this.toRegisteredUserResponse(current);
     const mfa = this.mfa ? await this.mfa.claims(user.id, previousMfa, refreshTokenWriter) : undefined;
     const payload = {
       sub: responseUser.id,

@@ -194,6 +194,8 @@ async function main() {
         }
         assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
         console.log('GDS_AUTH_MFA_REVISION_POSTGRES=PASS; same-revision provisional renewal, original auth time, stale enabled/disabled denial, rotation rollback and unchanged purchased grants');
+        await require('./test-auth-subject-fence-prisma.cjs')(db, ids.seller);
+        assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
         const teacher = await db.user.create({ data: { email: randomUUID() + '@synthetic.invalid', fullName: 'Synthetic quiz policy teacher' } });
         const instructorRole = await db.role.upsert({ where: { name: 'instructor' }, create: { name: 'instructor' }, update: {} });
         await db.userRole.create({ data: { userId: teacher.id, roleId: instructorRole.id } });

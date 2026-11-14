@@ -3,6 +3,7 @@ import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FIREBASE_ADMIN_SERVICE, type FirebaseAdminVerifier } from '../firebase/firebase-admin.constants';
 import { PasswordService } from './password.service';
+import { lockActiveAuthSubject } from './auth-subject-lock';
 
 @Injectable()
 export class AuthSecurityService {
@@ -24,8 +25,9 @@ export class AuthSecurityService {
     if (!user.passwordHash || !await this.passwords.comparePassword(currentPassword, user.passwordHash)) throw new UnauthorizedException('Current password is incorrect.');
     const passwordHash = await this.passwords.hashPassword(newPassword);
     await this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       const changed = await tx.user.updateMany({
-        where: { id: userId, passwordHash: user.passwordHash, firebaseUid: null, authProvider: 'local', status: 'active' },
+        where: { id: userId, passwordHash: user.passwordHash, firebaseUid: null, authProvider: 'local', status: 'active', deletedAt: null },
         data: { passwordHash },
       });
       if (changed.count !== 1) throw new ConflictException('Account credentials changed. Please sign in again.');
@@ -44,6 +46,7 @@ export class AuthSecurityService {
       throw new UnauthorizedException('Recent password authentication required.');
     }
     await this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, userId);
       const latest = await tx.user.findUnique({ where: { id: userId }, select: { firebaseUid: true, status: true } });
       if (!latest || latest.firebaseUid !== claims.uid || latest.status !== 'active') throw new UnauthorizedException('Account changed. Please sign in again.');
       await this.revoke(tx, userId, 'AUTH_PROVIDER_PASSWORD_CHANGED');
@@ -52,8 +55,8 @@ export class AuthSecurityService {
   }
 
   private async findActiveUser(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true, firebaseUid: true, authProvider: true, status: true } });
-    if (!user || user.status !== 'active') throw new UnauthorizedException('Account unavailable.');
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true, firebaseUid: true, authProvider: true, status: true, deletedAt: true } });
+    if (!user || user.status !== 'active' || user.deletedAt) throw new UnauthorizedException('Account unavailable.');
     return user;
   }
 

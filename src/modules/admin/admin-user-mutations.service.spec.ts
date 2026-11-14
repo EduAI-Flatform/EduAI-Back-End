@@ -40,6 +40,7 @@ function createMutationService(options?: {
   const user = options?.user ?? baseUser;
   const updatedUser = options?.updatedUser ?? user;
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
     user: {
       findFirst: jest
         .fn()
