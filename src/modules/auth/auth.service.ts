@@ -12,6 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import {
   AuthProvider,
+  Prisma,
   RoleName,
   UserStatus,
 } from '../../../generated/prisma/client';
@@ -59,7 +60,7 @@ interface RefreshTokenRecord {
   tokenHash: string;
 }
 
-interface RefreshTokenWriter {
+interface RefreshTokenWriter extends Pick<Prisma.TransactionClient, 'userMfa'> {
   refreshToken: {
     create(input: {
       data: {
@@ -684,7 +685,7 @@ export class AuthService {
     previousMfa?: MfaClaims,
   ): Promise<LoginResponse> {
     const responseUser = this.toRegisteredUserResponse(user);
-    const mfa = this.mfa ? await this.mfa.claims(user.id, previousMfa) : undefined;
+    const mfa = this.mfa ? await this.mfa.claims(user.id, previousMfa, refreshTokenWriter) : undefined;
     const payload = {
       sub: responseUser.id,
       email: responseUser.email,

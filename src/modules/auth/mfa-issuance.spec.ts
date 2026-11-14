@@ -22,13 +22,13 @@ describe('MFA central token issuance', () => {
     const { service, jwt, mfa } = setup();
     const result = await service.login({ email: user.email, password: 'synthetic' });
     expect(result.mfaRequired).toBe(true);
-    expect(mfa.claims).toHaveBeenCalledWith(user.id, undefined);
+    expect(mfa.claims).toHaveBeenCalledWith(user.id, undefined, expect.objectContaining({ userMfa: expect.any(Object) }));
     expect(jwt.signAsync).toHaveBeenCalledWith(expect.objectContaining({ sub: user.id, mfaRevision: 3, mfaVerified: false }), expect.objectContaining({ secret: 'access' }));
   });
   it('never upgrades a provisional refresh into a verified session', async () => {
     const { service, mfa } = setup();
     const result = await service.refresh({ refreshToken: 'old' });
-    expect(mfa.claims).toHaveBeenCalledWith(user.id, expect.objectContaining({ mfaVerified: false, mfaRevision: 3, authTime: 123 }));
+    expect(mfa.claims).toHaveBeenCalledWith(user.id, expect.objectContaining({ mfaVerified: false, mfaRevision: 3, authTime: 123 }), expect.objectContaining({ userMfa: expect.any(Object) }));
     expect(result.mfaRequired).toBe(true);
   });
   it('preserves verified revision and original primary-authentication time through renewal', async () => {
@@ -36,7 +36,7 @@ describe('MFA central token issuance', () => {
     jwt.verifyAsync.mockResolvedValue({ sub: user.id, mfaRevision: 3, mfaVerified: true, authTime: 123 });
     mfa.claims.mockResolvedValue({ mfaRevision: 3, mfaVerified: true, mfaRequired: false, authTime: 123 });
     const result = await service.refresh({ refreshToken: 'old' });
-    expect(mfa.claims).toHaveBeenCalledWith(user.id, expect.objectContaining({ mfaVerified: true, authTime: 123 }));
+    expect(mfa.claims).toHaveBeenCalledWith(user.id, expect.objectContaining({ mfaVerified: true, authTime: 123 }), expect.objectContaining({ userMfa: expect.any(Object) }));
     expect(result.mfaRequired).toBe(false);
   });
   it('does not issue a verified session if the factor changed after proof consumption', async () => {

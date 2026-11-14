@@ -33,7 +33,23 @@ describe('MfaService', () => {
     const { service } = setup();
     expect(await service.claims(userId)).toMatchObject({ mfaRequired: true, mfaVerified: false, mfaRevision: 2 });
     expect(await service.claims(userId, { mfaVerified: true, mfaRevision: 2, authTime: 123 })).toMatchObject({ mfaRequired: false, mfaVerified: true, authTime: 123 });
-    expect(await service.claims(userId, { mfaVerified: true, mfaRevision: 1 })).toMatchObject({ mfaRequired: true, mfaVerified: false });
+  });
+  it.each([true, false])('rejects a superseded refresh revision when the factor is enabled=%s', async enabled => {
+    const { service, row } = setup();
+    row.enabled = enabled;
+    await expect(service.claims(userId, { mfaVerified: true, mfaRevision: 1, authTime: 123 }))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+  });
+  it('rejects a pre-MFA refresh token once a factor revision exists', async () => {
+    const { service } = setup();
+    await expect(service.claims(userId, { authTime: 123 }))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+  });
+  it('uses the supplied transaction state rather than an independent root read', async () => {
+    const { service } = setup();
+    const reader = { userMfa: { findUnique: jest.fn().mockResolvedValue({ enabled: false, revision: 0 }) } };
+    expect(await service.claims(userId, { authTime: 123 }, reader as any))
+      .toEqual({ mfaRevision: 0, mfaVerified: false, mfaRequired: false, authTime: 123 });
   });
   it('keeps setup unavailable until encryption is configured', async () => {
     delete process.env.GDS_MFA_ENCRYPTION_KEY;
