@@ -9,6 +9,16 @@ export const PLATFORM_GROUPS = [
   "operations",
 ] as const;
 export type PlatformGroup = (typeof PLATFORM_GROUPS)[number];
+export const DEFAULT_QUIZ_DEFAULTS = {
+  passingScore: 70, timeLimitMinutes: 30, maxAttempts: 0,
+  randomizeQuestions: false, randomizeOptions: false, showCorrectAnswers: true,
+  isRequired: true, allowInstructorOverrides: true,
+};
+export function withCourseQuizDefaults(content: unknown): unknown {
+  if (!content || typeof content !== 'object' || Array.isArray(content)) return content;
+  const value = content as Record<string, unknown>;
+  return { ...value, quizDefaults: value.quizDefaults === undefined ? { ...DEFAULT_QUIZ_DEFAULTS } : value.quizDefaults };
+}
 export const DEFAULT_PLATFORM_SETTINGS = {
   branding: {
     name: "GDS",
@@ -138,6 +148,7 @@ export const DEFAULT_PLATFORM_SETTINGS = {
     subAffiliateEnabled: false,
   },
   courses: {
+    quizDefaults: { ...DEFAULT_QUIZ_DEFAULTS },
     postVideoQuizEnabled: true,
     descriptionMaxLength: 4000,
     categories: [

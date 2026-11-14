@@ -7,6 +7,7 @@ import {
   DEFAULT_PLATFORM_SETTINGS,
   PLATFORM_GROUPS,
   PlatformGroup,
+  withCourseQuizDefaults,
 } from "./platform-settings.defaults";
 
 const localized = { vi: "", en: "" };
@@ -38,6 +39,8 @@ const limits: Record<string, [number, number]> = {
   descriptionMaxLength: [100, 4000],
   maxAttachmentMb: [1, 10],
   termMonths: [0, 120],
+  maxAttempts: [0, 100],
+  timeLimitMinutes: [0, 1440],
 };
 function fail(path: string): never {
   throw new BadRequestException("Invalid configuration: " + path);
@@ -89,6 +92,10 @@ function validateShape(value: unknown, template: unknown, path: string) {
     )
       fail(path);
   } else if (typeof value === "number") {
+    if (key === 'passingScore') {
+      if (!Number.isFinite(value) || value < 0 || value > 100 || Number(value.toFixed(2)) !== value) fail(path);
+      return;
+    }
     const [min, max] = limits[key] ?? [0, 1000000000000];
     if (!Number.isSafeInteger(value) || value < min || value > max) fail(path);
   }
@@ -99,7 +106,8 @@ export function validatePlatformSettings(
 ): PlatformGroup {
   if (!(PLATFORM_GROUPS as readonly string[]).includes(group)) fail("group");
   if (!content || JSON.stringify(content).length > 100000) fail("size");
-  const validated = group === 'membership' ? withCardServiceLimitDefaults(content) : content;
+  const validated = group === 'membership' ? withCardServiceLimitDefaults(content)
+    : group === 'courses' ? withCourseQuizDefaults(content) : content;
   validateShape(
     validated,
     group === 'membership' ? { ...DEFAULT_PLATFORM_SETTINGS.membership, serviceLimits: DEFAULT_CARD_SERVICE_LIMITS }

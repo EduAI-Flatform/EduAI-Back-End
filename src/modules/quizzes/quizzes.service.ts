@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -25,6 +26,11 @@ import { CreateQuizDto } from './dto/create-quiz.dto';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 import { UpdateQuizDto } from './dto/update-quiz.dto';
+import { PlatformSettingsService } from '../platform/platform-settings.service';
+import { DEFAULT_QUIZ_DEFAULTS } from '../platform/platform-settings.defaults';
+
+const quizSettingKeys = ['passingScore', 'timeLimitMinutes', 'maxAttempts', 'randomizeQuestions',
+  'randomizeOptions', 'showCorrectAnswers', 'isRequired'] as const;
 
 const quizResponseSelect = {
   id: true,
@@ -134,6 +140,7 @@ export class QuizzesService {
     private readonly courseCompletionService: CourseCompletionService,
     private readonly courseAccessService: CourseAccessService,
     @Optional() private readonly learningPathService?: LearningPathService,
+    @Optional() private readonly platformSettings?: PlatformSettingsService,
   ) {}
 
   async createQuiz(
@@ -143,6 +150,14 @@ export class QuizzesService {
   ): Promise<QuizResponse> {
     await this.findManageableCourseOrThrow(user, courseId);
     await this.assertLessonBelongsToCourse(input.lessonId, courseId);
+    const defaults = await this.quizDefaults();
+    const baseline = this.quizDefaultValues(defaults);
+    this.assertQuizOverrides(user, input, baseline, defaults.allowInstructorOverrides);
+    const values = { ...baseline };
+    for (const key of quizSettingKeys) {
+      if (input[key] !== undefined && (input[key] !== null || key === 'timeLimitMinutes' || key === 'maxAttempts'))
+        Object.assign(values, { [key]: input[key] });
+    }
 
     return this.prisma.quiz.create({
       data: {
@@ -150,13 +165,7 @@ export class QuizzesService {
         lessonId: input.lessonId,
         title: input.title,
         description: input.description,
-        passingScore: input.passingScore,
-        timeLimitMinutes: input.timeLimitMinutes,
-        maxAttempts: input.maxAttempts ?? null,
-        randomizeQuestions: input.randomizeQuestions ?? false,
-        randomizeOptions: input.randomizeOptions ?? false,
-        showCorrectAnswers: input.showCorrectAnswers ?? true,
-        isRequired: input.isRequired ?? true,
+        ...values,
         status: QuizStatus.draft,
       },
       select: quizResponseSelect,
@@ -188,6 +197,8 @@ export class QuizzesService {
   ): Promise<QuizResponse> {
     const quiz = await this.findManageableQuizOrThrow(user, quizId);
     await this.assertLessonBelongsToCourse(input.lessonId, quiz.courseId);
+    const defaults = await this.quizDefaults();
+    this.assertQuizOverrides(user, input, quiz, defaults.allowInstructorOverrides);
 
     return this.prisma.quiz.update({
       where: { id: quizId },
@@ -705,6 +716,26 @@ export class QuizzesService {
         .join(',')}}`;
     }
     return JSON.stringify(value) ?? 'undefined';
+  }
+
+  private async quizDefaults() {
+    const current = await this.platformSettings?.current();
+    const courses = current?.settings.courses as { quizDefaults?: typeof DEFAULT_QUIZ_DEFAULTS } | undefined;
+    return courses?.quizDefaults ?? DEFAULT_QUIZ_DEFAULTS;
+  }
+
+  private quizDefaultValues(defaults: typeof DEFAULT_QUIZ_DEFAULTS) {
+    const { allowInstructorOverrides: _permission, ...values } = defaults;
+    return { ...values, timeLimitMinutes: values.timeLimitMinutes || null, maxAttempts: values.maxAttempts || null };
+  }
+
+  private assertQuizOverrides(user: AuthenticatedUser, input: UpdateQuizDto,
+    baseline: Record<typeof quizSettingKeys[number], unknown>, allowed: boolean) {
+    if (allowed || user.roles.includes(RoleName.platform_admin)) return;
+    for (const key of quizSettingKeys) {
+      if (input[key] !== undefined && input[key] !== baseline[key])
+        throw new ForbiddenException('Quiz settings are controlled by the effective administrator policy.');
+    }
   }
 
   private roundScore(value: number): number {

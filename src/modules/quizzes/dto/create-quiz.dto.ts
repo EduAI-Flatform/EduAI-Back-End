@@ -11,6 +11,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 function trimString(value: unknown): unknown {
@@ -37,20 +38,21 @@ export class CreateQuizDto {
   @IsUUID('4')
   lessonId?: string;
 
-  @ApiProperty({ example: 70, minimum: 0, maximum: 100 })
+  @ApiPropertyOptional({ example: 70, minimum: 0, maximum: 100, description: 'Omit to use the effective administrator default.' })
+  @ValidateIf((_object, value) => value !== undefined)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
-  passingScore!: number;
+  passingScore?: number;
 
-  @ApiPropertyOptional({ example: 30, minimum: 1, maximum: 1440 })
+  @ApiPropertyOptional({ example: 30, minimum: 1, maximum: 1440, nullable: true, description: 'Omit to inherit the effective default; null means unlimited.' })
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(1440)
-  timeLimitMinutes?: number;
+  timeLimitMinutes?: number | null;
 
-  @ApiPropertyOptional({ example: 3, minimum: 1, nullable: true })
+  @ApiPropertyOptional({ example: 3, minimum: 1, nullable: true, description: 'Omit to inherit the effective default; null means unlimited.' })
   @IsOptional()
   @IsInt()
   @Min(1)
