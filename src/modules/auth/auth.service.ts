@@ -400,6 +400,23 @@ export class AuthService {
 
   async refresh(input: RefreshTokenDto): Promise<RefreshResponse> {
     const payload = await this.verifyRefreshToken(input.refreshToken);
+    // Multiple remembered devices require multiple expensive bcrypt proofs.
+    // Verify those before opening the short, atomic rotation transaction.
+    const candidate = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: {
+        id: true, status: true, deletedAt: true,
+        refreshTokens: {
+          where: { expiresAt: { gt: new Date() }, revokedAt: null },
+          select: { id: true, tokenHash: true },
+        },
+      },
+    });
+    if (!candidate || candidate.status !== UserStatus.active || candidate.deletedAt) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+    const storedToken = await this.findMatchingRefreshToken(input.refreshToken, candidate.refreshTokens);
+    if (!storedToken) throw new UnauthorizedException('Invalid refresh token');
 
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
@@ -409,16 +426,7 @@ export class AuthService {
           email: true,
           fullName: true,
           id: true,
-          refreshTokens: {
-            where: {
-              expiresAt: { gt: new Date() },
-              revokedAt: null,
-            },
-            select: {
-              id: true,
-              tokenHash: true,
-            },
-          },
+          deletedAt: true,
           roles: {
             select: {
               role: {
@@ -433,21 +441,12 @@ export class AuthService {
         },
       });
 
-      if (!user || user.status !== UserStatus.active) {
-        throw new UnauthorizedException('Invalid refresh token');
-      }
-
-      const storedToken = await this.findMatchingRefreshToken(
-        input.refreshToken,
-        user.refreshTokens,
-      );
-
-      if (!storedToken) {
+      if (!user || user.status !== UserStatus.active || user.deletedAt) {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
       const consumed = await tx.refreshToken.updateMany({
-        where: { id: storedToken.id, revokedAt: null, expiresAt: { gt: new Date() } },
+        where: { id: storedToken.id, userId: user.id, tokenHash: storedToken.tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
         data: { revokedAt: new Date() },
       });
 

@@ -28,6 +28,9 @@ async function main() {
   const { PlatformSettingsService } = require('../dist/src/modules/platform/platform-settings.service.js');
   const { DEFAULT_PLATFORM_SETTINGS } = require('../dist/src/modules/platform/platform-settings.defaults.js');
   const { QuizzesService } = require('../dist/src/modules/quizzes/quizzes.service.js');
+  const { JwtService } = require('@nestjs/jwt');
+  const { AuthService } = require('../dist/src/modules/auth/auth.service.js');
+  const { PasswordService } = require('../dist/src/modules/auth/password.service.js');
   const { GdsInternalCheckoutService } = require('../dist/src/modules/wallet/gds-internal-checkout.service.js');
   const { RevenueFinanceService } = require('../dist/src/modules/revenue-sharing/revenue-finance.service.js');
   const { GdsRevenueWalletService } = require('../dist/src/modules/wallet/gds-revenue-wallet.service.js');
@@ -141,6 +144,30 @@ async function main() {
         await assert.rejects(() => learning.getLessonProgress({ id: ids.buyerMember, roles: ['student'] }, lesson.id), error => error.getStatus() === 404);
         assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
         console.log('GDS_LEARNING_PROGRESS_POSTGRES_PERSISTENCE=PASS; DTO precision, checkpoints, reload, replay, ownership and unchanged purchased grants');
+        const jwt = new JwtService(), passwords = new PasswordService();
+        const authConfig = { jwt: { accessSecret: 'synthetic-access-only', refreshSecret: 'synthetic-refresh-only' } };
+        const rememberedToken = await jwt.signAsync({ jti: randomUUID(), sub: buyerId }, { secret: authConfig.jwt.refreshSecret, expiresIn: 60 });
+        const predecessor = await db.refreshToken.create({ data: { userId: buyerId,
+          tokenHash: await passwords.hashPassword(rememberedToken), expiresAt: new Date(Date.now() + 60000) } });
+        const slowProof = { comparePassword: async (token, hash) => {
+          // Exceeds Prisma's normal interactive-transaction lifetime without changing production timeouts.
+          await new Promise(resolve => setTimeout(resolve, 6000));
+          return passwords.comparePassword(token, hash);
+        }, hashPassword: token => passwords.hashPassword(token) };
+        const renewed = await new AuthService(db, slowProof, jwt, authConfig, audit).refresh({ refreshToken: rememberedToken });
+        assert.equal(renewed.user.id, buyerId); assert.equal(renewed.refreshToken === rememberedToken, false);
+        assert.ok((await db.refreshToken.findUniqueOrThrow({ where: { id: predecessor.id } })).revokedAt);
+        assert.equal(await db.refreshToken.count({ where: { userId: buyerId, revokedAt: null } }), 1);
+        await assert.rejects(() => new AuthService(db, passwords, jwt, authConfig, audit).refresh({ refreshToken: rememberedToken }), error => error.getStatus?.() === 401);
+        const liveSession = await db.refreshToken.findFirstOrThrow({ where: { userId: buyerId, revokedAt: null }, select: { id: true } });
+        const totalSessions = await db.refreshToken.count({ where: { userId: buyerId } });
+        const failingIssuer = { verifyAsync: (...args) => jwt.verifyAsync(...args), signAsync: async () => { throw new Error('SYNTHETIC_REFRESH_ISSUANCE_FAILED'); } };
+        await assert.rejects(() => new AuthService(db, passwords, failingIssuer, authConfig, audit).refresh({ refreshToken: renewed.refreshToken }),
+          error => error.message === 'SYNTHETIC_REFRESH_ISSUANCE_FAILED');
+        assert.equal((await db.refreshToken.findUniqueOrThrow({ where: { id: liveSession.id }, select: { revokedAt: true } })).revokedAt, null);
+        assert.equal(await db.refreshToken.count({ where: { userId: buyerId } }), totalSessions);
+        assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
+        console.log('GDS_AUTH_REFRESH_SLOW_PROOF_POSTGRES=PASS; slow proof, atomic rotation, revoked replay, issuance rollback and unchanged purchased grants');
         const teacher = await db.user.create({ data: { email: randomUUID() + '@synthetic.invalid', fullName: 'Synthetic quiz policy teacher' } });
         const instructorRole = await db.role.upsert({ where: { name: 'instructor' }, create: { name: 'instructor' }, update: {} });
         await db.userRole.create({ data: { userId: teacher.id, roleId: instructorRole.id } });

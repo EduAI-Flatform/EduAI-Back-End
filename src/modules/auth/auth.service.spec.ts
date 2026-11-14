@@ -281,6 +281,7 @@ describe('AuthService.refresh', () => {
       },
     };
     const prisma = {
+      user: tx.user,
       $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) =>
         callback(tx),
       ),
@@ -322,7 +323,7 @@ describe('AuthService.refresh', () => {
       createAuditService() as never,
     );
 
-    return { service, tx, passwordService, jwtService };
+    return { service, tx, prisma, passwordService, jwtService };
   }
 
   it('rejects invalid refresh tokens', async () => {
@@ -331,6 +332,22 @@ describe('AuthService.refresh', () => {
     await expect(service.refresh(refreshInput)).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
+  });
+
+  it('rejects a soft-deleted account before checking token proofs', async () => {
+    const { service, tx, passwordService } = createService();
+    tx.user.findUnique.mockResolvedValueOnce({ ...user, deletedAt: new Date() });
+    await expect(service.refresh(refreshInput)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(passwordService.comparePassword).not.toHaveBeenCalled();
+    expect(tx.refreshToken.create).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { ...user, status: 'blocked' }, { ...user, deletedAt: new Date() }])('rechecks account eligibility inside rotation after proving the token %#', async currentUser => {
+    const { service, tx } = createService();
+    tx.user.findUnique.mockResolvedValueOnce(user).mockResolvedValueOnce(currentUser);
+    await expect(service.refresh(refreshInput)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(tx.refreshToken.updateMany).not.toHaveBeenCalled();
+    expect(tx.refreshToken.create).not.toHaveBeenCalled();
   });
 
   it('rejects expired or revoked refresh tokens', async () => {
@@ -363,7 +380,7 @@ describe('AuthService.refresh', () => {
       'stored-refresh-token-hash',
     );
     expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
-      where: { id: 'refresh-token-id', revokedAt: null, expiresAt: { gt: expect.any(Date) } },
+      where: { id: 'refresh-token-id', userId: user.id, tokenHash: 'stored-refresh-token-hash', revokedAt: null, expiresAt: { gt: expect.any(Date) } },
       data: { revokedAt: expect.any(Date) },
     });
     expect(passwordService.hashPassword).toHaveBeenCalledWith(
