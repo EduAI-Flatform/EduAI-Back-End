@@ -8,6 +8,7 @@ describe('MFA central token issuance', () => {
   };
   function setup() {
     const prisma: any = {
+      $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
       user: { findUnique: jest.fn().mockResolvedValue(user) },
       userMfa: { findUnique: jest.fn().mockResolvedValue({ enabled: true, revision: 3 }) },
       refreshToken: { create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },

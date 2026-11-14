@@ -23,6 +23,7 @@ describe('MfaService', () => {
       lastUsedStep: step - 1, recoveryCodeHashes: [], pendingExpiresAt: null, pendingSecretEncrypted: null,
     };
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
       userMfa: { findUnique: jest.fn().mockResolvedValue(row), upsert: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       refreshToken: { updateMany: jest.fn() }, auditLog: { create: jest.fn() },
     };

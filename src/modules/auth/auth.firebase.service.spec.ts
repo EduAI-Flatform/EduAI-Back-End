@@ -45,6 +45,7 @@ function createService(options?: {
     name: RoleName.student,
   };
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
     role: {
       findUnique: jest.fn().mockResolvedValue(role),
     },
@@ -59,7 +60,7 @@ function createService(options?: {
         emailVerified: true,
         firebaseUid: firebaseClaims.uid,
       }),
-      findUnique: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(options?.users?.find(Boolean) ?? { ...baseUser, roles: [{ role }] }),
       update: jest.fn().mockImplementation(async ({ data, select }) => ({
         ...baseUser,
         ...data,
@@ -400,9 +401,10 @@ describe('AuthService.loginWithFirebase', () => {
   });
 
   it('rejects blocked Firebase users without issuing a session', async () => {
-    const { service, prisma } = createService({
+    const { service, prisma, tx } = createService({
       users: [{ ...baseUser, status: UserStatus.suspended }, null],
     });
+    tx.$queryRaw.mockResolvedValue([{ status: 'suspended', deletedAt: null }]);
 
     await expect(
       service.loginWithFirebase({ idToken: 'firebase-id-token' }),
@@ -415,6 +417,13 @@ describe('AuthService.loginWithFirebase', () => {
     });
 
     expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('rechecks Firebase identity binding after acquiring the subject fence', async () => {
+    const { service, tx } = createService({ users: [baseUser, null] });
+    tx.user.findUnique.mockResolvedValue({ ...baseUser, firebaseUid: 'another-provider-user' });
+    await expect(service.loginWithFirebase({ idToken: 'firebase-id-token' })).rejects.toMatchObject({ status: 409 });
+    expect(tx.user.update).not.toHaveBeenCalled(); expect(tx.refreshToken.create).not.toHaveBeenCalled();
   });
 
   it('maps Firebase verification failures to unauthorized errors', async () => {

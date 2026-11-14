@@ -41,6 +41,7 @@ describe('AuthService.login', () => {
       options && 'user' in options ? options.user : user;
     let prisma: Record<string, any>;
     prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
       $transaction: jest.fn(async (callback: (client: unknown) => unknown) =>
         callback(prisma),
       ),
@@ -271,6 +272,7 @@ describe('AuthService.refresh', () => {
     const selectedUser =
       options && 'user' in options ? options.user : user;
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
       user: {
         findUnique: jest.fn().mockResolvedValue(selectedUser),
       },
