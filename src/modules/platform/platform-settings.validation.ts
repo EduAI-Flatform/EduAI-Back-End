@@ -8,6 +8,8 @@ import {
   PLATFORM_GROUPS,
   PlatformGroup,
   withCourseQuizDefaults,
+  PARTNER_CONNECTION_STATUSES,
+  withPartnerConnectionDefaults,
 } from "./platform-settings.defaults";
 
 const localized = { vi: "", en: "" };
@@ -18,7 +20,7 @@ const arrayTemplates: Record<string, unknown> = {
   benefits: localized,
   categories: localized,
   rules: { event: "", points: 0 },
-  items: { name: "", logoUrl: "", url: "", category: "" },
+  items: { name: "", logoUrl: "", url: "", category: "", connectionStatus: "unconfigured" },
   activities: {
     kind: "",
     title: localized,
@@ -107,7 +109,8 @@ export function validatePlatformSettings(
   if (!(PLATFORM_GROUPS as readonly string[]).includes(group)) fail("group");
   if (!content || JSON.stringify(content).length > 100000) fail("size");
   const validated = group === 'membership' ? withCardServiceLimitDefaults(content)
-    : group === 'courses' ? withCourseQuizDefaults(content) : content;
+    : group === 'courses' ? withCourseQuizDefaults(content)
+      : group === 'partners' ? withPartnerConnectionDefaults(content) : content;
   validateShape(
     validated,
     group === 'membership' ? { ...DEFAULT_PLATFORM_SETTINGS.membership, serviceLimits: DEFAULT_CARD_SERVICE_LIMITS }
@@ -157,6 +160,8 @@ export function validatePlatformSettings(
     )
   )
     fail("partner category");
+  if (group === 'partners' && c.items.some((partner: any) => !PARTNER_CONNECTION_STATUSES.includes(partner.connectionStatus)))
+    fail('partner connection status');
   if (group === "points") {
     const events = new Set();
     for (const r of c.rules) {
