@@ -23,9 +23,16 @@ export class MfaService {
     const state = await this.prisma.userMfa.findUnique({ where: { userId } });
     return { available: Boolean(this.configuredKey()), enabled: state?.enabled ?? false, recoveryCodesRemaining: state?.recoveryCodeHashes.length ?? 0 };
   }
-  async claims(userId: string, previous?: MfaClaims): Promise<MfaClaims & { mfaRequired: boolean }> {
-    const state = await this.prisma.userMfa.findUnique({ where: { userId } });
+  async claims(userId: string, previous?: MfaClaims,
+    reader: Pick<Prisma.TransactionClient, 'userMfa'> = this.prisma,
+  ): Promise<MfaClaims & { mfaRequired: boolean }> {
+    const state = await reader.userMfa.findUnique({ where: { userId } });
     const revision = state?.revision ?? 0;
+    // Renewal preserves its original security revision; only a new primary
+    // login may acquire the current revision without a prior session.
+    if (previous && (previous.mfaRevision ?? 0) !== revision) {
+      throw new UnauthorizedException('Authenticator session changed. Sign in again.');
+    }
     const verified = Boolean(state?.enabled && previous?.mfaVerified && previous.mfaRevision === revision);
     return {
       mfaRevision: revision, mfaVerified: verified,
