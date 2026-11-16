@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "build": "nest build && node scripts/write-auth-runtime-metadata.cjs",
+    "build:auth-candidate": "node scripts/build-auth-session-candidate.cjs",
     "postinstall": "npm run prisma:generate",
     "db:seed": "npm run prisma:merge && prisma db seed",
     "db:seed:demo": "npm run prisma:merge && ts-node prisma/seed.ts --demo",

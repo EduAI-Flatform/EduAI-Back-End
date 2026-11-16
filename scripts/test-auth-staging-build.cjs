@@ -1,0 +1,18 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { createHash } = require('node:crypto');
+const { execFileSync } = require('node:child_process');
+const root = process.cwd();
+const files = ['src/main.js', 'src/modules/auth/auth-session.js', 'auth-runtime.json'];
+const digest = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const before = files.map(file => digest(path.join(root, 'dist', file)));
+execFileSync(process.execPath, [path.join(root, 'scripts/build-auth-session-candidate.cjs')], { stdio: 'inherit' });
+assert.deepEqual(files.map(file => digest(path.join(root, 'dist', file))), before);
+const staged = path.join(root, '.git/auth-session-candidate/dist');
+const metadata = JSON.parse(fs.readFileSync(path.join(staged, 'auth-runtime.json'), 'utf8'));
+const revision = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { encoding: 'utf8' }).trim();
+assert.deepEqual(metadata, { tokenVersion: 2, revision });
+for (const file of files) assert.ok(fs.lstatSync(path.join(staged, file)).isFile());
+console.log('GDS_AUTH_STAGED_BUILD=PASS; exact candidate revision and unchanged live entry/auth/metadata');

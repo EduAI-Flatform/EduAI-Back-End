@@ -29,7 +29,7 @@ export class MfaController {
   @Header('Cache-Control', 'no-store')
   @RateLimit({ identity: 'user', limit: 5, name: 'mfa-enroll', windowSeconds: 900 })
   enroll(@CurrentUser() user: AuthenticatedUser) {
-    return this.mfa.enroll(user.id, user.email ?? user.id, user.authTime);
+    return this.auth.enrollMfa(user);
   }
 
   @Post('confirm')
@@ -50,7 +50,7 @@ export class MfaController {
   @Post('disable')
   @RateLimit({ identity: 'user', limit: 5, name: 'mfa-disable', windowSeconds: 300 })
   disable(@CurrentUser() user: AuthenticatedUser, @Body() body: MfaCodeDto) {
-    return this.mfa.disable(user.id, body.code, user.authTime);
+    return this.auth.disableMfa(user, body.code);
   }
 
   @Post('recovery-codes')

@@ -8,9 +8,9 @@ import { IS_PUBLIC_KEY } from '../../../common/security/public.decorator';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuthenticatedUser } from '../types/authenticated-user.type';
 import { ALLOW_MFA_PENDING } from '../mfa.decorator';
+import { isSessionPayload, SessionPayload } from '../auth-session';
 
-interface AccessTokenPayload {
-  sub?: string;
+interface AccessTokenPayload extends SessionPayload {
   mfaRevision?: number;
   mfaVerified?: boolean;
   authTime?: number;
@@ -61,7 +61,7 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid access token');
     }
 
-    if (!payload.sub) {
+    if (!isSessionPayload(payload, 'access')) {
       throw new UnauthorizedException('Invalid access token');
     }
 
@@ -69,6 +69,7 @@ export class JwtAuthGuard implements CanActivate {
       where: { id: payload.sub },
       select: {
         id: true,
+        authRevision: true,
         email: true,
         status: true,
         deletedAt: true,
@@ -77,9 +78,13 @@ export class JwtAuthGuard implements CanActivate {
       },
     });
 
-    if (!user || user.deletedAt || user.status !== UserStatus.active) {
+    if (!user || user.deletedAt || user.status !== UserStatus.active || user.authRevision !== payload.authRevision) {
       throw new UnauthorizedException('Invalid access token');
     }
+    const family = await this.prisma.refreshToken.findFirst({
+      where: { userId: user.id, sessionFamilyId: payload.sid, revokedAt: null, expiresAt: { gt: new Date() } }, select: { id: true },
+    });
+    if (!family) throw new UnauthorizedException('Invalid access token');
 
     const allowPending = this.reflector.getAllAndOverride<boolean>(ALLOW_MFA_PENDING, [context.getHandler(), context.getClass()]);
     const revisionMatches = (payload.mfaRevision ?? 0) === (user.mfa?.revision ?? 0);
@@ -91,6 +96,7 @@ export class JwtAuthGuard implements CanActivate {
       id: user.id,
       email: user.email,
       roles: user.roles.map(({ role }) => role.name),
+      tokenVersion: 2, authRevision: payload.authRevision, sid: payload.sid,
       ...(payload.mfaRevision !== undefined ? { mfaRevision: payload.mfaRevision, mfaVerified: payload.mfaVerified === true } : {}),
       ...(payload.authTime !== undefined ? { authTime: payload.authTime } : {}),
     };

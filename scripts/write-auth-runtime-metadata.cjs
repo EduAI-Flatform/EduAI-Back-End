@@ -1,0 +1,12 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const args = process.argv.slice(2);
+if (args.length > 1 || args.some(arg => arg !== '--staged')) throw new Error('AUTH_RUNTIME_METADATA_ARGUMENT_INVALID');
+const output = args.includes('--staged') ? path.join(__dirname, '../.git/auth-session-candidate/dist') : path.join(__dirname, '../dist');
+const { AUTH_SESSION_TOKEN_VERSION } = require(path.join(output, 'src/modules/auth/auth-session.js'));
+const revision = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+if (AUTH_SESSION_TOKEN_VERSION !== 2 || !/^[0-9a-f]{40}$/.test(revision)) throw new Error('AUTH_RUNTIME_METADATA_INVALID');
+fs.writeFileSync(path.join(output, 'auth-runtime.json'), JSON.stringify({ tokenVersion: AUTH_SESSION_TOKEN_VERSION, revision }));
+console.log('authRuntimeMetadata: GENERATED');

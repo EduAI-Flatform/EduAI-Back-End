@@ -22,6 +22,7 @@ export interface OAuthTicketRecord {
   provider: SocialOAuthProvider;
   redirectTo: string;
   userId?: string;
+  authRevision?: number;
   externalIdentityId?: string;
   role?: OAuthRegistrationRole;
   displayName?: string;

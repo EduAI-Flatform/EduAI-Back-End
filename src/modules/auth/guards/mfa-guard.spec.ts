@@ -8,11 +8,11 @@ describe('MFA authorization boundary', () => {
       getHandler: () => function route() {}, getClass: () => class Controller {},
       switchToHttp: () => ({ getRequest: () => request }),
     };
-    const user = { id: 'owner', email: 'owner@example.test', status: 'active', deletedAt: null, roles: [{ role: { name: 'student' } }], mfa: state };
+    const user = { id: 'owner', authRevision: 0, email: 'owner@example.test', status: 'active', deletedAt: null, roles: [{ role: { name: 'student' } }], mfa: state };
     const guard = new JwtAuthGuard(
-      { verifyAsync: jest.fn().mockResolvedValue({ sub: 'owner', ...payload }) } as any,
+      { verifyAsync: jest.fn().mockResolvedValue({ sub: 'owner', tokenVersion: 2, tokenUse: 'access', authRevision: 0, sid: '00000000-0000-4000-8000-000000000001', ...payload }) } as any,
       { jwt: { accessSecret: 'synthetic' } } as any,
-      { user: { findUnique: jest.fn().mockResolvedValue(user) } } as any,
+      { user: { findUnique: jest.fn().mockResolvedValue(user) }, refreshToken: { findFirst: jest.fn().mockResolvedValue({ id: 'active-row' }) } } as any,
       { getAllAndOverride: jest.fn((key: string) => key === ALLOW_MFA_PENDING && pendingRoute) } as any,
     );
     return { guard, context: context as any, request };
@@ -34,7 +34,7 @@ describe('MFA authorization boundary', () => {
     const { guard, context } = setup({ mfaRevision: 3, mfaVerified: false }, { enabled: true, revision: 3 }, true);
     await expect(guard.canActivate(context)).resolves.toBe(true);
   });
-  it('keeps legacy accounts without an enrolled factor compatible', async () => {
+  it('admits V2 sessions for accounts without an enrolled factor', async () => {
     const { guard, context } = setup({}, null);
     await expect(guard.canActivate(context)).resolves.toBe(true);
   });

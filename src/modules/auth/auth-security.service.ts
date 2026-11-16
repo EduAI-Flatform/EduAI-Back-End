@@ -61,6 +61,8 @@ export class AuthSecurityService {
   }
 
   private async revoke(tx: Prisma.TransactionClient, userId: string, action: string) {
+    const revised = await tx.user.updateMany({ where: { id: userId, status: 'active', deletedAt: null }, data: { authRevision: { increment: 1 } } });
+    if (revised.count !== 1) throw new UnauthorizedException('Account changed. Please sign in again.');
     await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
     await tx.auditLog.create({ data: { actorId: userId, actorKind: 'USER', action, targetType: 'user', targetId: userId, metadataJson: {} } });
   }

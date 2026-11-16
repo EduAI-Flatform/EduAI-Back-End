@@ -49,7 +49,7 @@ jobs:
           platform-policy-migration.spec.ts mfa-migration.spec.ts affiliate-wallet-migration.spec.ts activity-points-migration.spec.ts card-service-limit-migration.spec.ts auth-session-migration.spec.ts
 
       - name: Auth session schema release safeguards
-        run: node --test scripts/auth-session-release.test.cjs scripts/verify-auth-session-schema.test.cjs
+        run: node --test scripts/auth-session-release.test.cjs scripts/verify-auth-session-schema.test.cjs scripts/auth-session-cutover.test.cjs
 
       - name: Manual bank transfer security tests
         run: npm test -- --runInBand modules/payments/bank-transfer modules/payments/bank-receipt-access modules/access/course-access.service modules/memberships/service-entitlement modules/memberships/membership-continuity modules/memberships/membership-checkout.service
@@ -122,6 +122,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify staged auth build preserves live artifacts
+        run: node scripts/test-auth-staging-build.cjs
 
   bank-transfer-postgres:
     name: Bank transfer concurrent PostgreSQL transactions

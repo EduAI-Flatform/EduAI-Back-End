@@ -27,7 +27,7 @@ describe('own-quota HTTP ownership boundary', () => {
   const secret = 'synthetic-quota-controller-test-only';
   const accounts = ['student', 'instructor', 'platform_admin'].map((role, index) => ({
     id: `00000000-0000-4000-8000-00000000000${index + 1}`, email: `${role}@example.test`,
-    status: 'active', deletedAt: null, mfa: null, roles: [{ role: { name: role } }],
+    authRevision: 0, status: 'active', deletedAt: null, mfa: null, roles: [{ role: { name: role } }],
   }));
   const service = { listForUser: jest.fn(async (userId: string) => ({ items: [], cardItems: [], owner: userId })) };
   beforeAll(async () => {
@@ -36,7 +36,7 @@ describe('own-quota HTTP ownership boundary', () => {
       providers: [
         { provide: ServiceEntitlementService, useValue: service },
         { provide: AppConfigService, useValue: { jwt: { accessSecret: secret } } },
-        { provide: PrismaService, useValue: { user: { findUnique: jest.fn(async ({ where }) => accounts.find(account => account.id === where.id) ?? null) } } },
+        { provide: PrismaService, useValue: { user: { findUnique: jest.fn(async ({ where }) => accounts.find(account => account.id === where.id) ?? null) }, refreshToken: { findFirst: jest.fn().mockResolvedValue({ id: 'active-row' }) } } },
       ],
     }).compile();
     app = module.createNestApplication({ logger: false });
@@ -47,7 +47,7 @@ describe('own-quota HTTP ownership boundary', () => {
   beforeEach(() => service.listForUser.mockClear());
 
   it.each(accounts)('injects authenticated owner $id and ignores caller-selected query owners', async account => {
-    const token = await jwt.signAsync({ sub: account.id }, { expiresIn: '1m' });
+    const token = await jwt.signAsync({ sub: account.id, tokenVersion: 2, tokenUse: 'access', authRevision: 0, sid: account.id }, { expiresIn: '1m' });
     await request(app.getHttpServer()).get(`/membership/service-entitlements?userId=${accounts[2].id}`)
       .set('Authorization', `Bearer ${token}`).expect(200).expect(({ body }) => expect(body.owner).toBe(account.id));
     expect(service.listForUser).toHaveBeenCalledTimes(1);

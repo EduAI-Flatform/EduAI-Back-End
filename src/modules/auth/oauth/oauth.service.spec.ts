@@ -50,6 +50,7 @@ function createService(options: {
   ticket?: Record<string, unknown> | null;
 } = {}) {
   const createdUser = {
+    authRevision: 0,
     ...session.user,
     id: 'new-user-id',
     email: 'new@example.com',
@@ -343,6 +344,7 @@ describe('OAuthService', () => {
         mode: 'login',
         provider: 'facebook',
         userId: 'user-id',
+        authRevision: 0,
         redirectTo: '/',
         expiresAt: Date.now() + 120_000,
       },
@@ -353,8 +355,13 @@ describe('OAuthService', () => {
       session,
       redirectTo: '/',
     });
-    expect(authService.issueSessionForUser).toHaveBeenCalled();
+    expect(authService.issueSessionForUser).toHaveBeenCalledWith(expect.objectContaining({ authRevision: 0 }), expect.any(Object), 0);
     expect(store.consumeTicket).toHaveBeenCalledWith('t'.repeat(43));
+  });
+  it('rejects a legacy session ticket without a captured authentication revision', async () => {
+    const { service, authService } = createService({ ticket: { kind: 'session', mode: 'login', provider: 'facebook', userId: 'user-id', redirectTo: '/', expiresAt: Date.now() + 120000 } });
+    await expect(service.exchange({ ticket: 't'.repeat(43) })).rejects.toMatchObject({ response: { error: 'OAUTH_TICKET_INVALID' } });
+    expect(authService.issueSessionForUser).not.toHaveBeenCalled();
   });
 
   it('rejects a profile completion ticket if the submitted email is already registered', async () => {
@@ -904,6 +911,7 @@ describe('OAuthService', () => {
         mode: 'login',
         provider: 'facebook',
         userId: 'user-id',
+        authRevision: 0,
         redirectTo: '/',
         expiresAt: Date.now() + 120_000,
       },
@@ -913,6 +921,7 @@ describe('OAuthService', () => {
       mode: 'login' as const,
       provider: 'facebook' as const,
       userId: 'user-id',
+      authRevision: 0,
       redirectTo: '/',
       expiresAt: Date.now() + 120_000,
     };

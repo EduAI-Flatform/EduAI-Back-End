@@ -16,6 +16,11 @@ describe('account password changes', () => {
     expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({ where: { userId: 'owner', revokedAt: null }, data: { revokedAt: expect.any(Date) } });
     expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorId: 'owner', action: 'AUTH_PASSWORD_CHANGED', metadataJson: {} }) });
   });
+  it('advances the primary authentication revision with credential revocation', async () => {
+    const { service, tx } = setup();
+    await service.changePassword('owner', 'old-password', 'new-password');
+    expect(tx.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ authRevision: { increment: 1 } }) }));
+  });
   it('rejects incorrect credentials and concurrent credential changes', async () => {
     const first = setup(); first.passwords.comparePassword.mockResolvedValue(false);
     await expect(first.service.changePassword('owner', 'wrong', 'new-password')).rejects.toThrow();

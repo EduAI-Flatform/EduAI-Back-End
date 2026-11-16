@@ -65,6 +65,7 @@ const OAUTH_MESSAGES = {
 } as const;
 
 const OAUTH_USER_SELECT = {
+  authRevision: true,
   createdAt: true,
   deletedAt: true,
   email: true,
@@ -102,6 +103,7 @@ type OAuthUserRecord = Prisma.UserGetPayload<{
 type OAuthWriterClient = Prisma.TransactionClient;
 
 interface AccountResolution {
+  authRevision?: number;
   kind: 'session' | 'onboarding';
   displayName?: string;
   externalIdentityId?: string;
@@ -285,6 +287,7 @@ export class OAuthService {
             ? { externalIdentityId: resolution.externalIdentityId }
             : {}),
           ...(resolution.userId ? { userId: resolution.userId } : {}),
+          ...(resolution.authRevision !== undefined ? { authRevision: resolution.authRevision } : {}),
           ...(resolution.role ? { role: resolution.role } : {}),
           ...(resolution.displayName
             ? { displayName: resolution.displayName }
@@ -359,12 +362,12 @@ export class OAuthService {
       return response;
     }
 
-    if (!record.userId) throw this.ticketInvalidException();
+    if (!record.userId || !Number.isSafeInteger(record.authRevision) || (record.authRevision ?? -1) < 0) throw this.ticketInvalidException();
 
     const response = await this.prisma.$transaction(async (tx) => {
       const user = await this.findUserById(tx, record.userId as string);
       this.assertActiveUser(user);
-      const session = await this.authService.issueSessionForUser(user, tx);
+      const session = await this.authService.issueSessionForUser(user, tx, record.authRevision);
       await this.recordSuccess(record.provider, user.id, tx);
       return session;
     });
@@ -486,7 +489,7 @@ export class OAuthService {
         }
         const user = await this.findUserById(tx, existingExternal.userId);
         this.assertActiveUser(user);
-        return { kind: 'session', userId: user.id };
+        return { kind: 'session', userId: user.id, authRevision: user.authRevision };
       }
 
       if (identity.email) {
