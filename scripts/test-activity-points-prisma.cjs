@@ -67,6 +67,42 @@ async function main() {
     assert.equal((await redemptions.wallet(user.id)).current, 80);
     console.log('POINT_CANONICAL_AWARD_RESTRICTED_ROLE_AND_REPLAY=PASS');
 
+    const adjustedUser = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic adjustment learner' } });
+    const adjustment = { userId: adjustedUser.id, amount: 40, direction: 'credit', adjustmentKey: randomUUID(), reason: 'Synthetic support correction' };
+    const repeated = await Promise.all([redemptions.adjustBalance(admin.id, adjustment), redemptions.adjustBalance(admin.id, adjustment)]);
+    assert.equal(repeated.filter(row => !row.idempotent).length, 1);
+    assert.equal(repeated.filter(row => row.idempotent).length, 1);
+    assert.equal((await redemptions.wallet(adjustedUser.id)).current, 40);
+    const adjustmentWhere = { userId: adjustedUser.id, kind: 'adjustment' };
+    const adjustmentHistory = await db.tmiLedgerEntry.findMany({ where: adjustmentWhere });
+    assert.equal(adjustmentHistory.length, 1);
+    const adjustmentAuditWhere = { targetId: adjustedUser.id, action: 'TMI_BALANCE_ADJUSTED' };
+    assert.equal(await db.auditLog.count({ where: adjustmentAuditWhere }), 1);
+    for (const changed of [{ amount: 20 }, { direction: 'debit' }, { reason: 'Different support correction' }]) {
+      await assert.rejects(redemptions.adjustBalance(admin.id, { ...adjustment, ...changed }), error => error.getStatus?.() === 409);
+    }
+    assert.deepEqual(await db.tmiLedgerEntry.findMany({ where: adjustmentWhere }), adjustmentHistory);
+    assert.equal(await db.auditLog.count({ where: adjustmentAuditWhere }), 1);
+    assert.equal((await redemptions.wallet(adjustedUser.id)).current, 40);
+
+    const raceKey = randomUUID();
+    const conflicting = await Promise.allSettled([5, 7].map(amount => redemptions.adjustBalance(admin.id,
+      { ...adjustment, adjustmentKey: raceKey, amount })));
+    assert.equal(conflicting.filter(row => row.status === 'fulfilled').length, 1);
+    assert.equal(conflicting.filter(row => row.status === 'rejected' && row.reason.getStatus?.() === 409).length, 1);
+    const winningAmount = conflicting.find(row => row.status === 'fulfilled').value.amount;
+    const debit = { ...adjustment, adjustmentKey: randomUUID(), amount: 10, direction: 'debit' };
+    assert.equal((await redemptions.adjustBalance(admin.id, debit)).balance, 30 + winningAmount);
+    assert.equal((await redemptions.adjustBalance(admin.id, debit)).idempotent, true);
+    assert.equal(await db.tmiLedgerEntry.count({ where: adjustmentWhere }), 3);
+    assert.equal(await db.auditLog.count({ where: adjustmentAuditWhere }), 3);
+    const failingAdjustmentAudit = { record: async () => { throw new Error('Synthetic adjustment audit rollback'); } };
+    await assert.rejects(new TmiRedemptionService(runtime, failingAdjustmentAudit, {}, ledger).adjustBalance(admin.id,
+      { ...adjustment, adjustmentKey: randomUUID(), amount: 1 }), /Synthetic adjustment audit rollback/);
+    assert.equal(await db.tmiLedgerEntry.count({ where: adjustmentWhere }), 3);
+    assert.equal((await redemptions.wallet(adjustedUser.id)).current, 30 + winningAmount);
+    console.log('POINT_ADJUSTMENT_PAYLOAD_CONFLICT_CONCURRENT_REPLAY_AND_AUDIT_ROLLBACK=PASS');
+
     const raced = await Promise.allSettled([redemptions.redeem(user.id, reward.id, { idempotencyKey: randomUUID() }),
       redemptions.redeem(user.id, reward.id, { idempotencyKey: randomUUID() })]);
     assert.equal(raced.filter(r => r.status === 'fulfilled').length, 1);

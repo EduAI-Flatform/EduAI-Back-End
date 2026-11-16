@@ -224,6 +224,32 @@ describe('TmiRedemptionService', () => {
     }));
   });
 
+  it.each(['credit', 'debit'] as const)('posts one %s adjustment and returns persisted values for an identical retry', async direction => {
+    const { service, tx, audit } = createHarness();
+    const input = { userId, amount: 10, direction, adjustmentKey: 'adjustment-retry-001', reason: 'Support correction' };
+    const balance = direction === 'credit' ? 110 : 90;
+    await expect(service.adjustBalance('admin-1', input)).resolves.toEqual({ userId, amount: 10, direction, balance, idempotent: false });
+    tx.tmiLedgerEntry.findFirst.mockResolvedValue({ id: 'ledger-1', amount: 10, adjustmentDirection: direction,
+      metadata: { reason: input.reason } } as never);
+    tx.tmiLedgerEntry.findMany.mockResolvedValue([{ kind: 'earn', amount: 100, adjustmentDirection: null },
+      { kind: 'adjustment', amount: 10, adjustmentDirection: direction }] as never);
+    await expect(service.adjustBalance('admin-2', input)).resolves.toEqual({ userId, amount: 10, direction, balance, idempotent: true });
+    expect(tx.tmiLedgerEntry.create).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { amount: 20 }, { direction: 'debit' as const }, { reason: 'Different correction' },
+  ])('rejects conflicting reuse of an adjustment key (%j) without new postings', async changed => {
+    const { service, tx, audit } = createHarness();
+    tx.tmiLedgerEntry.findFirst.mockResolvedValue({ id: 'ledger-1', amount: 10, adjustmentDirection: 'credit',
+      metadata: { reason: 'Support correction' } } as never);
+    await expect(service.adjustBalance('admin-1', { userId, amount: 10, direction: 'credit',
+      adjustmentKey: 'adjustment-retry-001', reason: 'Support correction', ...changed })).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.tmiLedgerEntry.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
   it('rejects an administrative debit that would make the server-derived balance negative', async () => {
     const { service, tx } = createHarness();
     tx.tmiLedgerEntry.findMany.mockResolvedValue([{ kind: 'earn', amount: 5, adjustmentDirection: null }]);
