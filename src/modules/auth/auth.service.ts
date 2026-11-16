@@ -31,6 +31,7 @@ import { PasswordService } from './password.service';
 import { MfaService, MfaClaims } from './mfa.service';
 import { lockActiveAuthSubject, lockAuthSubject } from './auth-subject-lock';
 import type { AuthenticatedUser } from './types/authenticated-user.type';
+import { assertActiveSession, isSessionPayload, matchesRefreshToken, refreshTokenDigest, SessionIdentity, SessionPayload } from './auth-session';
 import {
   LoginResponse,
   LogoutResponse,
@@ -48,8 +49,7 @@ const EMAIL_PASSWORD_AUTH_ERROR_MESSAGES = {
   invalidRegistrationPassword: 'Mật khẩu đăng ký không hợp lệ.',
 } as const;
 
-interface JwtPayload {
-  sub: string;
+interface JwtPayload extends SessionPayload {
   email?: string;
   roles?: RoleName[];
   mfaRevision?: number;
@@ -57,15 +57,12 @@ interface JwtPayload {
   authTime?: number;
 }
 
-interface RefreshTokenRecord {
-  id: string;
-  tokenHash: string;
-}
-
 interface RefreshTokenWriter extends Pick<Prisma.TransactionClient, '$queryRaw' | 'user' | 'userMfa'> {
   refreshToken: {
     create(input: {
       data: {
+        id: string;
+        sessionFamilyId: string;
         expiresAt: Date;
         tokenHash: string;
         userId: string;
@@ -75,6 +72,7 @@ interface RefreshTokenWriter extends Pick<Prisma.TransactionClient, '$queryRaw' 
 }
 
 export interface AuthUserRecord {
+  authRevision: number;
   createdAt: Date;
   email: string;
   fullName: string;
@@ -112,6 +110,7 @@ const FIREBASE_AUTH_ERROR_MESSAGES = {
 } as const;
 
 const FIREBASE_USER_SELECT = {
+  authRevision: true,
   avatarUrl: true,
   createdAt: true,
   deletedAt: true,
@@ -151,6 +150,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { email },
       select: {
+        authRevision: true,
         createdAt: true,
         deletedAt: true,
         email: true,
@@ -293,6 +293,7 @@ export class AuthService {
         }
 
         if (existingUser) {
+          const proofRevision = existingUser.authRevision;
           await lockAuthSubject(tx, existingUser.id);
           existingUser = await tx.user.findUnique({ where: { id: existingUser.id }, select: FIREBASE_USER_SELECT });
           if (!existingUser || (existingUser.firebaseUid && existingUser.firebaseUid !== uid)) {
@@ -304,6 +305,7 @@ export class AuthService {
               message: FIREBASE_AUTH_ERROR_MESSAGES.accountBlocked,
             });
           }
+          if (existingUser.authRevision !== proofRevision) throw new UnauthorizedException('Account credentials changed. Please sign in again.');
 
           const updateData: {
             authProvider: AuthProvider;
@@ -410,30 +412,15 @@ export class AuthService {
 
   async refresh(input: RefreshTokenDto): Promise<RefreshResponse> {
     const payload = await this.verifyRefreshToken(input.refreshToken);
-    // Multiple remembered devices require multiple expensive bcrypt proofs.
-    // Verify those before opening the short, atomic rotation transaction.
-    const candidate = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true, status: true, deletedAt: true,
-        refreshTokens: {
-          where: { expiresAt: { gt: new Date() }, revokedAt: null },
-          select: { id: true, tokenHash: true },
-        },
-      },
-    });
-    if (!candidate || candidate.status !== UserStatus.active || candidate.deletedAt) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-    const storedToken = await this.findMatchingRefreshToken(input.refreshToken, candidate.refreshTokens);
-    if (!storedToken) throw new UnauthorizedException('Invalid refresh token');
-
     return this.prisma.$transaction(async (tx) => {
       await lockActiveAuthSubject(tx, payload.sub);
+      const storedToken = await this.proveRefreshRow(tx, input.refreshToken, payload);
+      if (storedToken.revokedAt) throw new UnauthorizedException('Invalid refresh token');
       const user = await tx.user.findUnique({
         where: { id: payload.sub },
         select: {
           createdAt: true,
+          authRevision: true,
           email: true,
           fullName: true,
           id: true,
@@ -452,12 +439,12 @@ export class AuthService {
         },
       });
 
-      if (!user || user.status !== UserStatus.active || user.deletedAt) {
+      if (!user || user.status !== UserStatus.active || user.deletedAt || user.authRevision !== payload.authRevision) {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
       const consumed = await tx.refreshToken.updateMany({
-        where: { id: storedToken.id, userId: user.id, tokenHash: storedToken.tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
+        where: { id: storedToken.id, userId: user.id, sessionFamilyId: payload.sid, tokenHash: storedToken.tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
         data: { revokedAt: new Date() },
       });
 
@@ -471,39 +458,12 @@ export class AuthService {
 
   async logout(input: RefreshTokenDto): Promise<LogoutResponse> {
     const payload = await this.verifyRefreshToken(input.refreshToken);
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        refreshTokens: {
-          where: {
-            expiresAt: { gt: new Date() },
-            revokedAt: null,
-          },
-          select: {
-            id: true,
-            tokenHash: true,
-          },
-        },
-      },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    const storedToken = await this.findMatchingRefreshToken(
-      input.refreshToken,
-      user.refreshTokens,
-    );
-
-    if (!storedToken) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    await this.prisma.refreshToken.update({
-      where: { id: storedToken.id },
-      data: { revokedAt: new Date() },
+    await this.prisma.$transaction(async tx => {
+      await lockAuthSubject(tx, payload.sub);
+      // Keep revoked predecessors until expiry: they prove logout after rotation.
+      // A changed MFA revision must not prevent revoking their own family.
+      await this.proveRefreshRow(tx, input.refreshToken, payload);
+      await tx.refreshToken.updateMany({ where: { userId: payload.sub, sessionFamilyId: payload.sid, revokedAt: null }, data: { revokedAt: new Date() } });
     });
 
     return { loggedOut: true };
@@ -541,8 +501,9 @@ export class AuthService {
   async issueSessionForUser(
     user: AuthUserRecord,
     refreshTokenWriter: RefreshTokenWriter,
+    expectedAuthRevision: number = user.authRevision,
   ): Promise<LoginResponse> {
-    return this.issueTokenResponse(user, refreshTokenWriter);
+    return this.issueTokenResponse({ ...user, authRevision: expectedAuthRevision }, refreshTokenWriter);
   }
 
   private getRequiredJwtSecret(key: 'accessSecret' | 'refreshSecret'): string {
@@ -647,7 +608,7 @@ export class AuthService {
         },
       );
 
-      if (!payload.sub) {
+      if (!isSessionPayload(payload, 'refresh')) {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
@@ -657,27 +618,37 @@ export class AuthService {
     }
   }
 
-  private async findMatchingRefreshToken(
-    refreshToken: string,
-    storedTokens: RefreshTokenRecord[],
-  ): Promise<RefreshTokenRecord | undefined> {
-    for (const storedToken of storedTokens) {
-      const matches = await this.passwordService.comparePassword(
-        refreshToken,
-        storedToken.tokenHash,
-      );
-
-      if (matches) {
-        return storedToken;
-      }
-    }
-
-    return undefined;
+  private async proveRefreshRow(tx: Prisma.TransactionClient, token: string, payload: JwtPayload) {
+    const row = await tx.refreshToken.findUnique({ where: { id: payload.jti! } });
+    if (!row || row.userId !== payload.sub || row.sessionFamilyId !== payload.sid || row.expiresAt <= new Date() || !matchesRefreshToken(token, row.tokenHash))
+      throw new UnauthorizedException('Invalid refresh token');
+    return row;
   }
 
   async confirmMfa(user: AuthenticatedUser, code: string) {
     const { proof, session } = await this.completeMfa(user, (mfa, tx) => mfa.confirm(user.id, code, user.authTime, tx));
     return { recoveryCodes: proof.recoveryCodes, session };
+  }
+
+  async enrollMfa(user: AuthenticatedUser) {
+    return this.withCurrentMfaCaller(user, (mfa, tx) => mfa.enroll(user.id, user.email ?? user.id, user.authTime, tx));
+  }
+
+  async disableMfa(user: AuthenticatedUser, code: string) {
+    return this.withCurrentMfaCaller(user, (mfa, tx) => mfa.disable(user.id, code, user.authTime, tx));
+  }
+
+  private async withCurrentMfaCaller<T>(user: AuthenticatedUser, work: (mfa: MfaService, tx: Prisma.TransactionClient) => Promise<T>) {
+    const mfa = this.mfa;
+    if (!mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
+    mfa.assertFreshPrimary(user.authTime);
+    return this.prisma.$transaction(async tx => {
+      await lockActiveAuthSubject(tx, user.id);
+      await assertActiveSession(tx, user);
+      mfa.assertFreshPrimary(user.authTime);
+      await mfa.claims(user.id, user, tx);
+      return work(mfa, tx);
+    });
   }
 
   async verifyMfa(user: AuthenticatedUser, code: string): Promise<LoginResponse> {
@@ -693,33 +664,28 @@ export class AuthService {
   private async completeMfa<T extends { revision: number }>(user: AuthenticatedUser,
     consume: (mfa: MfaService, tx: Prisma.TransactionClient) => Promise<T>,
   ) {
-    const mfa = this.mfa;
-    if (!mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
-    mfa.assertFreshPrimary(user.authTime);
-    return this.prisma.$transaction(async tx => {
-      await lockActiveAuthSubject(tx, user.id);
-      mfa.assertFreshPrimary(user.authTime);
-      await mfa.claims(user.id, user, tx);
+    return this.withCurrentMfaCaller(user, async (mfa, tx) => {
       const proof = await consume(mfa, tx);
-      const session = await this.issueMfaSession(user.id, proof.revision, user.authTime, tx);
+      const session = await this.issueMfaSession(user, proof.revision, tx);
       return { proof, session };
     });
   }
 
-  private async issueMfaSession(userId: string, revision: number, authTime: number | undefined, tx: Prisma.TransactionClient): Promise<LoginResponse> {
+  private async issueMfaSession(caller: AuthenticatedUser, revision: number, tx: Prisma.TransactionClient): Promise<LoginResponse> {
+    const userId = caller.id;
     if (!this.mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
     const user = await tx.user.findUnique({ where: { id: userId }, select: FIREBASE_USER_SELECT });
     const state = await tx.userMfa.findUnique({ where: { userId } });
     if (!user || user.deletedAt || user.status !== UserStatus.active || !state?.enabled || state.revision !== revision) {
       throw new UnauthorizedException('Authenticator session changed. Sign in again.');
     }
-    return this.issueTokenResponse(user, tx, { mfaVerified: true, mfaRevision: revision, authTime: authTime ?? 0 });
+    return this.issueTokenResponse(user, tx, { tokenVersion: 2, sid: caller.sid!, authRevision: caller.authRevision!, mfaVerified: true, mfaRevision: revision, authTime: caller.authTime ?? 0 });
   }
 
   private async issueTokenResponse(
     user: AuthUserRecord,
     refreshTokenWriter: RefreshTokenWriter,
-    previousMfa?: MfaClaims,
+    previousMfa?: MfaClaims & SessionIdentity,
     provenPasswordHash?: string,
   ): Promise<LoginResponse> {
     await lockActiveAuthSubject(refreshTokenWriter, user.id);
@@ -727,32 +693,39 @@ export class AuthService {
       where: { id: user.id }, select: { ...FIREBASE_USER_SELECT, passwordHash: true },
     });
     if (!current || current.deletedAt || current.status !== UserStatus.active ||
+      !Number.isSafeInteger(current.authRevision) || current.authRevision < 0 ||
+      current.authRevision !== user.authRevision ||
+      (previousMfa !== undefined && previousMfa.authRevision !== current.authRevision) ||
       (provenPasswordHash !== undefined && current.passwordHash !== provenPasswordHash)) {
       throw new UnauthorizedException('Account credentials changed. Please sign in again.');
     }
     const responseUser = this.toRegisteredUserResponse(current);
     const mfa = this.mfa ? await this.mfa.claims(user.id, previousMfa, refreshTokenWriter) : undefined;
     const payload = {
+      tokenVersion: 2 as const,
+      sid: previousMfa?.sid ?? randomUUID(),
+      authRevision: current.authRevision,
+      authTime: previousMfa?.authTime ?? Math.floor(Date.now() / 1000),
       sub: responseUser.id,
       email: responseUser.email,
       roles: responseUser.roles,
       ...(mfa ? { mfaRevision: mfa.mfaRevision, mfaVerified: mfa.mfaVerified, authTime: mfa.authTime } : {}),
     };
-    const accessToken = await this.jwtService.signAsync(payload, {
+    const accessToken = await this.jwtService.signAsync({ ...payload, tokenUse: 'access' }, {
       expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       secret: this.getRequiredJwtSecret('accessSecret'),
     });
-    // Put entropy first: bcrypt compares only the first 72 UTF-8 bytes, so
-    // otherwise JWTs for the same user can match another device's stored hash.
-    const refreshToken = await this.jwtService.signAsync({ jti: randomUUID(), ...payload }, {
+    const refreshId = randomUUID();
+    const refreshToken = await this.jwtService.signAsync({ ...payload, tokenUse: 'refresh', jti: refreshId }, {
       expiresIn: REFRESH_TOKEN_EXPIRES_IN_SECONDS,
       secret: this.getRequiredJwtSecret('refreshSecret'),
     });
-    const refreshTokenHash =
-      await this.passwordService.hashPassword(refreshToken);
+    const refreshTokenHash = refreshTokenDigest(refreshToken);
 
     await refreshTokenWriter.refreshToken.create({
       data: {
+        id: refreshId,
+        sessionFamilyId: payload.sid,
         expiresAt: new Date(
           Date.now() + REFRESH_TOKEN_EXPIRES_IN_SECONDS * 1000,
         ),
@@ -772,7 +745,7 @@ export class AuthService {
   }
 
   private toRegisteredUserResponse(
-    user: AuthUserRecord,
+    user: Omit<AuthUserRecord, 'authRevision'>,
   ): RegisteredUserResponse {
     return {
       createdAt: user.createdAt,

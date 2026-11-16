@@ -7,4 +7,7 @@ export interface AuthenticatedUser {
   mfaRevision?: number;
   mfaVerified?: boolean;
   authTime?: number;
+  tokenVersion?: 2;
+  authRevision?: number;
+  sid?: string;
 }

@@ -8,6 +8,7 @@ import { ROLES_KEY } from '../roles.decorator';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
+const v2Identity = { tokenVersion: 2, authRevision: 0, sid: '00000000-0000-4000-8000-000000000001' };
 
 function createHttpContext(headers: Record<string, string | undefined> = {}): ExecutionContext {
   const request = { headers };
@@ -35,6 +36,7 @@ describe('JwtAuthGuard', () => {
             }
           : async () =>
               options?.payload ?? {
+                ...v2Identity, tokenUse: 'access',
                 sub: 'user-id',
                 email: 'admin@example.com',
                 roles: [RoleName.platform_admin],
@@ -50,6 +52,7 @@ describe('JwtAuthGuard', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue(
           options?.currentUser ?? {
+            authRevision: 0,
             id: 'user-id',
             email: 'admin@example.com',
             status: UserStatus.active,
@@ -58,6 +61,7 @@ describe('JwtAuthGuard', () => {
           },
         ),
       },
+      refreshToken: { findFirst: jest.fn().mockResolvedValue({ id: 'active-row' }) },
     } as unknown as PrismaService;
 
     const reflector = {
@@ -97,6 +101,7 @@ describe('JwtAuthGuard', () => {
       secret: 'access-secret',
     });
     expect(context.switchToHttp().getRequest().user).toEqual({
+      ...v2Identity,
       id: 'user-id',
       email: 'admin@example.com',
       roles: [RoleName.platform_admin],
@@ -125,6 +130,7 @@ describe('JwtAuthGuard', () => {
   it('rejects a suspended user even when the access token is still valid', async () => {
     const { guard } = createGuard({
       currentUser: {
+        authRevision: 0,
         id: 'user-id',
         email: 'admin@example.com',
         status: UserStatus.suspended,
@@ -143,6 +149,7 @@ describe('JwtAuthGuard', () => {
   it('uses current database roles instead of stale token roles', async () => {
     const { guard } = createGuard({
       currentUser: {
+        authRevision: 0,
         id: 'user-id',
         email: 'admin@example.com',
         status: UserStatus.active,
@@ -168,6 +175,7 @@ describe('OptionalJwtAuthGuard', () => {
               throw new Error('invalid token');
             }
           : async () => ({
+              ...v2Identity, tokenUse: 'access',
               sub: 'user-id',
               roles: [RoleName.student],
             }),
@@ -181,6 +189,7 @@ describe('OptionalJwtAuthGuard', () => {
     const prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue({
+          authRevision: 0,
           id: 'user-id',
           email: 'student@example.com',
           status: UserStatus.active,
@@ -188,6 +197,7 @@ describe('OptionalJwtAuthGuard', () => {
           roles: [{ role: { name: RoleName.student } }],
         }),
       },
+      refreshToken: { findFirst: jest.fn().mockResolvedValue({ id: 'active-row' }) },
     } as unknown as PrismaService;
 
     const reflector = {
@@ -215,6 +225,7 @@ describe('OptionalJwtAuthGuard', () => {
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(context.switchToHttp().getRequest().user).toEqual({
+      ...v2Identity,
       id: 'user-id',
       email: 'student@example.com',
       roles: [RoleName.student],

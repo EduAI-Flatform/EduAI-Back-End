@@ -1,12 +1,14 @@
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+import { matchesRefreshToken } from './auth-session';
 
 describe('refresh token device isolation', () => {
-  it('issues distinct tokens and bcrypt prefixes for simultaneous logins', async () => {
+  it('issues distinct exact-bound families for simultaneous logins', async () => {
     const passwords = new PasswordService();
     const jwt = new JwtService();
     const user = {
+      authRevision: 0,
       id: '00000000-0000-4000-8000-000000000001', email: 'synthetic@example.test', fullName: 'Synthetic',
       passwordHash: await passwords.hashPassword('synthetic-password'), status: 'active',
       roles: [{ role: { name: 'student' } }], createdAt: new Date(), updatedAt: new Date(),
@@ -30,8 +32,8 @@ describe('refresh token device isolation', () => {
         auth.login({ email: user.email, password: 'synthetic-password' }),
       ]);
       expect(desktop.refreshToken).not.toBe(mobile.refreshToken);
-      expect(desktop.refreshToken.slice(0, 72)).not.toBe(mobile.refreshToken.slice(0, 72));
-      const matches = await Promise.all(storedHashes.map(hash => passwords.comparePassword(desktop.refreshToken, hash)));
+      expect(jwt.decode(desktop.refreshToken).sid).not.toBe(jwt.decode(mobile.refreshToken).sid);
+      const matches = storedHashes.map(hash => matchesRefreshToken(desktop.refreshToken, hash));
       expect(matches.filter(Boolean)).toHaveLength(1);
       expect(jwt.decode(desktop.refreshToken)).toMatchObject({ exp: 1_800_000_000 + 30 * 24 * 60 * 60 });
     } finally {

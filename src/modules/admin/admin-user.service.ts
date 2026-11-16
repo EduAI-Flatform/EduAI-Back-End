@@ -125,7 +125,7 @@ export class AdminUserService {
       const now = new Date();
       const updated = await tx.user.update({
         where: { id: userId },
-        data: { status },
+        data: { status, authRevision: { increment: 1 } },
         select: adminUserSelect,
       });
 
@@ -209,7 +209,7 @@ export class AdminUserService {
 
       const updated = await tx.user.update({
         where: { id: userId },
-        data: { updatedAt: new Date() },
+        data: { updatedAt: new Date(), authRevision: { increment: 1 } },
         select: adminUserSelect,
       });
       return this.toResponse(updated);

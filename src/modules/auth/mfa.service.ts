@@ -45,20 +45,19 @@ export class MfaService {
     const age = Math.floor(Date.now() / 1000) - (authTime ?? 0);
     if (age < -30 || age > 300) throw new UnauthorizedException('Sign in again before changing authenticator settings.');
   }
-  async enroll(userId: string, email: string, authTime: number | undefined) {
+  async enroll(userId: string, email: string, authTime: number | undefined, transaction?: Prisma.TransactionClient) {
     this.assertFreshPrimary(authTime);
     const key = this.key();
     const secret = encodeBase32(randomBytes(20));
     const pendingSecretEncrypted = encryptMfaSecret(secret, key, userId);
     const pendingExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await this.prisma.$transaction(async tx => {
-      await lockActiveAuthSubject(tx, userId);
+    await this.inSubjectTransaction(userId, async tx => {
       await tx.userMfa.upsert({ where: { userId }, create: { userId }, update: {} });
       const result = await tx.userMfa.updateMany({
         where: { userId, enabled: false }, data: { pendingSecretEncrypted, pendingExpiresAt },
       });
       if (result.count !== 1) throw new ConflictException('Authenticator is already enabled.');
-    });
+    }, transaction);
     return {
       secret, expiresAt: pendingExpiresAt.toISOString(),
       otpauthUri: 'otpauth://totp/' + encodeURIComponent('GDS:' + email) + '?secret=' + secret + '&issuer=GDS&algorithm=SHA1&digits=6&period=30',
@@ -96,11 +95,10 @@ export class MfaService {
       return state.revision;
     }, transaction);
   }
-  async disable(userId: string, code: string, authTime: number | undefined) {
+  async disable(userId: string, code: string, authTime: number | undefined, transaction?: Prisma.TransactionClient) {
     this.assertFreshPrimary(authTime);
     this.key();
-    await this.prisma.$transaction(async tx => {
-      await lockActiveAuthSubject(tx, userId);
+    await this.inSubjectTransaction(userId, async tx => {
       const state = await tx.userMfa.findUnique({ where: { userId } });
       if (!state?.enabled) throw new BadRequestException('Authenticator is not enabled.');
       await this.consumeProof(tx, state, code);
@@ -111,7 +109,7 @@ export class MfaService {
       if (result.count !== 1) throw new ConflictException('Authenticator settings changed.');
       await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
       await this.audit(tx, userId, 'MFA_DISABLED');
-    });
+    }, transaction);
     return { disabled: true as const };
   }
   async regenerateRecoveryCodes(userId: string, code: string, authTime: number | undefined, transaction?: Prisma.TransactionClient) {

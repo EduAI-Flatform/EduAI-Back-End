@@ -63,10 +63,8 @@ module.exports = async function verifyAuthSubjectFence(db, actorId) {
   }
   async function seedSession(userId) {
     const factor = await db.userMfa.findUnique({ where: { userId } });
-    const token = await jwt.signAsync({ jti: randomUUID(), sub: userId, mfaRevision: factor?.revision ?? 0,
-      mfaVerified: Boolean(factor?.enabled), authTime: Math.floor(Date.now() / 1000) }, { secret: config.jwt.refreshSecret, expiresIn: 30 * 86400 });
-    const row = await db.refreshToken.create({ data: { userId, tokenHash: await passwords.hashPassword(token), expiresAt: new Date(Date.now() + 30 * 86400000) } });
-    return { token, row };
+    return require('./auth-v2-replay-fixture.cjs')(db, userId, jwt, config.jwt.refreshSecret,
+      { mfaRevision: factor?.revision ?? 0, mfaVerified: Boolean(factor?.enabled) });
   }
   try {
     process.env.GDS_MFA_ENCRYPTION_KEY = mfaKey.toString('hex');
@@ -99,7 +97,7 @@ module.exports = async function verifyAuthSubjectFence(db, actorId) {
       const consumed = gate(), resume = gate(), revokerStarted = gate();
       const refreshDb = { user: db.user, $transaction: work => db.$transaction(async tx => work({
         $queryRaw: tx.$queryRaw.bind(tx), user: tx.user, userMfa: tx.userMfa,
-        refreshToken: { create: tx.refreshToken.create.bind(tx.refreshToken), updateMany: async input => {
+        refreshToken: { findUnique: tx.refreshToken.findUnique.bind(tx.refreshToken), create: tx.refreshToken.create.bind(tx.refreshToken), updateMany: async input => {
           const result = await tx.refreshToken.updateMany(input);
           if (input.where.id === desktop.row.id && result.count === 1) { consumed.resolve(); await bounded(resume.promise, name + ' rotation resume'); }
           return result;

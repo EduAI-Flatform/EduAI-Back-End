@@ -9,6 +9,7 @@ import { AuditAction } from '../../common/audit/audit.constants';
 import { AppConfigService } from '../../config/app-config.service';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+import { refreshTokenDigest } from './auth-session';
 
 function createAuditService() {
   return { record: jest.fn().mockResolvedValue(undefined) };
@@ -24,6 +25,7 @@ const firebaseClaims = {
 };
 
 const baseUser = {
+  authRevision: 0,
   avatarUrl: null,
   createdAt: new Date('2026-06-13T00:00:00.000Z'),
   email: 'student@example.com',
@@ -123,6 +125,17 @@ function createService(options?: {
   };
 }
 
+describe('Firebase primary proof revision boundary', () => {
+  it('rejects a resolved identity after revocation wins its subject fence', async () => {
+    const { service, tx } = createService();
+    const before = { ...baseUser, firebaseUid: firebaseClaims.uid };
+    tx.user.findUnique.mockReset().mockResolvedValueOnce(before).mockResolvedValueOnce(null)
+      .mockResolvedValue({ ...before, authRevision: 1 });
+    await expect(service.loginWithFirebase({ idToken: 'synthetic-provider-proof', mode: 'login' })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(tx.user.update).not.toHaveBeenCalled(); expect(tx.refreshToken.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('AuthService.loginWithFirebase', () => {
   it('requires a role before creating a new Firebase user', async () => {
     const { service, tx } = createService();
@@ -184,7 +197,7 @@ describe('AuthService.loginWithFirebase', () => {
     });
     expect(tx.refreshToken.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        tokenHash: 'refresh-hash',
+        tokenHash: refreshTokenDigest('refresh-token'),
         userId: 'user-id',
       }),
     });

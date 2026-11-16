@@ -3,7 +3,7 @@ import { AuthService } from './auth.service';
 
 describe('authoritative account state at session issuance', () => {
   function setup() {
-    const original = { id: 'owner', email: 'owner@example.test', fullName: 'Owner', passwordHash: 'old-hash',
+    const original = { authRevision: 0, id: 'owner', email: 'owner@example.test', fullName: 'Owner', passwordHash: 'old-hash',
       status: 'active', deletedAt: null, createdAt: new Date(), updatedAt: new Date(), roles: [{ role: { name: 'student' } }] };
     const latest = { ...original };
     const tx = { $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),

@@ -5,6 +5,9 @@ import { AuditAction } from '../../common/audit/audit.constants';
 import { AppConfigService } from '../../config/app-config.service';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+import { refreshTokenDigest } from './auth-session';
+const refreshIdentity = { tokenVersion: 2, tokenUse: 'refresh', authRevision: 0,
+  sid: '00000000-0000-4000-8000-000000000001', jti: '00000000-0000-4000-8000-000000000002' };
 
 function createAuditService() {
   return { record: jest.fn().mockResolvedValue(undefined) };
@@ -16,6 +19,7 @@ describe('AuthService.login', () => {
     password: 'Str0ngPassword!123',
   };
   const user = {
+    authRevision: 0,
     id: 'user-id',
     email: 'student@example.com',
     fullName: 'Student User',
@@ -216,12 +220,14 @@ describe('AuthService.login', () => {
     expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
     const refreshPayload = (jwtService.signAsync as jest.Mock).mock.calls[1][0];
     expect(refreshPayload.jti).toEqual(expect.any(String));
-    expect(Object.keys(refreshPayload)[0]).toBe('jti');
-    expect(passwordService.hashPassword).toHaveBeenCalledWith('refresh-token');
+    expect(refreshPayload).toMatchObject({ tokenVersion: 2, tokenUse: 'refresh', authRevision: 0 });
+    expect(passwordService.hashPassword).not.toHaveBeenCalled();
     expect(prisma.refreshToken.create).toHaveBeenCalledWith({
       data: {
+        id: refreshPayload.jti,
+        sessionFamilyId: refreshPayload.sid,
         expiresAt: expect.any(Date),
-        tokenHash: 'hashed-refresh-token',
+        tokenHash: refreshTokenDigest('refresh-token'),
         userId: user.id,
       },
     });
@@ -243,6 +249,7 @@ describe('AuthService.refresh', () => {
     refreshToken: 'old-refresh-token',
   };
   const user = {
+    authRevision: 0,
     id: 'user-id',
     email: 'student@example.com',
     fullName: 'Student User',
@@ -258,8 +265,8 @@ describe('AuthService.refresh', () => {
     ],
     refreshTokens: [
       {
-        id: 'refresh-token-id',
-        tokenHash: 'stored-refresh-token-hash',
+        id: refreshIdentity.jti,
+        tokenHash: refreshTokenDigest(refreshInput.refreshToken),
       },
     ],
   };
@@ -277,6 +284,8 @@ describe('AuthService.refresh', () => {
         findUnique: jest.fn().mockResolvedValue(selectedUser),
       },
       refreshToken: {
+        findUnique: jest.fn().mockResolvedValue({ id: refreshIdentity.jti, userId: user.id, sessionFamilyId: refreshIdentity.sid,
+          tokenHash: options?.tokenMatches === false ? 'sha256:v2:' + '0'.repeat(64) : refreshTokenDigest(refreshInput.refreshToken), expiresAt: new Date(Date.now() + 3600000), revokedAt: null }),
         update: jest.fn().mockResolvedValue({ id: 'refresh-token-id' }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         create: jest.fn().mockResolvedValue({ id: 'new-refresh-token-id' }),
@@ -301,6 +310,7 @@ describe('AuthService.refresh', () => {
               throw new Error('invalid token');
             }
           : async () => ({
+              ...refreshIdentity,
               sub: user.id,
               email: user.email,
               roles: ['student'],
@@ -336,7 +346,7 @@ describe('AuthService.refresh', () => {
     );
   });
 
-  it('rejects a soft-deleted account before checking token proofs', async () => {
+  it('rejects a soft-deleted account without rotating its token', async () => {
     const { service, tx, passwordService } = createService();
     tx.user.findUnique.mockResolvedValueOnce({ ...user, deletedAt: new Date() });
     await expect(service.refresh(refreshInput)).rejects.toBeInstanceOf(UnauthorizedException);
@@ -346,13 +356,13 @@ describe('AuthService.refresh', () => {
 
   it.each([null, { ...user, status: 'blocked' }, { ...user, deletedAt: new Date() }])('rechecks account eligibility inside rotation after proving the token %#', async currentUser => {
     const { service, tx } = createService();
-    tx.user.findUnique.mockResolvedValueOnce(user).mockResolvedValueOnce(currentUser);
+    tx.user.findUnique.mockResolvedValueOnce(currentUser);
     await expect(service.refresh(refreshInput)).rejects.toBeInstanceOf(UnauthorizedException);
     expect(tx.refreshToken.updateMany).not.toHaveBeenCalled();
     expect(tx.refreshToken.create).not.toHaveBeenCalled();
   });
 
-  it('rejects expired or revoked refresh tokens', async () => {
+  it('rejects a refresh token with an altered digest', async () => {
     const { service } = createService({ tokenMatches: false });
 
     await expect(service.refresh(refreshInput)).rejects.toBeInstanceOf(
@@ -377,21 +387,18 @@ describe('AuthService.refresh', () => {
     expect(jwtService.verifyAsync).toHaveBeenCalledWith('old-refresh-token', {
       secret: 'refresh-secret',
     });
-    expect(passwordService.comparePassword).toHaveBeenCalledWith(
-      'old-refresh-token',
-      'stored-refresh-token-hash',
-    );
+    expect(passwordService.comparePassword).not.toHaveBeenCalled();
     expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
-      where: { id: 'refresh-token-id', userId: user.id, tokenHash: 'stored-refresh-token-hash', revokedAt: null, expiresAt: { gt: expect.any(Date) } },
+      where: { id: refreshIdentity.jti, userId: user.id, sessionFamilyId: refreshIdentity.sid, tokenHash: refreshTokenDigest(refreshInput.refreshToken), revokedAt: null, expiresAt: { gt: expect.any(Date) } },
       data: { revokedAt: expect.any(Date) },
     });
-    expect(passwordService.hashPassword).toHaveBeenCalledWith(
-      'new-refresh-token',
-    );
+    expect(passwordService.hashPassword).not.toHaveBeenCalled();
     expect(tx.refreshToken.create).toHaveBeenCalledWith({
       data: {
+        id: expect.any(String),
+        sessionFamilyId: refreshIdentity.sid,
         expiresAt: expect.any(Date),
-        tokenHash: 'new-refresh-token-hash',
+        tokenHash: refreshTokenDigest('new-refresh-token'),
         userId: user.id,
       },
     });
@@ -423,12 +430,16 @@ describe('AuthService.logout', () => {
     tokenMatches?: boolean;
     verifyFails?: boolean;
   }) {
-    const prisma = {
+    const prisma: any = {
+      $queryRaw: jest.fn().mockResolvedValue([{ status: 'active', deletedAt: null }]),
+      $transaction: jest.fn(async (work: any) => work(prisma)),
       user: {
         findUnique: jest.fn().mockResolvedValue(user),
       },
       refreshToken: {
-        update: jest.fn().mockResolvedValue({ id: 'refresh-token-id' }),
+        findUnique: jest.fn().mockResolvedValue({ id: refreshIdentity.jti, userId: user.id, sessionFamilyId: refreshIdentity.sid,
+          tokenHash: refreshTokenDigest(logoutInput.refreshToken), expiresAt: new Date(Date.now() + 3600000), revokedAt: null }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     const passwordService = {
@@ -444,6 +455,7 @@ describe('AuthService.logout', () => {
               throw new Error('invalid token');
             }
           : async () => ({
+              ...refreshIdentity,
               sub: user.id,
             }),
       ),
@@ -474,14 +486,14 @@ describe('AuthService.logout', () => {
     );
   });
 
-  it('invalidates the matching refresh token', async () => {
+  it('invalidates the matching device family', async () => {
     const { service, prisma } = createService();
 
     await expect(service.logout(logoutInput)).resolves.toEqual({
       loggedOut: true,
     });
-    expect(prisma.refreshToken.update).toHaveBeenCalledWith({
-      where: { id: 'refresh-token-id' },
+    expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: user.id, sessionFamilyId: refreshIdentity.sid, revokedAt: null },
       data: { revokedAt: expect.any(Date) },
     });
   });

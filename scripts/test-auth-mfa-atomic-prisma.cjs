@@ -44,9 +44,8 @@ module.exports = async function verifyAtomicMfaIssuance(db) {
       await db.userMfa.create({ data: mode === 'confirm'
         ? { userId: user.id, pendingSecretEncrypted: encrypted, pendingExpiresAt: new Date(Date.now() + 600000) }
         : { userId: user.id, enabled: true, revision: 2, secretEncrypted: encrypted, enabledAt: new Date(), recoveryCodeHashes: recovery.hashes } });
-      await db.refreshToken.create({ data: { userId: user.id, tokenHash: 'synthetic-prior-session-only', expiresAt: new Date(Date.now() + 86400000) } });
-      const authenticated = { id: user.id, email: user.email, roles: ['student'], authTime: Math.floor(Date.now() / 1000),
-        mfaRevision: mode === 'confirm' ? 0 : 2, mfaVerified: mode === 'recovery' };
+      const { caller: authenticated } = await require('./auth-v2-replay-fixture.cjs')(db, user.id, jwt, config.jwt.refreshSecret,
+        { mfaRevision: mode === 'confirm' ? 0 : 2, mfaVerified: mode === 'recovery' });
       const code = mode === 'verify-totp' || mode === 'confirm' ? totpAt(secret, Math.floor(Date.now() / 30000)) : recovery.codes[0];
       const request = controller => controller[mode.startsWith('verify') ? 'verify' : mode](authenticated, { code });
       const snapshot = async () => ({
@@ -55,24 +54,21 @@ module.exports = async function verifyAtomicMfaIssuance(db) {
         audits: await db.auditLog.count({ where: { actorId: user.id } }),
       });
       const before = await snapshot();
-      for (const failure of ['access', 'refresh', 'hash', 'insert']) {
+      for (const failure of ['access', 'refresh', 'pre-insert', 'insert']) {
         let signed = 0;
         const failingJwt = { signAsync: async (...args) => {
           signed++;
           if (failure === 'access' || (failure === 'refresh' && signed === 2)) throw new Error('SYNTHETIC_MFA_ISSUANCE_FAILED');
           return jwt.signAsync(...args);
         } };
-        const failingPasswords = { hashPassword: async value => {
-          if (failure === 'hash') throw new Error('SYNTHETIC_MFA_ISSUANCE_FAILED');
-          return passwords.hashPassword(value);
-        } };
-        const failingDb = failure !== 'insert' ? db : { userMfa: db.userMfa, $transaction: work => db.$transaction(async tx => work({
+        const failingDb = !['pre-insert', 'insert'].includes(failure) ? db : { userMfa: db.userMfa, $transaction: work => db.$transaction(async tx => work({
           $queryRaw: tx.$queryRaw.bind(tx), user: tx.user, userMfa: tx.userMfa, auditLog: tx.auditLog,
-          refreshToken: { updateMany: tx.refreshToken.updateMany.bind(tx.refreshToken), create: async input => {
+          refreshToken: { findFirst: tx.refreshToken.findFirst.bind(tx.refreshToken), updateMany: tx.refreshToken.updateMany.bind(tx.refreshToken), create: async input => {
+            if (failure === 'pre-insert') throw new Error('SYNTHETIC_MFA_ISSUANCE_FAILED');
             await tx.refreshToken.create(input); throw new Error('SYNTHETIC_MFA_ISSUANCE_FAILED');
           } },
         })) };
-        const factor = new MfaService(failingDb), auth = new AuthService(failingDb, failingPasswords, failingJwt, config, audit, undefined, factor);
+        const factor = new MfaService(failingDb), auth = new AuthService(failingDb, passwords, failingJwt, config, audit, undefined, factor);
         await assert.rejects(() => request(new MfaController(factor, auth)), error => error.message === 'SYNTHETIC_MFA_ISSUANCE_FAILED');
         assert.deepEqual(await snapshot(), before, mode + ': proof/revision/revocation/audit survived failed ' + failure + ' issuance');
       }
@@ -101,8 +97,8 @@ module.exports = async function verifyAtomicMfaIssuance(db) {
       await db.userMfa.create({ data: mode === 'confirm'
         ? { userId: user.id, pendingSecretEncrypted: encrypted, pendingExpiresAt: new Date(Date.now() + 600000) }
         : { userId: user.id, enabled: true, revision: 2, secretEncrypted: encrypted, enabledAt: new Date(), recoveryCodeHashes: recovery.hashes } });
-      const authenticated = { id: user.id, email: user.email, roles: ['student'], authTime: Math.floor(Date.now() / 1000),
-        mfaRevision: mode === 'confirm' ? 0 : 2, mfaVerified: mode === 'recovery' };
+      const { caller: authenticated } = await require('./auth-v2-replay-fixture.cjs')(db, user.id, jwt, config.jwt.refreshSecret,
+        { mfaRevision: mode === 'confirm' ? 0 : 2, mfaVerified: mode === 'recovery' });
       const code = mode === 'confirm' ? totpAt(secret, Math.floor(Date.now() / 30000)) : recovery.codes[0];
       const proofDone = gate(), resume = gate(), revokerStarted = gate(), revokerPrepared = gate(), startRevocation = gate();
       const factor = new MfaService(db), method = mode === 'recovery' ? 'regenerateRecoveryCodes' : mode;

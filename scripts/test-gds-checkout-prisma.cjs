@@ -148,15 +148,10 @@ async function main() {
         console.log('GDS_LEARNING_PROGRESS_POSTGRES_PERSISTENCE=PASS; DTO precision, checkpoints, reload, replay, ownership and unchanged purchased grants');
         const jwt = new JwtService(), passwords = new PasswordService();
         const authConfig = { jwt: { accessSecret: 'synthetic-access-only', refreshSecret: 'synthetic-refresh-only' } };
-        const rememberedToken = await jwt.signAsync({ jti: randomUUID(), sub: buyerId }, { secret: authConfig.jwt.refreshSecret, expiresIn: 60 });
-        const predecessor = await db.refreshToken.create({ data: { userId: buyerId,
-          tokenHash: await passwords.hashPassword(rememberedToken), expiresAt: new Date(Date.now() + 60000) } });
-        const slowProof = { comparePassword: async (token, hash) => {
-          // Exceeds Prisma's normal interactive-transaction lifetime without changing production timeouts.
-          await new Promise(resolve => setTimeout(resolve, 6000));
-          return passwords.comparePassword(token, hash);
-        }, hashPassword: token => passwords.hashPassword(token) };
-        const renewed = await new AuthService(db, slowProof, jwt, authConfig, audit).refresh({ refreshToken: rememberedToken });
+        const { token: rememberedToken, row: predecessor } = await require('./auth-v2-replay-fixture.cjs')(db, buyerId, jwt, authConfig.jwt.refreshSecret);
+        const noBcryptProof = { comparePassword: async () => { throw new Error('V2_REFRESH_MUST_NOT_USE_BCRYPT'); },
+          hashPassword: async () => { throw new Error('V2_REFRESH_MUST_NOT_USE_BCRYPT'); } };
+        const renewed = await new AuthService(db, noBcryptProof, jwt, authConfig, audit).refresh({ refreshToken: rememberedToken });
         assert.equal(renewed.user.id, buyerId); assert.equal(renewed.refreshToken === rememberedToken, false);
         assert.ok((await db.refreshToken.findUniqueOrThrow({ where: { id: predecessor.id } })).revokedAt);
         assert.equal(await db.refreshToken.count({ where: { userId: buyerId, revokedAt: null } }), 1);
@@ -169,7 +164,7 @@ async function main() {
         assert.equal((await db.refreshToken.findUniqueOrThrow({ where: { id: liveSession.id }, select: { revokedAt: true } })).revokedAt, null);
         assert.equal(await db.refreshToken.count({ where: { userId: buyerId } }), totalSessions);
         assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
-        console.log('GDS_AUTH_REFRESH_SLOW_PROOF_POSTGRES=PASS; slow proof, atomic rotation, revoked replay, issuance rollback and unchanged purchased grants');
+        console.log('GDS_AUTH_REFRESH_EXACT_BINDING_POSTGRES=PASS; exact V2 proof without bcrypt, atomic rotation, revoked replay, issuance rollback and unchanged purchased grants');
         const mfa = new MfaService(db);
         const mfaAuth = new AuthService(db, passwords, jwt, authConfig, audit, undefined, mfa);
         // A new primary session takes the current revision; rotation must never
@@ -196,6 +191,7 @@ async function main() {
         console.log('GDS_AUTH_MFA_REVISION_POSTGRES=PASS; same-revision provisional renewal, original auth time, stale enabled/disabled denial, rotation rollback and unchanged purchased grants');
         await require('./test-auth-subject-fence-prisma.cjs')(db, ids.seller);
         await require('./test-auth-mfa-atomic-prisma.cjs')(db);
+        await require('./test-auth-session-v2-prisma.cjs')(db);
         assert.deepEqual(await db.courseAccessGrant.findMany({ where: { userId: buyerId }, orderBy: { id: 'asc' } }), grantsBefore);
         const teacher = await db.user.create({ data: { email: randomUUID() + '@synthetic.invalid', fullName: 'Synthetic quiz policy teacher' } });
         const instructorRole = await db.role.upsert({ where: { name: 'instructor' }, create: { name: 'instructor' }, update: {} });
