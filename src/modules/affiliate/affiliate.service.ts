@@ -5,7 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppConfigService } from '../../config/app-config.service';
 import * as QRCode from 'qrcode';
 import { PlatformSettingsService } from '../platform/platform-settings.service';
-import { affiliatePolicyReady, evaluateAffiliateAccrual, type AffiliatePolicy } from './affiliate-domain';
+import { affiliateAdmissionReady, affiliateFrozenAttributionReady, affiliatePolicyReady, evaluateAffiliateAccrual, type AffiliatePolicy } from './affiliate-domain';
 import type { AffiliateListQuery } from './affiliate.dto';
 import { affiliateOrderSelect } from './affiliate-source';
 import { AffiliateWalletService } from '../wallet/affiliate-wallet.service';
@@ -34,7 +34,7 @@ export class AffiliateService {
     const readEnabled = this.walletAdapter ? gdsWalletCapabilities(this.config).readEnabled : false;
     const walletReady = !!this.walletAdapter && policy.fundingSource === 'platform_fee' && policy.allocationPrecedence === 'seller_entitlements_first';
     return {
-      enabled: policy.enabled && affiliatePolicyReady(policy), policyRevisionId: effective.versions.affiliate ?? null,
+      enabled: !!effective.versions.affiliate && affiliateAdmissionReady(policy), policyRevisionId: effective.versions.affiliate ?? null,
       identities: await Promise.all(identities.map(async identity => {
         const base = this.config.app.publicAppUrl;
         const referralUrl = base ? new URL('/?ref=' + identity.code, base).toString() : null;
@@ -97,7 +97,7 @@ export class AffiliateService {
       const policy = visit.policy.content as unknown as AffiliatePolicy;
       if (visit.policy.group !== 'affiliate' || visit.policy.status !== 'scheduled'
         || !visit.policy.effectiveAt || visit.policy.effectiveAt > visit.createdAt
-        || !policy.enabled || !affiliatePolicyReady(policy)) throw new ForbiddenException('REFERRAL_POLICY_INVALID');
+        || !affiliateAdmissionReady(policy)) throw new ForbiddenException('REFERRAL_POLICY_INVALID');
       const attributed = await tx.affiliateAttribution.create({ data: {
         buyerId, orderId, visitId: visit.id, identityId: visit.identityId, policyRevisionId: visit.policyRevisionId,
       } });
@@ -113,7 +113,8 @@ export class AffiliateService {
       if (this.walletAdapter) await lockGdsFinance(tx);
       const records = await tx.affiliateAttribution.findMany({
         where: { identity: { ownerId }, ...(after ? { id: { gt: after } } : {}) }, orderBy: { id: 'asc' }, take: 51,
-        include: { order: { select: affiliateOrderSelect }, policy: true, accruals: true },
+        include: { order: { select: affiliateOrderSelect }, policy: true, accruals: true,
+          visit: { select: { policyRevisionId: true, identityId: true, createdAt: true } } },
       });
       const results = [];
       for (const record of records.slice(0, 50)) {
@@ -126,10 +127,14 @@ export class AffiliateService {
           results.push({ id: record.id, status: result.status, reason: result.reason }); continue;
         }
         const existing = record.accruals.find(row => row.sourceDigest === result.sourceDigest);
+        const prior = record.accruals.reduce((sum, row) => sum + row.deltaMinor, 0n);
+        const deltaMinor = result.targetMinor - prior;
+        if (deltaMinor >= 0n && !affiliateFrozenAttributionReady(record)) {
+          results.push({ id: record.id, status: 'unavailable', reason: 'REFERRAL_POLICY_INVALID' }); continue;
+        }
         if (!existing) {
-          const prior = record.accruals.reduce((sum, row) => sum + row.deltaMinor, 0n);
           const accrual = await tx.affiliateAccrual.create({ data: {
-            attributionId: record.id, sourceDigest: result.sourceDigest, deltaMinor: result.targetMinor - prior,
+            attributionId: record.id, sourceDigest: result.sourceDigest, deltaMinor,
             qualifyingAmountMinor: result.qualifyingAmountMinor, commissionBps: policy.commissionBps,
             currency: policy.currency, holdUntil: result.holdUntil,
           } });
@@ -185,7 +190,7 @@ export class AffiliateService {
     const effective = await this.settings.current();
     const policy = effective.settings.affiliate as AffiliatePolicy;
     const revisionId = effective.versions.affiliate;
-    if (!revisionId || !policy.enabled || !affiliatePolicyReady(policy)) throw new ForbiddenException('AFFILIATE_PROGRAM_DISABLED');
+    if (!revisionId || !affiliateAdmissionReady(policy)) throw new ForbiddenException('AFFILIATE_PROGRAM_DISABLED');
     return { policy, revisionId };
   }
 

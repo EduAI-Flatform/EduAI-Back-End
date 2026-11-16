@@ -1,4 +1,5 @@
 import { AffiliateWalletService } from './affiliate-wallet.service';
+import { AffiliateService } from '../affiliate/affiliate.service';
 
 function setup() {
   const settledAt = new Date(Date.now() - 86400000);
@@ -7,14 +8,16 @@ function setup() {
     fundingSource: 'platform_fee', allocationPrecedence: 'seller_entitlements_first' };
   const accruals: any[] = [], effects: any[] = [], refunds: any[] = [], allocations: any[] = [];
   const wallet = { id: 'wallet', buyerId: 'owner', availableMinor: 0n, debtMinor: 0n, heldMinor: 0n };
-  const record = { id: 'attribution', orderId: 'order', policyRevisionId: 'policy', createdAt: new Date(settledAt.getTime() - 1000),
-    policy: { group: 'affiliate', content: policy }, accruals,
+  const record = { id: 'attribution', orderId: 'order', identityId: 'identity', policyRevisionId: 'policy', createdAt: new Date(settledAt.getTime() - 1000),
+    visit: { identityId: 'identity', policyRevisionId: 'policy', createdAt: new Date(settledAt.getTime() - 2000) },
+    policy: { id: 'policy', group: 'affiliate', status: 'scheduled', effectiveAt: new Date(settledAt.getTime() - 3000), content: policy }, accruals,
     order: { id: 'order', currency: 'VND', status: 'confirmed', fulfillmentStatus: 'fulfilled', payableAmountMinor: 1000n,
       confirmedSettlementId: 'settlement', confirmedSettlement: { id: 'settlement', orderId: 'order', amountMinor: 1000n,
         currency: 'VND', settledAt, kind: 'provider_collection', disposition: 'matched' }, refunds } };
   const snapshot = { id: 'line', basisAmountMinor: 1000n, platformAmountMinor: 200n, sellerAmountMinor: 800n };
   const settings = { processingEnabled: true };
   const tx = {
+    auditLog: { create: jest.fn() },
     $queryRaw: jest.fn(), gdsWithdrawalSettings: { findUnique: jest.fn().mockResolvedValue(settings) },
     affiliateAttribution: { findMany: jest.fn().mockResolvedValue([record]) },
     affiliateAccrual: { create: jest.fn(async ({ data }) => { const row = { ...data, id: 'accrual' + accruals.length }; accruals.push(row); return row; }) },
@@ -34,6 +37,41 @@ function setup() {
   return { service, tx, finance, policy, wallet, record, effects, snapshot, settings, refund };
 }
 describe('affiliate adapter into the existing GDS wallet', () => {
+  it.each([true, false])('recovers retained funded history once with invalid visit provenance (service first: %s)', async serviceFirst => {
+    const s = setup();
+    await s.service.syncOwner(s.tx as any, 'owner');
+    s.record.visit.policyRevisionId = 'invalid-legacy-visit';
+    s.wallet.availableMinor = 0n; s.wallet.heldMinor = 100n; s.refund(500n);
+    if (serviceFirst) {
+      const service = new AffiliateService({ $transaction: async (work: any) => work(s.tx) } as any,
+        {} as any, {} as any, s.service);
+      await service.reconcile('owner');
+    } else await s.service.syncOwner(s.tx as any, 'owner', true);
+    await s.service.syncOwner(s.tx as any, 'owner', true);
+    expect(s.wallet).toMatchObject({ availableMinor: 0n, heldMinor: 100n, debtMinor: 50n });
+    expect(s.effects.map(row => row.deltaMinor)).toEqual([100n, -50n]);
+    expect(s.record.accruals.map(row => row.deltaMinor)).toEqual([100n, -50n]);
+  });
+  it.each(['draft', 'ineffective visit', 'mismatched visit'])('never creates accrual or wallet credit for %s provenance', async invalid => {
+    const s = setup();
+    if (invalid === 'draft') s.record.policy.status = 'draft';
+    if (invalid === 'ineffective visit') s.record.policy.effectiveAt = new Date(s.record.visit.createdAt.getTime() + 1);
+    if (invalid === 'mismatched visit') s.record.visit.policyRevisionId = 'other';
+    expect(await s.service.syncOwner(s.tx as any, 'owner')).toMatchObject([{ status: 'REFERRAL_POLICY_INVALID' }]);
+    expect(s.tx.affiliateAccrual.create).not.toHaveBeenCalled();
+    expect(s.effects).toHaveLength(0);
+    expect(s.wallet.availableMinor).toBe(0n);
+  });
+  it('can reduce a retained invalid historical accrual without turning the corrected remainder into wallet credit', async () => {
+    const s = setup();
+    s.record.policy.status = 'draft';
+    s.record.accruals.push({ id: 'old', sourceDigest: 'historical', deltaMinor: 100n });
+    s.refund(500n);
+    expect(await s.service.syncOwner(s.tx as any, 'owner')).toMatchObject([{ status: 'REFERRAL_POLICY_INVALID' }]);
+    expect(s.record.accruals.map(row => row.deltaMinor)).toEqual([100n, -50n]);
+    expect(s.effects).toHaveLength(0);
+    expect(s.wallet.availableMinor).toBe(0n);
+  });
   it('credits once per immutable accrual and preserves seller amounts on replay', async () => {
     const s = setup(); const sellerBefore = s.snapshot.sellerAmountMinor;
     await s.service.syncOwner(s.tx as any, 'owner'); await s.service.syncOwner(s.tx as any, 'owner');
