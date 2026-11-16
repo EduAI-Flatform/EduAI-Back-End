@@ -78,6 +78,21 @@ test('rejects non-Node interpreter, different cwd and file watching before floor
     } finally { f.cleanup(); }
   }
 });
+test('layout rejection exposes bounded diagnostic facts without command paths or environment', async () => {
+  const f = fixture(); try {
+    f.layout.exec_interpreter = 'none';
+    let caught;
+    try { await f.invoke(true); } catch (error) { caught = error; }
+    assert.equal(caught?.message, 'AUTH_SESSION_PROCESS_LAYOUT_UNSUPPORTED');
+    assert.equal(caught?.processLayout?.managedCount, 1);
+    assert.equal(caught?.processLayout?.nodeInterpreter, false);
+    assert.equal(caught?.processLayout?.cwdMatches, true);
+    assert.equal(caught?.processLayout?.entryKind, 'DIRECT_MAIN');
+    assert.equal(caught?.processLayout?.minimumVersionPersisted, false);
+    assert.ok(!JSON.stringify(caught.processLayout).includes(f.root));
+    assert.equal(f.calls.includes('stop eduai-backend'), false); assert.equal(fs.existsSync(f.marker), false);
+  } finally { f.cleanup(); }
+});
 test('stop/start/health failures never lower the floor or restore legacy execution', async () => {
   for (const failure of ['stop', 'start', 'health', 'lingering']) {
     const f = fixture(); try {
