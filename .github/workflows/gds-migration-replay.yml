@@ -8,7 +8,7 @@ on:
 
 jobs:
   production-baseline-to-head:
-    name: Replay production baseline then 24 GDS platform and financial migrations
+    name: Replay production baseline then 25 reviewed migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -58,8 +58,9 @@ jobs:
             prisma/migrations/20261111180000_affiliate_wallet
             prisma/migrations/20261112180000_activity_points
             prisma/migrations/20261113100000_card_service_limit_provenance
+            prisma/migrations/20261116090000_auth_session_v2_foundation
           )
-          test "${#pending[@]}" -eq 24
+          test "${#pending[@]}" -eq 25
           for migration in "${pending[@]}"; do
             mv "$migration" "$RUNNER_TEMP/gds-pending/"
           done
@@ -67,13 +68,17 @@ jobs:
           test "$baseline_count" -eq 65
           npm run prisma:migrate:deploy
           npx prisma migrate status
-      - name: Upgrade the same database through all 24 pending migrations
+      - name: Seed pre-existing auth evidence before upgrade
+        run: node scripts/test-auth-session-foundation-prisma.cjs before
+      - name: Upgrade the same database through all 25 pending migrations
         shell: bash
         run: |
           set -euo pipefail
           mv "$RUNNER_TEMP/gds-pending"/* prisma/migrations/
           npm run prisma:migrate:deploy
           npx prisma migrate status
+      - name: Verify unchanged legacy auth and new schema on real PostgreSQL
+        run: node scripts/test-auth-session-foundation-prisma.cjs after
       - name: Regression-test advisory transaction mutex using actual Prisma 7 and PostgreSQL
         run: |
           npm run build

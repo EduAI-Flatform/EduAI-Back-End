@@ -37,6 +37,12 @@ on:
         default: false
         required: true
 
+      authorize_auth_session_schema_migrations:
+        description: 'Owner approval for pinned additive auth revision/session-family schema and private backup; does not switch token behavior'
+        type: boolean
+        default: false
+        required: true
+
       gds_wallet_topup:
         description: 'Production wallet topup admission; preserve does not change the server setting'
         type: choice
@@ -386,6 +392,14 @@ jobs:
             else
               echo "cardServiceLimitSchemaMigrationAuthorization: NOT_GRANTED"
             fi
+            if [ "${{ inputs.authorize_auth_session_schema_migrations }}" = "true" ]; then
+              echo "authSessionSchemaMigrationAuthorization: EXPLICIT_OWNER_APPROVAL"
+              deployment_stage="auth-session-schema-backup"
+              node scripts/backup-gds-platform.cjs
+              migration_args+=(--authorize-reviewed-auth-session-migrations)
+            else
+              echo "authSessionSchemaMigrationAuthorization: NOT_GRANTED"
+            fi
             deployment_stage="database-migration"
             npm run prisma:migrate:production -- "${migration_args[@]}"
 
@@ -401,6 +415,11 @@ jobs:
               deployment_stage="card-service-limit-schema-verification"
               node scripts/verify-card-quota-schema.cjs
             fi
+
+          if [ "${{ inputs.authorize_auth_session_schema_migrations }}" = "true" ]; then
+            deployment_stage="auth-session-schema-verification"
+            node scripts/verify-auth-session-schema.cjs
+          fi
 
           if [ "${{ inputs.authorize_point_schema_migrations }}" = "true" ]; then
             deployment_stage="point-runtime-verification"
