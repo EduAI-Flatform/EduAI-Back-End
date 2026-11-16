@@ -111,3 +111,21 @@ live entry/auth-module/metadata digests before and after, asserting exact candid
 revision. The same check passed locally. Dependency audit remains zero high/critical,
 with existing1 low/13 moderate and no new dependency. Final source is still held
 in draft pending exact-head remote gates and the one-time production cutover.
+
+## First production attempt stopped safely
+
+PR55 merged as `bd63f105018317f70d11b3824f24a1a400448911` after final-head
+quality43799705676/replay43799705684 passed, including Linux staged-build
+isolation. The initial approval-service usage-limit failure did not execute the
+merge; normal reviewed recovery after the owner resumed succeeded. Auto-CD was
+paused and verified before merging.
+
+Controlled deployment43819198120 passed its full validation job and staged the
+candidate, then failed with `AUTH_SESSION_PROCESS_LAYOUT_UNSUPPORTED`. That error
+site precedes floor establishment, stop and artifact promotion. Public health
+remained200 with legacy runtime identity; no V2 login/MFA production UAT was run.
+Do not rerun blindly or weaken the guard. The diagnostic follow-up emits only
+predicate booleans, recognized command-kind enums and managed-process count;
+paths, raw arguments and PM2 environment stay private. Actual floor presence and
+which process predicate differs will be observed before selecting a compatible
+transition. Keep the overall release uncompleted and auto-CD paused meanwhile.

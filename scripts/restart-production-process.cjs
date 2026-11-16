@@ -32,6 +32,7 @@ async function run() {
 if (require.main === module) {
   run().catch(error => {
     const code = typeof error.message === 'string' && /^AUTH_SESSION_[A-Z_]+$/.test(error.message) ? error.message : 'PRODUCTION_PROCESS_RESTART_FAILED';
+    if (code === 'AUTH_SESSION_PROCESS_LAYOUT_UNSUPPORTED' && error.processLayout) console.error(JSON.stringify({ authSessionProcessLayout: error.processLayout }));
     console.error(code);
     process.exitCode = 1;
   });

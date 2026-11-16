@@ -71,11 +71,32 @@ async function restartWithAuthSessionFloor(environment, options = {}) {
     let all; try { all = JSON.parse(pm2(['jlist'], true).stdout); } catch { throw fail('AUTH_SESSION_PROCESS_STATE_INVALID'); }
     const list = Array.isArray(all) ? all.filter(item => item.name === 'eduai-backend') : [];
     const app = list[0], expected = path.join(root, 'dist/src/main');
-    if (list.length !== 1 || app.pm2_env?.exec_mode !== 'fork_mode' ||
-      !['node', 'node.exe'].includes(path.basename(app.pm2_env?.exec_interpreter ?? '')) ||
-      path.resolve(app.pm2_env?.pm_cwd ?? '') !== path.resolve(root) || app.pm2_env?.watch !== false ||
-      ![expected, expected + '.js'].includes(path.resolve(app.pm2_env?.pm_exec_path ?? '')))
-      throw fail('AUTH_SESSION_PROCESS_LAYOUT_UNSUPPORTED');
+    const state = app?.pm2_env ?? {};
+    const entryMatches = typeof state.pm_exec_path === 'string' && [expected, expected + '.js'].includes(path.resolve(state.pm_exec_path));
+    const sameRealPath = (left, right) => {
+      if (typeof left !== 'string' || !left) return false;
+      try { return fs.realpathSync(left) === fs.realpathSync(right); } catch { return false; }
+    };
+    const entryBase = typeof state.pm_exec_path === 'string' ? path.basename(state.pm_exec_path) : '';
+    const argumentList = Array.isArray(state.args) ? state.args : typeof state.args === 'string' ? state.args.split(' ') : [];
+    const args = JSON.stringify(argumentList);
+    const interpreterBase = typeof state.exec_interpreter === 'string' ? path.basename(state.exec_interpreter) : '';
+    const mainArgument = argumentList.length === 1 && typeof argumentList[0] === 'string' &&
+      [expected, expected + '.js'].includes(path.resolve(root, argumentList[0]));
+    const facts = { managedCount: list.length, forkMode: state.exec_mode === 'fork_mode',
+      nodeInterpreter: typeof state.exec_interpreter === 'string' && ['node', 'node.exe'].includes(path.basename(state.exec_interpreter)),
+      interpreterKind: ['node', 'node.exe'].includes(interpreterBase) ? 'NODE' : interpreterBase === 'none' ? 'NONE' : !interpreterBase ? 'UNSET' : 'OTHER',
+      cwdMatches: typeof state.pm_cwd === 'string' && path.resolve(state.pm_cwd) === path.resolve(root),
+      cwdResolvesToRoot: sameRealPath(state.pm_cwd, root), watchingDisabled: state.watch === false,
+      watchState: state.watch === false ? 'DISABLED' : state.watch === true ? 'ENABLED' : state.watch === undefined ? 'UNSET' : 'OTHER',
+      entryMatches, entryResolvesToMain: sameRealPath(state.pm_exec_path, expected + '.js'),
+      entryKind: entryMatches ? 'DIRECT_MAIN' : ['npm', 'npm.cmd', 'npm-cli.js'].includes(entryBase) ? 'NPM' : ['node', 'node.exe'].includes(entryBase) ? 'NODE_BINARY' : 'OTHER',
+      argumentsKind: args === '["start"]' ? 'NPM_START' : args === '["run","start"]' ? 'NPM_RUN_START' : mainArgument ? 'MAIN_ENTRY' : args === '[]' ? 'NONE' : 'OTHER',
+      minimumVersionPersisted: floor.record !== null };
+    if (facts.managedCount !== 1 || !facts.forkMode || !facts.nodeInterpreter || !facts.cwdMatches || !facts.watchingDisabled || !facts.entryMatches) {
+      const error = fail('AUTH_SESSION_PROCESS_LAYOUT_UNSUPPORTED');
+      error.processLayout = facts; throw error;
+    }
     return app;
   };
   const before = managed();
