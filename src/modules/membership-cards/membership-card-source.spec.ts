@@ -103,6 +103,21 @@ describe('membership impact source', () => {
     expect(db.commerceOrder.findMany).toHaveBeenCalledTimes(1);
     expect(db.gdsInternalTopup.findMany).toHaveBeenCalledTimes(1);
   });
+  it.each(['previous', 'candidate'] as const)('reports an unavailable %s source instead of a complete basis-switch comparison', async failedSide => {
+    const db = client();
+    db.gdsInternalTopup.findMany.mockResolvedValue([{ id: 'broken-topup', buyerId: 'one', status: 'CREDITED', currency: 'VND',
+      amountMinor: 100n, creditedAt: new Date('2026-11-10'), signatureVerifiedAt: null }] as never);
+    const before = { ...policy, basis: failedSide === 'previous' ? 'topup' as const : 'spend' as const };
+    const after = { ...policy, basis: failedSide === 'candidate' ? 'topup' as const : 'spend' as const };
+    const result = await computeMembershipCardImpact(db as any, after, 'new', { beforePolicy: before, beforeRevisionId: 'old', at: new Date('2026-11-16') });
+    expect(result).toMatchObject({ status: 'unavailable', reason: 'CANONICAL_TOPUP_MISMATCH', complete: false,
+      comparedUsersOnPage: 1, incomparableUsersOnPage: 1, preservesPurchasedAccess: true });
+    expect(result.items[0]).toMatchObject({ userId: 'one', projectedTierChanged: null, projectedBenefitsChanged: null,
+      previousEvaluation: { policyRevisionId: 'old', status: failedSide === 'previous' ? 'unavailable' : 'evaluated',
+        reason: failedSide === 'previous' ? 'CANONICAL_TOPUP_MISMATCH' : null },
+      evaluation: { status: failedSide === 'candidate' ? 'unavailable' : 'evaluated' } });
+    expect(result.items[1]).toMatchObject({ userId: 'two', previousEvaluation: { policyRevisionId: 'old', status: 'evaluated' }, projectedTierChanged: false });
+  });
   it('fails closed instead of silently truncating top-up evidence', async () => {
     const db = client();
     db.gdsInternalTopup.findMany.mockResolvedValue(Array.from({ length: 10001 }, () => ({})) as never);
