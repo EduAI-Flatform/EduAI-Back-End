@@ -29,6 +29,22 @@ export function withCourseQuizDefaults(content: unknown): unknown {
   const value = content as Record<string, unknown>;
   return { ...value, quizDefaults: value.quizDefaults === undefined ? { ...DEFAULT_QUIZ_DEFAULTS } : value.quizDefaults };
 }
+const COURSE_PROGRAM_IDS = ['online', 'k12', 'vocational', 'higher-education', 'joint-programs', 'scholarships'];
+/** Read compatibility only: never rewrite a historical policy revision. */
+export function withCourseProgramDefaults(content: unknown): unknown {
+  if (!content || typeof content !== 'object' || Array.isArray(content)) return content;
+  const value = content as Record<string, unknown>;
+  if (!Array.isArray(value.categories)) return content;
+  const used = new Set(value.categories.map(item => item?.id).filter(id => typeof id === 'string'));
+  return { ...value, categories: value.categories.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || item.id !== undefined) return item;
+    const known = DEFAULT_PLATFORM_SETTINGS.courses.categories.find(group => group.en === item.en);
+    let id = known && !used.has(known.id) ? known.id : `legacy-program-${index + 1}`;
+    while (used.has(id)) id += '-legacy';
+    used.add(id);
+    return { ...item, id };
+  }) };
+}
 export const DEFAULT_PLATFORM_SETTINGS = {
   branding: {
     name: "GDS",
@@ -175,7 +191,7 @@ export const DEFAULT_PLATFORM_SETTINGS = {
         en: "Joint programs & study abroad",
       },
       { vi: "Chương trình khuyến học", en: "Scholarship programs" },
-    ],
+    ].map((category, index) => ({ ...category, id: COURSE_PROGRAM_IDS[index] })),
   },
   operations: {
     supportEnabled: false,
