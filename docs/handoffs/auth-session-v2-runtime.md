@@ -129,3 +129,25 @@ predicate booleans, recognized command-kind enums and managed-process count;
 paths, raw arguments and PM2 environment stay private. Actual floor presence and
 which process predicate differs will be observed before selecting a compatible
 transition. Keep the overall release uncompleted and auto-CD paused meanwhile.
+
+## Observed npm launcher compatibility
+
+PR56 merged as `95828299b19f6f6f9062b98757140b672cc2787d`. Diagnostic deployment
+43821637722 stopped before floor/stop/promotion: the actual layout is one Node
+fork, matching real cwd, watch disabled, `NPM` entry and `NPM_START` arguments.
+The floor was absent and public health remained200/legacy. No V2/MFA UAT ran.
+
+The follow-up preserves this launcher rather than replacing PM2 configuration.
+Only exact `npm start` with trusted package start `node dist/src/main[.js]` and no
+prestart/poststart hooks is additionally admitted. Before the durable floor and
+stop, a bounded private `ps` PID/PPID snapshot captures the old process tree.
+Promotion requires all captured PIDs gone, PM2 stopped, and the loopback backend
+port closed. Snapshot/probe errors fail closed; no guessed process is signaled.
+Replacement health must still report the exact candidate V2/revision before save.
+Receipt exposes launcher kind and old-process count, never raw process data.
+
+Local native checks cover npm launch, unsafe scripts/hooks, surviving children,
+an open backend port, malformed/unavailable process snapshots and a real loopback
+listener. Fresh-context scoped review found no substantive issue. Cross-model
+CLI review remains skipped in this autonomous context. Production compatibility
+and actual V2/MFA acceptance remain unverified until the controlled release runs.
