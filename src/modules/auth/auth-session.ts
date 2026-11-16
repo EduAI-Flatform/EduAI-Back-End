@@ -1,6 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Prisma } from '../../../generated/prisma/client';
+export const AUTH_SESSION_TOKEN_VERSION = 2;
 
 export interface SessionIdentity { tokenVersion: 2; authRevision: number; sid: string; }
 export interface SessionPayload extends SessionIdentity { sub: string; tokenUse: 'access' | 'refresh'; jti?: string; }

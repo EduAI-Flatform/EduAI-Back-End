@@ -43,6 +43,12 @@ on:
         default: false
         required: true
 
+      authorize_auth_session_v2_cutover:
+        description: 'One-time owner approval: invalidate legacy login sessions, persist minimum runtime V2, stop/drain old process before start; never auto-rollback to legacy'
+        type: boolean
+        default: false
+        required: true
+
       gds_wallet_topup:
         description: 'Production wallet topup admission; preserve does not change the server setting'
         type: choice
@@ -409,7 +415,7 @@ jobs:
 
           echo "Building backend..."
           deployment_stage="backend-build"
-          npm run build
+          npm run build:auth-candidate
 
             if [ "${{ inputs.authorize_card_service_limit_schema_migrations }}" = "true" ]; then
               deployment_stage="card-service-limit-schema-verification"
@@ -423,7 +429,7 @@ jobs:
 
           if [ "${{ inputs.authorize_point_schema_migrations }}" = "true" ]; then
             deployment_stage="point-runtime-verification"
-            node scripts/verify-point-runtime.cjs
+            node scripts/verify-point-runtime.cjs --staged
           fi
 
           if [ "${{ inputs.authorize_gds_platform_schema_migrations }}" = "true" ]; then
@@ -433,7 +439,12 @@ jobs:
 
           echo "Restarting PM2..."
           deployment_stage="pm2-restart"
-          npm run process:restart:production
+          node scripts/verify-auth-session-schema.cjs
+          auth_restart_args=()
+          if [ "${{ inputs.authorize_auth_session_v2_cutover }}" = "true" ]; then
+            auth_restart_args+=(--authorize-auth-session-v2-cutover)
+          fi
+          npm run process:restart:production -- "${auth_restart_args[@]}"
 
           BACKEND_PORT="$(node -e '
             require("dotenv").config({ quiet: true });

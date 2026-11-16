@@ -58,3 +58,48 @@ path, not unauthorized manual execution of arbitrary historical scripts.
 Production MFA/multi-device/retained-session acceptance must reflect the deliberate
 one-time legacy reauthentication. Keep the original GDS plan VERIFYING until all
 remaining original requirements, not only this branch, have authoritative evidence.
+
+## Draft core CI and cutover controls
+
+Draft PR55 core head `49a9a9eabd1ed56a1506e22779aca657076e470a` passed
+[quality/concurrency43796826346](https://github.com/EduAI-Flatform/EduAI-Back-End/actions/runs/43796826346)
+and [PostgreSQL replay43796826360](https://github.com/EduAI-Flatform/EduAI-Back-End/actions/runs/43796826360).
+The new exact-family/two-lock-order/five-stale-MFA markers passed in ordinary and
+production-classified disposable runs, with purchased grants unchanged. Those
+results cover the core head, not later uncommitted cutover controls.
+
+The cutover implementation generates version/revision metadata with each build,
+caches it once per server process and exposes only that identity in public health.
+Production startup rejects missing/legacy metadata. The protected restart path
+requires explicit first-cutover authorization, persists a private fsynced floor in
+`.git/auth-session-minimum-version.json`, verifies one managed Node fork with
+matching entry/cwd and watch disabled, stops it and observes old-PID exit before
+installation/start, then requires replacement PID and exact revision/version
+health before PM2 save. Failure retains the floor and never restores legacy code.
+
+Independent review reproduced two operational gaps in the first implementation:
+in-place build could expose V2 to an automatic legacy-process restart before the
+gate, and PM2 interpreter/cwd checks were missing. Corrected deployment compiles
+into `.git/auth-session-candidate/dist` and promotes it only after floor + drain;
+local real compilation proved live auth bytes unchanged. Denied authorization
+keeps the legacy live entry intact. Negative Node/cwd/watch checks now precede
+marker/process mutation. Old generated dist is retained inside staging only as
+an artifact, never automatically restarted, and is cleared by the next verified
+staging build. This does not delete application data or the durable floor.
+
+A second review found point readiness still imported the live artifact before
+promotion. The strict `--staged` loader and deployment wiring now select candidate
+code; distinct live-failing/candidate-ready implementations prove that boundary.
+Final scoped review found no remaining substantive issue in the corrected
+supported-path design. This is not a claim that a host administrator cannot run
+arbitrary historical scripts outside current protected orchestration. Final-head
+CI, explicit production cutover authorization and actual acceptance remain open.
+
+Local corrected-cutover validation passed199 integrated auth/Admin/health/own-quota
+HTTP tests across26 suites,32 focused release/verifier checks, regular build and
+an actual staged build with unchanged live auth-module digest. First-cutover
+denial, malformed artifact/floor, stop/start/health failure, lingering old PID,
+unsupported interpreter/cwd/watch and staged point implementation are covered.
+The supported PM2 layout is deliberately strict: one Node fork at this checkout's
+`dist/src/main[.js]`, matching cwd, no watch. An observed unsupported production
+layout must be investigated before the floor or process is changed.

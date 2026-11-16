@@ -7,10 +7,12 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { DependencyHealthResponse, HealthService } from './health.service';
+import { AUTH_RUNTIME_METADATA } from '../auth/auth-runtime-metadata';
 
 interface HealthResponse {
   status: 'ok';
   redis: RedisHealth;
+  authSession: typeof AUTH_RUNTIME_METADATA;
 }
 
 @Controller('health')
@@ -24,7 +26,7 @@ export class HealthController {
   @Public()
   async getHealth(): Promise<HealthResponse> {
     const redis = await this.redisConfig.checkHealth();
-    return { status: 'ok', redis };
+    return { status: 'ok', redis, authSession: AUTH_RUNTIME_METADATA };
   }
 
   @Get('dependencies')

@@ -15,6 +15,8 @@ const {
     logger?: Pick<Console, 'log'>,
   ) => void;
 };
+jest.mock('../../scripts/auth-session-cutover.cjs', () => ({ restartWithAuthSessionFloor: jest.fn().mockResolvedValue({ tokenVersion: 2, oldProcessDrained: true }) }));
+const { restartWithAuthSessionFloor } = require('../../scripts/auth-session-cutover.cjs');
 const {
   restartProductionProcess,
 } = require('../../scripts/restart-production-process.cjs') as {
@@ -22,7 +24,8 @@ const {
     environment: NodeJS.ProcessEnv,
     spawn?: jest.Mock,
     logger?: Pick<Console, 'log'>,
-  ) => void;
+    options?: { authorizeCutover: boolean },
+  ) => Promise<unknown>;
 };
 
 describe('production Commerce configuration verifier', () => {
@@ -99,7 +102,7 @@ describe('production Commerce configuration verifier', () => {
     expect(restart).toBeGreaterThan(preflight);
   });
 
-  it('hands the loaded environment to the exact approved PM2 commands', () => {
+  it('hands the loaded environment through the mandatory auth cutover verifier', async () => {
     const spawn = jest.fn().mockReturnValue({ status: 0 });
     const logger = { log: jest.fn() };
     const environment = {
@@ -107,20 +110,9 @@ describe('production Commerce configuration verifier', () => {
       NODE_ENV: 'production',
     };
 
-    restartProductionProcess(environment, spawn, logger);
-
-    expect(spawn).toHaveBeenNthCalledWith(
-      1,
-      'pm2',
-      ['restart', 'eduai-backend', '--update-env'],
-      expect.objectContaining({ env: environment, shell: false, stdio: 'inherit' }),
-    );
-    expect(spawn).toHaveBeenNthCalledWith(
-      2,
-      'pm2',
-      ['save'],
-      expect.objectContaining({ env: environment, shell: false, stdio: 'inherit' }),
-    );
+    await restartProductionProcess(environment, spawn, logger, { authorizeCutover: true });
+    expect(restartWithAuthSessionFloor).toHaveBeenCalledWith(environment, { authorizeCutover: true, spawn });
+    expect(spawn).not.toHaveBeenCalled();
     expect(logger.log).toHaveBeenCalledWith(
       'pm2EnvironmentLoadedFromFile: true',
     );
