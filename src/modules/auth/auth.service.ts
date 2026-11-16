@@ -30,6 +30,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { PasswordService } from './password.service';
 import { MfaService, MfaClaims } from './mfa.service';
 import { lockActiveAuthSubject, lockAuthSubject } from './auth-subject-lock';
+import type { AuthenticatedUser } from './types/authenticated-user.type';
 import {
   LoginResponse,
   LogoutResponse,
@@ -674,19 +675,45 @@ export class AuthService {
     return undefined;
   }
 
-  async issueMfaSession(userId: string, revision: number, authTime: number | undefined): Promise<LoginResponse> {
-    if (!this.mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
+  async confirmMfa(user: AuthenticatedUser, code: string) {
+    const { proof, session } = await this.completeMfa(user, (mfa, tx) => mfa.confirm(user.id, code, user.authTime, tx));
+    return { recoveryCodes: proof.recoveryCodes, session };
+  }
+
+  async verifyMfa(user: AuthenticatedUser, code: string): Promise<LoginResponse> {
+    const { session } = await this.completeMfa(user, async (mfa, tx) => ({ revision: await mfa.verify(user.id, code, user.mfaRevision, tx) }));
+    return session;
+  }
+
+  async regenerateMfaRecoveryCodes(user: AuthenticatedUser, code: string) {
+    const { proof, session } = await this.completeMfa(user, (mfa, tx) => mfa.regenerateRecoveryCodes(user.id, code, user.authTime, tx));
+    return { recoveryCodes: proof.recoveryCodes, session };
+  }
+
+  private async completeMfa<T extends { revision: number }>(user: AuthenticatedUser,
+    consume: (mfa: MfaService, tx: Prisma.TransactionClient) => Promise<T>,
+  ) {
+    const mfa = this.mfa;
+    if (!mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
+    mfa.assertFreshPrimary(user.authTime);
     return this.prisma.$transaction(async tx => {
-      await lockActiveAuthSubject(tx, userId);
-      const [user, state] = await Promise.all([
-        tx.user.findUnique({ where: { id: userId }, select: { ...FIREBASE_USER_SELECT, deletedAt: true } }),
-        tx.userMfa.findUnique({ where: { userId } }),
-      ]);
-      if (!user || user.deletedAt || user.status !== UserStatus.active || !state?.enabled || state.revision !== revision) {
-        throw new UnauthorizedException('Authenticator session changed. Sign in again.');
-      }
-      return this.issueTokenResponse(user, tx, { mfaVerified: true, mfaRevision: revision, authTime: authTime ?? 0 });
+      await lockActiveAuthSubject(tx, user.id);
+      mfa.assertFreshPrimary(user.authTime);
+      await mfa.claims(user.id, user, tx);
+      const proof = await consume(mfa, tx);
+      const session = await this.issueMfaSession(user.id, proof.revision, user.authTime, tx);
+      return { proof, session };
     });
+  }
+
+  private async issueMfaSession(userId: string, revision: number, authTime: number | undefined, tx: Prisma.TransactionClient): Promise<LoginResponse> {
+    if (!this.mfa) throw new UnauthorizedException('Authenticator security is unavailable.');
+    const user = await tx.user.findUnique({ where: { id: userId }, select: FIREBASE_USER_SELECT });
+    const state = await tx.userMfa.findUnique({ where: { userId } });
+    if (!user || user.deletedAt || user.status !== UserStatus.active || !state?.enabled || state.revision !== revision) {
+      throw new UnauthorizedException('Authenticator session changed. Sign in again.');
+    }
+    return this.issueTokenResponse(user, tx, { mfaVerified: true, mfaRevision: revision, authTime: authTime ?? 0 });
   }
 
   private async issueTokenResponse(
