@@ -71,9 +71,13 @@ const REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS = Object.freeze([
   { name: '20261113100000_card_service_limit_provenance', sha256: '48A43E3EBF07A5B9F9A7066C277EE85DCDDC8E9CCDA6ADEB2A5BC15373B170DF' },
 ]);
 const CARD_SERVICE_LIMIT_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-card-service-limit-migrations';
+const REVIEWED_AUTH_SESSION_MIGRATIONS = Object.freeze([
+  { name: '20261116090000_auth_session_v2_foundation', sha256: '8C9A192B7F12F48C81DDBE0B5E40B17B3D783114D706DEE541EE1F64E7C85CA0' },
+]);
+const AUTH_SESSION_MIGRATION_APPROVAL_ARGUMENT = '--authorize-reviewed-auth-session-migrations';
 
 function parseMigrationApprovalArguments(arguments_) {
-  const allowed = new Set([RECEIPT_MIGRATION_APPROVAL_ARGUMENT, GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT, POINT_MIGRATION_APPROVAL_ARGUMENT, CARD_SERVICE_LIMIT_MIGRATION_APPROVAL_ARGUMENT]);
+  const allowed = new Set([RECEIPT_MIGRATION_APPROVAL_ARGUMENT, GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT, POINT_MIGRATION_APPROVAL_ARGUMENT, CARD_SERVICE_LIMIT_MIGRATION_APPROVAL_ARGUMENT, AUTH_SESSION_MIGRATION_APPROVAL_ARGUMENT]);
   if (!Array.isArray(arguments_) || new Set(arguments_).size !== arguments_.length ||
       arguments_.some(argument => !allowed.has(argument))) {
     throw safeDatabaseFailure('MIGRATION_ARGUMENT_INVALID');
@@ -83,6 +87,7 @@ function parseMigrationApprovalArguments(arguments_) {
     allowReviewedGdsPlatformMigrations: arguments_.includes(GDS_PLATFORM_MIGRATION_APPROVAL_ARGUMENT),
     allowReviewedPointMigrations: arguments_.includes(POINT_MIGRATION_APPROVAL_ARGUMENT),
     allowReviewedCardServiceLimitMigrations: arguments_.includes(CARD_SERVICE_LIMIT_MIGRATION_APPROVAL_ARGUMENT),
+    allowReviewedAuthSessionMigrations: arguments_.includes(AUTH_SESSION_MIGRATION_APPROVAL_ARGUMENT),
   };
 }
 const RECONCILIATION_FINANCIAL_KINDS = [
@@ -390,6 +395,9 @@ function assertReviewedPointMigrationFingerprints(rootDirectory) {
 function assertReviewedCardServiceLimitMigrationFingerprints(rootDirectory) {
   return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS);
 }
+function assertReviewedAuthSessionMigrationFingerprints(rootDirectory) {
+  return assertReviewedMigrationFingerprints(rootDirectory, REVIEWED_AUTH_SESSION_MIGRATIONS);
+}
 
 function assertReviewedMigrationFingerprints(rootDirectory, migrations) {
   const hashes = {};
@@ -441,6 +449,7 @@ function assertMigrationLedgerState({
   allowReviewedGdsPlatformMigrations = false,
   allowReviewedPointMigrations = false,
   allowReviewedCardServiceLimitMigrations = false,
+  allowReviewedAuthSessionMigrations = false,
   localMigrationNames: localNames,
   localMigrationChecksums: localChecksums,
   migrationRows,
@@ -494,6 +503,20 @@ function assertMigrationLedgerState({
   }
 
   const pendingMigrationNames = localNames.filter((name) => !applied.has(name));
+  const reviewedAuthNames = REVIEWED_AUTH_SESSION_MIGRATIONS.map(({ name }) => name);
+  const hasAuthArtifacts = reviewedAuthNames.some(name => localNames.includes(name));
+  if (hasAuthArtifacts) {
+    for (const migration of REVIEWED_AUTH_SESSION_MIGRATIONS) {
+      if (!localNames.includes(migration.name) || localChecksums?.[migration.name]?.toUpperCase() !== migration.sha256)
+        throw migrationPreflightFailure('MIGRATION_ARTIFACT_CHECKSUM_MISMATCH');
+    }
+  }
+  const onlyReviewedAuthPending = hasAuthArtifacts && JSON.stringify(pendingMigrationNames) === JSON.stringify(reviewedAuthNames)
+    && applied.has(EXPECTED_BANK_TRANSFER_MIGRATION)
+    && [...REVIEWED_RECEIPT_MIGRATIONS, ...REVIEWED_REVENUE_MIGRATIONS, ...REVIEWED_GDS_PLATFORM_MIGRATIONS,
+      ...REVIEWED_POINT_MIGRATIONS, ...REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS].every(({ name }) => applied.has(name));
+  if (allowAlreadyApplied && targetRows.length === 1 && onlyReviewedAuthPending && !allowReviewedAuthSessionMigrations)
+    throw migrationPreflightFailure('MIGRATION_RELEASE_APPROVAL_REQUIRED');
   const reviewedCardNames = REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS.map(({ name }) => name);
   const hasCardArtifacts = reviewedCardNames.some(name => localNames.includes(name));
   if (hasCardArtifacts) {
@@ -573,6 +596,7 @@ function assertMigrationLedgerState({
     (pendingMigrationNames.length === 0 || onlyReviewedBankTransferPending || onlyReviewedRevenuePending ||
       (allowReviewedPointMigrations && onlyReviewedPointsPending) ||
       (allowReviewedCardServiceLimitMigrations && onlyReviewedCardsPending) ||
+      (allowReviewedAuthSessionMigrations && onlyReviewedAuthPending) ||
       (allowReviewedGdsPlatformMigrations && isReviewedGdsSuffix) ||
       (allowReviewedReceiptMigrations && isReviewedReceiptSuffix))
   ) {
@@ -1832,6 +1856,7 @@ function assertReconciliationPreflightStable(before, after) {
     JSON.stringify(before.gdsPlatformMigrationHashes) !== JSON.stringify(after.gdsPlatformMigrationHashes) ||
     JSON.stringify(before.pointMigrationHashes) !== JSON.stringify(after.pointMigrationHashes) ||
     JSON.stringify(before.cardServiceLimitMigrationHashes) !== JSON.stringify(after.cardServiceLimitMigrationHashes) ||
+    JSON.stringify(before.authSessionMigrationHashes) !== JSON.stringify(after.authSessionMigrationHashes) ||
     JSON.stringify(before.cardQuotaHistory) !== JSON.stringify(after.cardQuotaHistory) ||
     JSON.stringify(before.pointHistory) !== JSON.stringify(after.pointHistory) ||
     before.ledger?.currentSchemaVersion !== after.ledger?.currentSchemaVersion ||
@@ -2123,6 +2148,7 @@ async function runMigrationPreflight({
   allowReviewedGdsPlatformMigrations = false,
   allowReviewedPointMigrations = false,
   allowReviewedCardServiceLimitMigrations = false,
+  allowReviewedAuthSessionMigrations = false,
 }) {
   const migrationHash = await runSafePreflightStage(
     'ARTIFACT',
@@ -2146,6 +2172,7 @@ async function runMigrationPreflight({
   );
   const pointMigrationHashes = await runSafePreflightStage('ARTIFACT', () => assertReviewedPointMigrationFingerprints(rootDirectory));
   const cardServiceLimitMigrationHashes = await runSafePreflightStage('ARTIFACT', () => assertReviewedCardServiceLimitMigrationFingerprints(rootDirectory));
+  const authSessionMigrationHashes = await runSafePreflightStage('ARTIFACT', () => assertReviewedAuthSessionMigrationFingerprints(rootDirectory));
   const roles = await runSafePreflightStage(
     'ROLE_VERIFICATION',
     () => verifyDatabaseRoleSeparationAtServer(runtimeUrl, migrationUrl),
@@ -2199,6 +2226,7 @@ async function runMigrationPreflight({
           allowReviewedGdsPlatformMigrations,
           allowReviewedPointMigrations,
           allowReviewedCardServiceLimitMigrations,
+          allowReviewedAuthSessionMigrations,
           localMigrationNames: localNames,
           localMigrationChecksums: localChecksums,
           migrationRows: ledgerResult.rows,
@@ -2257,6 +2285,7 @@ async function runMigrationPreflight({
     gdsPlatformMigrationHashes,
     pointMigrationHashes,
     cardServiceLimitMigrationHashes,
+    authSessionMigrationHashes,
     roles,
     privileges,
     localMigrationNames: localNames,
@@ -2326,7 +2355,7 @@ async function runMigrationPostflight({
 }
 
 async function run() {
-  const { allowReviewedReceiptMigrations, allowReviewedGdsPlatformMigrations, allowReviewedPointMigrations, allowReviewedCardServiceLimitMigrations } =
+  const { allowReviewedReceiptMigrations, allowReviewedGdsPlatformMigrations, allowReviewedPointMigrations, allowReviewedCardServiceLimitMigrations, allowReviewedAuthSessionMigrations } =
     parseMigrationApprovalArguments(process.argv.slice(2));
   const rootDirectory = process.cwd();
   dotenv.config({ quiet: true });
@@ -2347,6 +2376,7 @@ async function run() {
       allowReviewedGdsPlatformMigrations,
       allowReviewedPointMigrations,
       allowReviewedCardServiceLimitMigrations,
+      allowReviewedAuthSessionMigrations,
     }),
   );
   const repeatPreflight = await runSafePreflightStage(
@@ -2360,6 +2390,7 @@ async function run() {
       allowReviewedGdsPlatformMigrations,
       allowReviewedPointMigrations,
       allowReviewedCardServiceLimitMigrations,
+      allowReviewedAuthSessionMigrations,
     }),
   );
   await runSafePreflightStage(
@@ -2424,6 +2455,9 @@ async function run() {
   const gdsPlatformMigrationHashesBeforeApply = assertReviewedGdsPlatformMigrationFingerprints(rootDirectory);
   const pointMigrationHashesBeforeApply = assertReviewedPointMigrationFingerprints(rootDirectory);
   const cardServiceLimitMigrationHashesBeforeApply = assertReviewedCardServiceLimitMigrationFingerprints(rootDirectory);
+  const authSessionMigrationHashesBeforeApply = assertReviewedAuthSessionMigrationFingerprints(rootDirectory);
+  if (JSON.stringify(authSessionMigrationHashesBeforeApply) !== JSON.stringify(preflight.authSessionMigrationHashes))
+    throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   if (JSON.stringify(cardServiceLimitMigrationHashesBeforeApply) !== JSON.stringify(preflight.cardServiceLimitMigrationHashes))
     throw safeDatabaseFailure('MIGRATION_ARTIFACT_CHANGED_AFTER_PREFLIGHT');
   if (JSON.stringify(pointMigrationHashesBeforeApply) !== JSON.stringify(preflight.pointMigrationHashes))
@@ -2526,6 +2560,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  REVIEWED_AUTH_SESSION_MIGRATIONS,
+  AUTH_SESSION_MIGRATION_APPROVAL_ARGUMENT,
+  assertReviewedAuthSessionMigrationFingerprints,
   REVIEWED_POINT_MIGRATIONS,
   REVIEWED_CARD_SERVICE_LIMIT_MIGRATIONS,
   CARD_SERVICE_LIMIT_MIGRATION_APPROVAL_ARGUMENT,

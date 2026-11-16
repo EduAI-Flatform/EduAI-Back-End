@@ -27,6 +27,7 @@ model User {
   avatarStorageKey String?         @map("avatar_storage_key")
   firebaseUid   String?            @unique @map("firebase_uid")
   authProvider  AuthProvider       @default(local) @map("auth_provider")
+  authRevision  Int                @default(0) @map("auth_revision")
   emailVerified Boolean            @default(false) @map("email_verified")
   status        UserStatus         @default(active)
   createdAt     DateTime           @default(now()) @map("created_at")

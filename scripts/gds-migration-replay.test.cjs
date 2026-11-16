@@ -5,7 +5,7 @@ const { readFileSync, readdirSync } = require('node:fs');
 const { join } = require('node:path');
 const root = join(__dirname, '..');
 
-test('replay isolates all 24 upgrades while retaining the historical 65-migration baseline', () => {
+test('replay isolates all 25 upgrades while retaining the historical 65-migration baseline', () => {
   const workflow = readFileSync(join(root, '.github/workflows/gds-migration-replay.yml'), 'utf8');
   const declaration = workflow.match(/pending=\(([\s\S]*?)\)/)?.[1];
   assert.ok(declaration, 'pending migration declaration required');
@@ -13,7 +13,7 @@ test('replay isolates all 24 upgrades while retaining the historical 65-migratio
   const names = readdirSync(join(root, 'prisma/migrations'), { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
   const selected = selectors.flatMap(selector => names.filter(name => selector.endsWith('*') ? name.startsWith(selector.slice(0, -1)) : name === selector));
   assert.equal(new Set(selected).size, selected.length, 'upgrade selectors must not overlap');
-  assert.equal(selected.length, 24);
+  assert.equal(selected.length, 25);
   assert.equal(names.length - selected.length, 65);
   assert.deepEqual(selected.filter(name => name.startsWith('20261111')).sort(), [
     '20261111090000_platform_policy_revisions', '20261111120000_add_platform_requests',
@@ -22,7 +22,8 @@ test('replay isolates all 24 upgrades while retaining the historical 65-migratio
   ]);
   assert.ok(selected.includes('20261112180000_activity_points'));
   assert.ok(selected.includes('20261113100000_card_service_limit_provenance'));
-  assert.match(workflow, /test "\$\{#pending\[@\]\}" -eq 24/);
+  assert.ok(selected.includes('20261116090000_auth_session_v2_foundation'));
+  assert.match(workflow, /test "\$\{#pending\[@\]\}" -eq 25/);
   assert.match(workflow, /test "\$baseline_count" -eq 65/);
 });
 

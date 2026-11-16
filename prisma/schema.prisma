@@ -229,6 +229,7 @@ model User {
   avatarStorageKey String?         @map("avatar_storage_key")
   firebaseUid   String?            @unique @map("firebase_uid")
   authProvider  AuthProvider       @default(local) @map("auth_provider")
+  authRevision  Int                @default(0) @map("auth_revision")
   emailVerified Boolean            @default(false) @map("email_verified")
   status        UserStatus         @default(active)
   createdAt     DateTime           @default(now()) @map("created_at")
@@ -2170,6 +2171,7 @@ model UserRole {
 model RefreshToken {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
+  sessionFamilyId String? @map("session_family_id") @db.Uuid
   tokenHash String    @map("token_hash")
   expiresAt DateTime  @map("expires_at")
   revokedAt DateTime? @map("revoked_at")
@@ -2177,6 +2179,7 @@ model RefreshToken {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([userId, sessionFamilyId])
   @@index([expiresAt])
   @@map("refresh_tokens")
 }
