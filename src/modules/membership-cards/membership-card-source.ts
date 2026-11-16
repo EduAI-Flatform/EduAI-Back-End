@@ -70,7 +70,7 @@ export async function computeMembershipCardImpact(client: SourceClient & Pick<Pr
     const nextServiceLimits = cardServiceLimitDescriptor(policy, evaluation.tier);
     const previousServiceQuota = comparable && options.beforePolicy ? quotaImpact.project(user.id, options.beforePolicy, previous.tier) : null;
     const projectedServiceQuota = evaluation.status !== 'unavailable' ? quotaImpact.project(user.id, policy, evaluation.tier) : null;
-    return { userId: user.id, evaluation, previousTierCode: previous?.tier?.code ?? null,
+    return { userId: user.id, evaluation, previousEvaluation: previous, previousTierCode: previous?.tier?.code ?? null,
       previousBenefits: comparable ? previousBenefits : null,
       projectedBenefitsChanged: comparable ? !samePlatformPolicyContent(previousBenefits, evaluation.tier?.benefits ?? []) : null,
       previousServiceLimits: comparable ? previousServiceLimits : null,
@@ -83,9 +83,13 @@ export async function computeMembershipCardImpact(client: SourceClient & Pick<Pr
   });
   const serviceConsumptionProjected = quotaImpact.configured && quotaImpact.complete
     && items.every(item => item.previousServiceQuota !== null && item.projectedServiceQuota !== null);
-  return { status: items.some(item => item.evaluation.status === 'unavailable') || !quotaImpact.complete ? 'unavailable' : 'evaluated',
-    reason: items.find(item => item.evaluation.status === 'unavailable')?.evaluation.reason ?? quotaImpact.issues[0]?.reason ?? null,
+  const unavailableEvaluation = items.flatMap(item => [item.evaluation, item.previousEvaluation])
+    .find(evaluation => evaluation?.status === 'unavailable');
+  const comparedUsersOnPage = items.filter(item => item.projectedTierChanged !== null).length;
+  return { status: unavailableEvaluation || !quotaImpact.complete ? 'unavailable' : 'evaluated',
+    reason: unavailableEvaluation?.reason ?? quotaImpact.issues[0]?.reason ?? null,
     policyRevisionId: revisionId, preservesPurchasedAccess: true, totalUsers: count, evaluatedUsers: items.length,
+    comparedUsersOnPage, incomparableUsersOnPage: options.beforePolicy ? items.length - comparedUsersOnPage : 0,
     projectedChangesOnPage: items.filter(item => item.projectedTierChanged === true).length,
     projectedBenefitChangesOnPage: items.filter(item => item.projectedBenefitsChanged === true).length,
     projectedServiceLimitChangesOnPage: items.filter(item => item.projectedServiceLimitsChanged === true).length,
@@ -93,6 +97,6 @@ export async function computeMembershipCardImpact(client: SourceClient & Pick<Pr
     serviceLimitImpactScope: serviceConsumptionProjected ? 'consumption_included' : 'configuration_only', serviceConsumptionProjected,
     serviceConsumptionProjectionIssues: quotaImpact.issues,
     items, nextCursor: hasNextPage ? selected[selected.length - 1]?.id ?? null : null,
-    complete: !hasNextPage && !options.after && quotaImpact.complete && !items.some(item => item.evaluation.status === 'unavailable'), evaluatedAt: at.toISOString(),
+    complete: !hasNextPage && !options.after && quotaImpact.complete && !unavailableEvaluation, evaluatedAt: at.toISOString(),
     simulationOnly: true };
 }
