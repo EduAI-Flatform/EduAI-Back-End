@@ -8,6 +8,7 @@ import {
   PLATFORM_GROUPS,
   PlatformGroup,
   withCourseQuizDefaults,
+  withCourseProgramDefaults,
   PARTNER_CONNECTION_STATUSES,
   withPartnerConnectionDefaults,
 } from "./platform-settings.defaults";
@@ -18,7 +19,7 @@ const arrayTemplates: Record<string, unknown> = {
   tiers: { ...DEFAULT_PLATFORM_SETTINGS.membership.tiers[0], serviceLimits: [] },
   serviceLimits: { definitionId: '', quota: '' },
   benefits: localized,
-  categories: localized,
+  categories: { ...localized, id: '' },
   rules: { event: "", points: 0 },
   items: { name: "", logoUrl: "", url: "", category: "", connectionStatus: "unconfigured" },
   activities: {
@@ -109,7 +110,7 @@ export function validatePlatformSettings(
   if (!(PLATFORM_GROUPS as readonly string[]).includes(group)) fail("group");
   if (!content || JSON.stringify(content).length > 100000) fail("size");
   const validated = group === 'membership' ? withCardServiceLimitDefaults(content)
-    : group === 'courses' ? withCourseQuizDefaults(content)
+    : group === 'courses' ? withCourseProgramDefaults(withCourseQuizDefaults(content))
       : group === 'partners' ? withPartnerConnectionDefaults(content) : content;
   validateShape(
     validated,
@@ -118,6 +119,14 @@ export function validatePlatformSettings(
     group,
   );
   const c = validated as Record<string, any>;
+  if (group === 'courses') {
+    const ids = new Set<string>();
+    for (const category of c.categories) {
+      if (!/^[a-z][a-z0-9-]{0,79}$/.test(category.id) || ids.has(category.id) || !category.vi.trim() || !category.en.trim())
+        fail('course program id/labels');
+      ids.add(category.id);
+    }
+  }
   if (group === 'operations' && c.activities.some((activity: any) => activity.enabled && !activity.title.vi.trim()))
     fail('activity Vietnamese title is required when published');
   if (group === "affiliate" && (c.currency !== "VND" || c.commissionBase !== "net_paid_after_recorded_refunds" || c.attributionModel !== "first_touch" || c.subAffiliateEnabled))
