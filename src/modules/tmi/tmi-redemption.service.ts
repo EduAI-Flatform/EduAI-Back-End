@@ -337,11 +337,19 @@ export class TmiRedemptionService {
       await this.lockUser(tx, input.userId);
       const existing = await tx.tmiLedgerEntry.findFirst({
         where: { userId: input.userId, kind: TmiLedgerKind.adjustment, sourceType: 'tmi_adjustment', sourceId: input.adjustmentKey },
-        select: { id: true },
+        select: { id: true, amount: true, adjustmentDirection: true, metadata: true },
       });
       const postingAt = new Date();
+      if (existing) {
+        const reason = existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+          ? existing.metadata.reason : undefined;
+        if (existing.amount !== input.amount || existing.adjustmentDirection !== input.direction || reason !== input.reason) {
+          throw new ConflictException('TMI adjustment key already used with a different payload');
+        }
+        return { userId: input.userId, amount: existing.amount, direction: existing.adjustmentDirection,
+          balance: await this.currentBalance(tx, input.userId, actorId, postingAt), idempotent: true };
+      }
       const balance = await this.currentBalance(tx, input.userId, actorId, postingAt);
-      if (existing) return { userId: input.userId, amount: input.amount, direction: input.direction, balance, idempotent: true };
       if (input.direction === TmiAdjustmentDirection.debit && balance < input.amount) {
         throw new BadRequestException('TMI adjustment cannot create a negative balance');
       }
