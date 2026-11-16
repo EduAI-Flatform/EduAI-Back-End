@@ -86,6 +86,8 @@ test('layout rejection exposes bounded diagnostic facts without command paths or
     assert.equal(caught?.message, 'AUTH_SESSION_PROCESS_LAYOUT_UNSUPPORTED');
     assert.equal(caught?.processLayout?.managedCount, 1);
     assert.equal(caught?.processLayout?.nodeInterpreter, false);
+    assert.equal(caught?.processLayout?.interpreterKind, 'NONE');
+    assert.equal(caught?.processLayout?.watchState, 'DISABLED');
     assert.equal(caught?.processLayout?.cwdMatches, true);
     assert.equal(caught?.processLayout?.entryKind, 'DIRECT_MAIN');
     assert.equal(caught?.processLayout?.minimumVersionPersisted, false);
