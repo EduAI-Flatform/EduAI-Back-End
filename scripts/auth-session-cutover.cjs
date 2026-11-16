@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const net = require('node:net');
 const { setTimeout: delay } = require('node:timers/promises');
 const shaPattern = /^[0-9a-f]{40}$/;
 const fail = code => new Error(code);
@@ -47,6 +48,52 @@ function establishFloor(file, revision) {
 }
 function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+}
+function captureProcessTree(rootPid, spawn = spawnSync, environment = process.env) {
+  const result = spawn('ps', ['-e', '-o', 'pid=,ppid='], {
+    env: environment, shell: false, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000,
+  });
+  if (result.status !== 0 || typeof result.stdout !== 'string') throw fail('AUTH_SESSION_PROCESS_TREE_UNAVAILABLE');
+  const rows = result.stdout.trim().split(/\r?\n/), parents = new Map();
+  if (rows.length > 100000) throw fail('AUTH_SESSION_PROCESS_TREE_INVALID');
+  for (const row of rows) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(row);
+    if (!match) throw fail('AUTH_SESSION_PROCESS_TREE_INVALID');
+    const pid = Number(match[1]), parent = Number(match[2]);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(parent) || parents.has(pid)) throw fail('AUTH_SESSION_PROCESS_TREE_INVALID');
+    parents.set(pid, parent);
+  }
+  if (!parents.has(rootPid)) throw fail('AUTH_SESSION_PROCESS_TREE_INVALID');
+  const children = new Map();
+  for (const [pid, parent] of parents) {
+    if (!children.has(parent)) children.set(parent, []);
+    children.get(parent).push(pid);
+  }
+  const tree = [rootPid], seen = new Set(tree);
+  for (let index = 0; index < tree.length; index++) {
+    for (const child of children.get(tree[index]) ?? []) {
+      if (seen.has(child)) throw fail('AUTH_SESSION_PROCESS_TREE_INVALID');
+      seen.add(child); tree.push(child);
+    }
+  }
+  return tree;
+}
+function isBackendPortOpen(port) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port });
+    const finish = (error, open) => { socket.destroy(); error ? reject(fail('AUTH_SESSION_PORT_CHECK_FAILED')) : resolve(open); };
+    socket.setTimeout(2000);
+    socket.once('connect', () => finish(null, true));
+    socket.once('error', error => error.code === 'ECONNREFUSED' ? finish(null, false) : finish(error));
+    socket.once('timeout', () => finish(true));
+  });
+}
+function safeNpmStart(root) {
+  try {
+    const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
+    return ['node dist/src/main', 'node dist/src/main.js'].includes(scripts?.start) &&
+      !Object.hasOwn(scripts, 'prestart') && !Object.hasOwn(scripts, 'poststart');
+  } catch { return false; }
 }
 async function restartWithAuthSessionFloor(environment, options = {}) {
   const root = options.root ?? process.cwd(), spawn = options.spawn ?? spawnSync;
@@ -93,25 +140,31 @@ async function restartWithAuthSessionFloor(environment, options = {}) {
       entryKind: entryMatches ? 'DIRECT_MAIN' : ['npm', 'npm.cmd', 'npm-cli.js'].includes(entryBase) ? 'NPM' : ['node', 'node.exe'].includes(entryBase) ? 'NODE_BINARY' : 'OTHER',
       argumentsKind: args === '["start"]' ? 'NPM_START' : args === '["run","start"]' ? 'NPM_RUN_START' : mainArgument ? 'MAIN_ENTRY' : args === '[]' ? 'NONE' : 'OTHER',
       minimumVersionPersisted: floor.record !== null };
-    if (facts.managedCount !== 1 || !facts.forkMode || !facts.nodeInterpreter || !facts.cwdMatches || !facts.watchingDisabled || !facts.entryMatches) {
+    const npmStart = facts.entryKind === 'NPM' && facts.argumentsKind === 'NPM_START' && safeNpmStart(root);
+    if (facts.managedCount !== 1 || !facts.forkMode || !facts.nodeInterpreter || !facts.cwdMatches || !facts.cwdResolvesToRoot || !facts.watchingDisabled || !(facts.entryMatches || npmStart)) {
       const error = fail('AUTH_SESSION_PROCESS_LAYOUT_UNSUPPORTED');
       error.processLayout = facts; throw error;
     }
-    return app;
+    return { ...app, launcher: npmStart ? 'NPM_START' : 'DIRECT_MAIN' };
   };
   const before = managed();
   if (!Number.isSafeInteger(before.pid) || before.pid < 0) throw fail('AUTH_SESSION_PROCESS_STATE_INVALID');
   const oldPid = before.pid;
+  const oldProcesses = oldPid === 0 ? [] : await (options.processTree ?? captureProcessTree)(oldPid, spawn, environment);
+  if (!Array.isArray(oldProcesses) || (oldPid !== 0 && !oldProcesses.includes(oldPid)) ||
+    oldProcesses.some(pid => !Number.isSafeInteger(pid) || pid <= 0) || new Set(oldProcesses).size !== oldProcesses.length)
+    throw fail('AUTH_SESSION_PROCESS_TREE_INVALID');
   // The floor survives every later failure. Never lower it or restart legacy code.
   if (!floor.record) establishFloor(floor.file, metadata.revision);
   pm2(['stop', 'eduai-backend']);
   let drained = false;
   for (let attempt = 0; attempt < 50; attempt++) {
     const stopped = managed();
-    if (stopped.pm2_env.status === 'stopped' && stopped.pid === 0 && (oldPid === 0 || !isAlive(oldPid))) { drained = true; break; }
+    if (stopped.pm2_env.status === 'stopped' && stopped.pid === 0 && oldProcesses.every(pid => !isAlive(pid))) { drained = true; break; }
     await wait(100);
   }
   if (!drained) throw fail('AUTH_SESSION_OLD_PROCESS_NOT_DRAINED');
+  if (await (options.isPortOpen ?? isBackendPortOpen)(port)) throw fail('AUTH_SESSION_LEGACY_PORT_STILL_OPEN');
   try {
     const live = path.join(root, 'dist'), previous = path.join(staged, 'previous-dist');
     if (fs.existsSync(live)) {
@@ -138,6 +191,7 @@ async function restartWithAuthSessionFloor(environment, options = {}) {
     try { pm2(['stop', 'eduai-backend']); } catch { /* Keep original failure; never restore the old binary. */ }
     throw error;
   }
-  return { tokenVersion: metadata.tokenVersion, revision: metadata.revision, oldProcessDrained: true, minimumVersionPersisted: true };
+  return { tokenVersion: metadata.tokenVersion, revision: metadata.revision, oldProcessDrained: true,
+    oldProcessCount: oldProcesses.length, launcher: before.launcher, minimumVersionPersisted: true };
 }
-module.exports = { restartWithAuthSessionFloor };
+module.exports = { restartWithAuthSessionFloor, captureProcessTree, isBackendPortOpen };
