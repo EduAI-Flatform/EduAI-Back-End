@@ -123,6 +123,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify staged auth build preserves live artifacts
+        run: node scripts/test-auth-staging-build.cjs
+
   bank-transfer-postgres:
     name: Bank transfer concurrent PostgreSQL transactions
     runs-on: ubuntu-latest

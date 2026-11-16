@@ -103,3 +103,11 @@ unsupported interpreter/cwd/watch and staged point implementation are covered.
 The supported PM2 layout is deliberately strict: one Node fork at this checkout's
 `dist/src/main[.js]`, matching cwd, no watch. An observed unsupported production
 layout must be investigated before the floor or process is changed.
+
+Cutover-control head `062b04e7916c8375464b3c34709051cf60198252` additionally passed
+[replay43799405489](https://github.com/EduAI-Flatform/EduAI-Back-End/actions/runs/43799405489).
+The subsequent CI check runs a real staged compilation on Linux and compares the
+live entry/auth-module/metadata digests before and after, asserting exact candidate
+revision. The same check passed locally. Dependency audit remains zero high/critical,
+with existing1 low/13 moderate and no new dependency. Final source is still held
+in draft pending exact-head remote gates and the one-time production cutover.
