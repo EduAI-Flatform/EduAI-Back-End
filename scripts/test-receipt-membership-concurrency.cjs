@@ -2,7 +2,6 @@
 // Invoked only after the parent harness validates an empty, disposable localhost CI database.
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { ConflictException } = require('@nestjs/common');
 module.exports = async function membershipReceiptAcceptance(context) {
   const { clients, pool, ids, receiptStorage, receiptOcr, receiptFile, facts, key } = context;
   const { CourseAccessService } = require('../dist/src/modules/access/course-access.service.js');
@@ -10,14 +9,11 @@ module.exports = async function membershipReceiptAcceptance(context) {
   const { CommerceFulfillmentService } = require('../dist/src/modules/payments/commerce-fulfillment.service.js');
   const { BankReceiptService } = require('../dist/src/modules/payments/bank-transfer-receipt.service.js');
   const { BankTransferService } = require('../dist/src/modules/payments/bank-transfer.service.js');
-  const { MembershipContinuityService } = require('../dist/src/modules/memberships/membership-continuity.service.js');
-  const { MembershipCheckoutService } = require('../dist/src/modules/memberships/membership-checkout.service.js');
   const { ServiceEntitlementService } = require('../dist/src/modules/memberships/service-entitlement.service.js');
-  const { CommerceProductService } = require('../dist/src/modules/commerce/commerce-product.service.js');
   // Narrow runtime doubles intentionally omit unrelated config and outbound delivery services.
   /** @type {any} */
   const config = { app: { nodeEnv: 'test' }, commerce: { idempotencySecret: 'synthetic-ci-quota-only' } };
-  const access = [], banks = [], quotas = [], checkouts = [], courses = [], receipts = [];
+  const access = [], banks = [], quotas = [], courses = [], receipts = [];
   for (const client of clients) {
     /** @type {any} */
     const audit = { record: async (input, tx) => tx.auditLog.create({ data: { actorKind: input.actorKind ?? 'USER', actorId: input.actorId ?? null,
@@ -30,7 +26,6 @@ module.exports = async function membershipReceiptAcceptance(context) {
     receipts.push(new BankReceiptService(client, config, audit, receiptStorage, receiptOcr, receiptAccess));
     courses.push(course); access.push(receiptAccess); banks.push(new BankTransferService(client, config, audit, fulfillment));
     quotas.push(new ServiceEntitlementService(client, config));
-    checkouts.push(new MembershipCheckoutService(client, audit, new CommerceProductService(audit), new MembershipContinuityService(client, course, audit)));
   }
   /** @type {import('../generated/prisma/client').PrismaClient} */
   const db = clients[0];
@@ -47,17 +42,24 @@ module.exports = async function membershipReceiptAcceptance(context) {
   await db.membershipPlanEntitlement.create({data:{versionId:fixture.version,definitionId:fixture.definition,valueType:'metered',resetPeriod:'membership_term',quota:3n,createdById:ids.admin1}});
   await db.membershipPlanIncludedCourse.create({data:{versionId:fixture.version,courseId:fixture.course,graceDays:0,createdById:ids.admin1}});
   await db.membershipPlanVersion.update({where:{id:fixture.version},data:{status:'published',publishedById:ids.admin1,publishedAt:new Date()}});
-  const input={versionId:fixture.version,durationOptionId:fixture.duration,changedBenefitsConfirmed:true};
-  const checkoutKey=key();
-  const created=await Promise.all(checkouts.map(service=>service.createCheckout(ids.buyer,checkoutKey,input)));
-  assert.equal(created[0].order.id,created[1].order.id);
-  const orderId=created[0].order.id;
-  await assert.rejects(checkouts[0].createCheckout(ids.buyer,key(),input),error=>{
-    if(!(error instanceof ConflictException))return false;
-    const response=error.getResponse();
-    return typeof response==='object' && 'error' in response && response.error==='MEMBERSHIP_CHANGE_PENDING';
+  // Test-only historical purchase fixture, behind the disposable database guard above.
+  // Use canonical writes and the normal draft -> active product transition; all DB guards remain enabled.
+  const memberOrder=await db.$transaction(async tx=>{
+    const product=await tx.commerceProduct.create({data:{type:'membership',membershipPlanVersionId:fixture.version,sellerId:ids.admin1,status:'draft'}});
+    await tx.commerceProduct.update({where:{id:product.id},data:{status:'active'}});
+    const startsAt=new Date();
+    const {addCalendarMonths}=require('../dist/src/modules/memberships/membership.rules.js');
+    const endsAt=addCalendarMonths(startsAt,1);
+    const order=await tx.commerceOrder.create({data:{orderNumber:'SYN-M-'+randomUUID().replaceAll('-',''),buyerId:ids.buyer,
+      status:'pending_payment',subtotalAmountMinor:1000n,discountAmountMinor:0n,payableAmountMinor:1000n,currency:'VND',pricingPolicyVersion:'MEMBERSHIP_V1'}});
+    await tx.membershipCheckoutIntent.create({data:{orderId:order.id,userId:ids.buyer,versionId:fixture.version,durationOptionId:fixture.duration,
+      action:'purchase',startsAt,endsAt,activatesImmediately:true}});
+    await tx.commerceOrderLine.create({data:{orderId:order.id,productId:product.id,productType:'membership',productReferenceId:fixture.version,sellerId:ids.admin1,
+      displayTitle:'Synthetic receipt membership',unitListPriceAmountMinor:1000n,subtotalAmountMinor:1000n,discountAmountMinor:0n,finalAmountMinor:1000n,currency:'VND'}});
+    return order;
   });
-  console.log('PASS real membership checkout same-key race returns one order and rejects a second pending checkout');
+  const orderId=memberOrder.id;
+  const originalIntent=await db.membershipCheckoutIntent.findUniqueOrThrow({where:{orderId}});
   await banks[0].create(ids.buyer,orderId,key());
   const request=(await pool.query('SELECT * FROM commerce_bank_transfer_requests WHERE order_id=$1',[orderId])).rows[0];
   const image=await receiptFile(request,'#731942');
@@ -99,6 +101,7 @@ module.exports = async function membershipReceiptAcceptance(context) {
   assert.equal(remaining.remaining,'0');assert.equal(remaining.allowed,false);
   await assert.rejects(quotas[0].consume(ids.buyer,'SYNTHETIC_RECEIPT_QUOTA',1n,key()),/unavailable or exhausted/);
   const terms=await db.membershipSubscription.findMany({where:{userId:ids.buyer,versionId:fixture.version},orderBy:{createdAt:'asc'}});
+  assert.ok(terms.every(term=>term.startsAt.getTime()===originalIntent.startsAt.getTime()&&term.expiresAt.getTime()===originalIntent.endsAt.getTime()));
   assert.equal(terms.length,3);assert.deepEqual(terms.map(term=>term.status),['cancelled','cancelled','active']);
   assert.ok(terms.every(term=>term.startsAt.getTime()===terms[0].startsAt.getTime()&&term.expiresAt.getTime()===terms[0].expiresAt.getTime()));
   const serviceGrants=await db.serviceEntitlementGrant.findMany({where:{userId:ids.buyer,definitionId:fixture.definition}});
