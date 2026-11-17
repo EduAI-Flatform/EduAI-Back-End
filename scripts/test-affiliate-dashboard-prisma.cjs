@@ -4,6 +4,7 @@
 // Immutable fixtures intentionally remain until the disposable CI database is destroyed.
 const assert = require('node:assert/strict');
 const { randomUUID, createHash } = require('node:crypto');
+let checkpoint = 'guard';
 async function main() {
   const url = new URL(process.env.DATABASE_URL || 'http://invalid');
   assert.equal(process.env.CI, 'true');
@@ -22,26 +23,33 @@ async function main() {
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const digest = text => createHash('sha256').update(text).digest('hex');
   try {
+    checkpoint = 'fixture.users';
     const [owner, other, empty, buyer] = await Promise.all(['owner', 'other', 'empty', 'buyer'].map(label => db.user.create({
       data: { email: `${randomUUID()}@synthetic.invalid`, fullName: `Synthetic dashboard ${label}` },
     })));
+    checkpoint = 'fixture.policy';
     const version = (await db.platformPolicyRevision.aggregate({ where: { group: 'affiliate' }, _max: { version: true } }))._max.version ?? 0;
     const revision = await db.platformPolicyRevision.create({ data: { group: 'affiliate', version: version + 1,
       status: 'scheduled', createdById: owner.id, approvedById: owner.id, approvedAt: new Date(), effectiveAt: new Date(),
       content: { ...DEFAULT_PLATFORM_SETTINGS.affiliate, enabled: false },
     } });
+    checkpoint = 'fixture.identities';
     const identities = await Promise.all([[owner, 'general'], [owner, 'instructor'], [other, 'general']].map(([user, kind]) =>
       db.affiliateIdentity.create({ data: { ownerId: user.id, kind, code: randomUUID().replaceAll('-', '').slice(0, 30) } })));
     // Owner: 120000 - 45000 + 5000 = 80000; other: 7000 - 12000 = -5000.
     // A no-accrual attribution still counts; neither visits nor accrual rows are referral counts.
     for (const [index, deltas] of [[0, [120000n, -45000n]], [1, [5000n]], [0, []], [2, [7000n, -12000n]]]) {
       const identity = identities[index];
+      checkpoint = 'fixture.visit';
       const visit = await db.affiliateVisit.create({ data: { identityId: identity.id, policyRevisionId: revision.id,
         tokenHash: digest(randomUUID()), expiresAt: new Date(Date.now() + 86400000) } });
+      checkpoint = 'fixture.order';
       const order = await db.commerceOrder.create({ data: { buyerId: buyer.id, orderNumber: 'dashboard-' + randomUUID().slice(0, 20),
         subtotalAmountMinor: 1000000n, payableAmountMinor: 1000000n, pricingPolicyVersion: 'synthetic-read-model' } });
+      checkpoint = 'fixture.attribution';
       const attribution = await db.affiliateAttribution.create({ data: { identityId: identity.id, visitId: visit.id,
         buyerId: buyer.id, orderId: order.id, policyRevisionId: revision.id } });
+      checkpoint = 'fixture.accrual';
       for (const deltaMinor of deltas) await db.affiliateAccrual.create({ data: { attributionId: attribution.id,
         sourceDigest: digest(`${deltaMinor < 0n ? 'historical-refund-correction' : 'historical-accrual'}-${randomUUID()}`),
         deltaMinor, qualifyingAmountMinor: 1000000n, commissionBps: 1000, currency: 'VND', holdUntil: new Date(0) } });
@@ -61,10 +69,12 @@ async function main() {
         audits: await db.auditLog.findMany({ where: { actorId: { in: ownerIds } }, orderBy: { id: 'asc' } }),
       };
     };
+    checkpoint = 'snapshot.before';
     const before = await snapshot();
     const config = { app: { publicAppUrl: 'https://dashboard.example.test', nodeEnv: 'test', deploymentClass: 'uat' }, gdsWallet: { sandboxEnabled: false } };
     const settings = new PlatformSettingsService(db);
     const service = new AffiliateService(db, settings, config);
+    checkpoint = 'read.states';
     for (const [user, count, amount, identityCount] of [[owner, 3, '80000', 2], [other, 1, '-5000', 1], [empty, 0, '0', 0]]) {
       const state = await service.state(user.id);
       assert.equal(state.enabled, false); assert.equal(state.policyRevisionId, revision.id);
@@ -92,4 +102,9 @@ async function main() {
     process.stdout.write('AFFILIATE_DASHBOARD_PRISMA=PASS signed_owner_aggregates disabled_policy real_qr immutable_reads\n');
   } finally { await db.$disconnect(); }
 }
-main().catch(error => { process.stderr.write(`AFFILIATE_DASHBOARD_PRISMA=FAIL ${error?.name || 'Error'}\n`); process.exitCode = 1; });
+main().catch(error => {
+  const identifier = value => typeof value === 'string' && /^[A-Za-z0-9_.]{1,80}$/.test(value) ? value : 'UNAVAILABLE';
+  const cause = error?.meta?.driverAdapterError?.cause;
+  process.stderr.write(`AFFILIATE_DASHBOARD_PRISMA=FAIL ${identifier(error?.name)} stage=${checkpoint} code=${identifier(error?.code)} model=${identifier(error?.meta?.modelName)} pg=${identifier(cause?.originalCode)}\n`);
+  process.exitCode = 1;
+});
