@@ -4,7 +4,7 @@ import { MembershipAdminController } from './membership-admin.controller';
 import { GoneException } from '@nestjs/common';
 
 describe('MembershipAdminController authorization', () => {
-  it.each(['createPlan', 'createVersion', 'publishVersion', 'configurePlanEntitlement', 'configureIncludedCourse'] as const)(
+  it.each(['createPlan', 'createVersion', 'publishVersion', 'configurePlanEntitlement', 'configureIncludedCourse', 'listAvailableCourses'] as const)(
     'retires %s without calling package authoring or touching historical records', method => {
       const service = new Proxy({}, { get: () => jest.fn(() => { throw new Error('Unexpected legacy mutation'); }) });
       const controller = new MembershipAdminController(service as never, {} as never);

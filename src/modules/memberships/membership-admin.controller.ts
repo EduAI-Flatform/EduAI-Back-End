@@ -44,9 +44,9 @@ export class MembershipAdminController {
   }
 
   @Get('available-courses')
-  @ApiOkResponse({ description: 'Published, moderation-clear courses available for membership versions.' })
+  @ApiGoneResponse({ description: 'Package course authoring is retired; historical course access is preserved.' })
   listAvailableCourses(@Query() query: ListMembershipAvailableCoursesQueryDto) {
-    return this.service.listAvailableCourses(query);
+    return membershipSalesRetired();
   }
 
   @Post('service-entitlements')

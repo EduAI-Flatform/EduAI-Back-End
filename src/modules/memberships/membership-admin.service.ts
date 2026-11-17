@@ -16,15 +16,9 @@ import { AuditService } from '../../common/audit/audit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CommerceProductService } from '../commerce/commerce-product.service';
 import {
-  CreateMembershipPlanDto,
-  CreateMembershipPlanVersionDto,
   ListMembershipPlansQueryDto,
-  ListMembershipAvailableCoursesQueryDto,
-  MembershipDurationInputDto,
   CreateServiceEntitlementDefinitionDto,
-  ConfigureMembershipPlanEntitlementDto,
   ListServiceEntitlementDefinitionsQueryDto,
-  ConfigureMembershipIncludedCourseDto,
 } from './dto/membership-plan.dto';
 import { calculateDurationPrice } from './membership.rules';
 import { normalizeEntitlementValue } from './service-entitlement.rules';
@@ -46,24 +40,8 @@ const planInclude = {
     include: versionInclude,
   },
 } satisfies Prisma.MembershipPlanInclude;
-const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 type PlanRecord = Prisma.MembershipPlanGetPayload<{ include: typeof planInclude }>;
 type VersionRecord = Prisma.MembershipPlanVersionGetPayload<{ include: typeof versionInclude }>;
-
-interface NormalizedVersion {
-  displayName: string;
-  description: string | null;
-  baseMonthlyPriceAmountMinor: bigint;
-  currency: 'VND';
-  salesStartAt: Date | null;
-  salesEndAt: Date | null;
-  durations: Array<{
-    months: number;
-    priceAmountMinor: bigint | null;
-    discountPercent: number | null;
-    displayOrder: number;
-  }>;
-}
 
 @Injectable()
 export class MembershipAdminService {
@@ -72,35 +50,6 @@ export class MembershipAdminService {
     private readonly audit: AuditService,
     private readonly commerceProducts: CommerceProductService,
   ) {}
-
-  createPlan(actorId: string, input: CreateMembershipPlanDto) {
-    const version = this.normalizeVersion(input);
-    const code = input.code.trim().toUpperCase();
-    return this.runSerializable(async (tx) => {
-      const plan = await tx.membershipPlan.create({
-        data: {
-          code,
-          versions: {
-            create: {
-              versionNumber: 1,
-              ...this.versionCreateData(actorId, version),
-            },
-          },
-        },
-        include: planInclude,
-      });
-      await this.audit.record(
-        {
-          actorId,
-          action: AuditAction.MembershipPlanCreated,
-          target: { type: 'membership_plan', id: plan.id },
-          metadata: { code, initialVersionNumber: 1 },
-        },
-        tx,
-      );
-      return this.planResponse(plan);
-    });
-  }
 
   async createEntitlementDefinition(actorId: string, input: CreateServiceEntitlementDefinitionDto) {
     const valueType = input.valueType.toLowerCase() as ServiceEntitlementValueType;
@@ -162,97 +111,6 @@ export class MembershipAdminService {
     };
   }
 
-  configurePlanEntitlement(
-    actorId: string,
-    versionId: string,
-    input: ConfigureMembershipPlanEntitlementDto,
-  ) {
-    return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
-      await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
-      const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
-      if (!version) throw new NotFoundException('Membership plan version not found.');
-      if (version.status !== MembershipPlanVersionStatus.draft) {
-        throw new ConflictException('Published membership entitlements are immutable.');
-      }
-      const definition = await tx.serviceEntitlementDefinition.findUnique({ where: { id: input.definitionId } });
-      if (!definition) throw new NotFoundException('Service entitlement definition not found.');
-      let quota: bigint | null = null;
-      if (input.quota) quota = this.parseAmountMinor(input.quota);
-      const booleanValue = input.booleanValue ?? null;
-      try {
-        normalizeEntitlementValue(
-          definition.valueType,
-          definition.resetPeriod,
-          booleanValue,
-          quota,
-        );
-      } catch {
-        throw new BadRequestException('Configured entitlement value does not match its stable definition.');
-      }
-      try {
-        const configured = await tx.membershipPlanEntitlement.create({
-          data: {
-            versionId, definitionId: definition.id,
-            valueType: definition.valueType, resetPeriod: definition.resetPeriod,
-            booleanValue, quota, createdById: actorId,
-          },
-          include: { definition: true },
-        });
-        await this.audit.record({
-          actorId, action: AuditAction.MembershipPlanEntitlementConfigured,
-          target: { type: 'membership_plan_entitlement', id: configured.id },
-          metadata: { versionId, code: definition.code, valueType: definition.valueType },
-        }, tx);
-        return this.planEntitlementResponse(configured);
-      } catch (error) {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          throw new ConflictException('Service entitlement is already configured for this version.');
-        }
-        throw error;
-      }
-    });
-  }
-
-  configureIncludedCourse(
-    actorId: string,
-    versionId: string,
-    input: ConfigureMembershipIncludedCourseDto,
-  ) {
-    return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
-      await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plan_versions WHERE id = ${versionId}::uuid FOR UPDATE`);
-      const version = await tx.membershipPlanVersion.findUnique({ where: { id: versionId } });
-      if (!version) throw new NotFoundException('Membership plan version not found.');
-      if (version.status !== MembershipPlanVersionStatus.draft) {
-        throw new ConflictException('Published membership course inclusions are immutable.');
-      }
-      await this.assertUnmanagedPlan(tx, version.planId);
-      const course = await tx.course.findFirst({
-        where: { id: input.courseId, deletedAt: null, status: 'published', moderationStatus: 'clear' },
-        select: { id: true, title: true, slug: true },
-      });
-      if (!course) throw new NotFoundException('Available course not found.');
-      try {
-        const included = await tx.membershipPlanIncludedCourse.create({
-          data: { versionId, courseId: course.id, graceDays: input.graceDays, createdById: actorId },
-          include: { course: { select: { id: true, title: true, slug: true } } },
-        });
-        await this.audit.record({
-          actorId, action: AuditAction.MembershipPlanCourseIncluded,
-          target: { type: 'membership_plan_included_course', id: included.id },
-          metadata: { versionId, courseId: course.id, graceDays: input.graceDays },
-        }, tx);
-        return this.includedCourseResponse(included);
-      } catch (error) {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          throw new ConflictException('Course is already included in this membership version.');
-        }
-        throw error;
-      }
-    });
-  }
-
   async listPlans(query: ListMembershipPlansQueryDto) {
     const where: Prisma.MembershipPlanWhereInput = {
       ...(query.status ? { status: query.status } : {}),
@@ -288,84 +146,8 @@ export class MembershipAdminService {
     };
   }
 
-  async listAvailableCourses(query: ListMembershipAvailableCoursesQueryDto) {
-    const where: Prisma.CourseWhereInput = {
-      deletedAt: null,
-      status: 'published',
-      moderationStatus: 'clear',
-      ...(query.search ? {
-        OR: [
-          { title: { contains: query.search, mode: 'insensitive' } },
-          { slug: { contains: query.search, mode: 'insensitive' } },
-        ],
-      } : {}),
-    };
-    const [total, items] = await this.prisma.$transaction([
-      this.prisma.course.count({ where }),
-      this.prisma.course.findMany({
-        where,
-        orderBy: [{ title: 'asc' }, { id: 'asc' }],
-        skip: (query.page - 1) * query.pageSize,
-        take: query.pageSize,
-        select: { id: true, title: true, slug: true, visibility: true },
-      }),
-    ]);
-    return {
-      items: items.map((course) => ({ ...course, visibility: course.visibility.toUpperCase() })),
-      page: query.page,
-      pageSize: query.pageSize,
-      total,
-      totalPages: Math.ceil(total / query.pageSize),
-    };
-  }
-
-  createVersion(
-    actorId: string,
-    planId: string,
-    input: CreateMembershipPlanVersionDto,
-  ) {
-    const normalized = this.normalizeVersion(input);
-    return this.runSerializable(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
-      await tx.$queryRaw(Prisma.sql`SELECT id FROM membership_plans WHERE id = ${planId}::uuid FOR UPDATE`);
-      await this.assertUnmanagedPlan(tx, planId);
-      const plan = await tx.membershipPlan.findUnique({ where: { id: planId } });
-      if (!plan) throw new NotFoundException('Membership plan not found.');
-      if (plan.status !== MembershipPlanStatus.active) {
-        throw new ConflictException('Archived membership plans cannot receive versions.');
-      }
-      const latest = await tx.membershipPlanVersion.aggregate({
-        where: { planId },
-        _max: { versionNumber: true },
-      });
-      const versionNumber = (latest._max.versionNumber ?? 0) + 1;
-      const created = await tx.membershipPlanVersion.create({
-        data: {
-          planId,
-          versionNumber,
-          ...this.versionCreateData(actorId, normalized),
-        },
-        include: versionInclude,
-      });
-      await this.audit.record(
-        {
-          actorId,
-          action: AuditAction.MembershipPlanVersionCreated,
-          target: { type: 'membership_plan_version', id: created.id },
-          metadata: { planId, versionNumber },
-        },
-        tx,
-      );
-      return this.versionResponse(created);
-    });
-  }
-
-  publishVersion(actorId: string, versionId: string) {
-    return this.transitionVersion(actorId, versionId, 'publish');
-  }
-
   archiveVersion(actorId: string, versionId: string) {
-    return this.transitionVersion(actorId, versionId, 'archive');
+    return this.transitionVersion(actorId, versionId);
   }
 
   archivePlan(actorId: string, planId: string) {
@@ -399,7 +181,6 @@ export class MembershipAdminService {
   private transitionVersion(
     actorId: string,
     versionId: string,
-    transition: 'publish' | 'archive',
   ) {
     return this.runSerializable(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT 1::integer AS acquired FROM pg_advisory_xact_lock(73410201)`);
@@ -412,41 +193,23 @@ export class MembershipAdminService {
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM membership_plans WHERE id = ${current.planId}::uuid FOR UPDATE`,
       );
-      const expected = transition === 'publish'
-        ? MembershipPlanVersionStatus.draft
-        : MembershipPlanVersionStatus.published;
-      if (current.status !== expected) {
-        throw new ConflictException(`Membership version cannot ${transition} from its current state.`);
+      if (current.status !== MembershipPlanVersionStatus.published) {
+        throw new ConflictException('Membership version cannot archive from its current state.');
       }
-      if (transition === 'publish') {
-        const plan = await tx.membershipPlan.findUnique({ where: { id: current.planId } });
-        if (!plan || plan.status !== MembershipPlanStatus.active) {
-          throw new ConflictException('Only active membership plans can publish versions.');
-        }
-      }
-      if (transition === 'publish') await this.assertUnmanagedPlan(tx, current.planId);
       const now = new Date();
       const updated = await tx.membershipPlanVersion.update({
         where: { id: versionId },
-        data: transition === 'publish'
-          ? {
-              status: MembershipPlanVersionStatus.published,
-              publishedById: actorId,
-              publishedAt: now,
-            }
-          : {
-              status: MembershipPlanVersionStatus.archived,
-              archivedById: actorId,
-              archivedAt: now,
-            },
+        data: {
+          status: MembershipPlanVersionStatus.archived,
+          archivedById: actorId,
+          archivedAt: now,
+        },
         include: versionInclude,
       });
       await this.audit.record(
         {
           actorId,
-          action: transition === 'publish'
-            ? AuditAction.MembershipPlanVersionPublished
-            : AuditAction.MembershipPlanVersionArchived,
+          action: AuditAction.MembershipPlanVersionArchived,
           target: { type: 'membership_plan_version', id: versionId },
           metadata: { planId: current.planId, versionNumber: current.versionNumber },
         },
@@ -454,77 +217,6 @@ export class MembershipAdminService {
       );
       return this.versionResponse(updated);
     });
-  }
-
-  private normalizeVersion(input: CreateMembershipPlanVersionDto): NormalizedVersion {
-    const salesStartAt = input.salesStartAt ? new Date(input.salesStartAt) : null;
-    const salesEndAt = input.salesEndAt ? new Date(input.salesEndAt) : null;
-    if (salesStartAt && salesEndAt && salesEndAt <= salesStartAt) {
-      throw new BadRequestException('Membership sales end must follow its start.');
-    }
-    const months = new Set<number>();
-    const displayOrders = new Set<number>();
-    const durations = input.durations
-      .map((duration) => this.normalizeDuration(duration))
-      .sort((left, right) => left.displayOrder - right.displayOrder);
-    for (const duration of durations) {
-      if (months.has(duration.months) || displayOrders.has(duration.displayOrder)) {
-        throw new BadRequestException('Membership durations and display order must be unique.');
-      }
-      months.add(duration.months);
-      displayOrders.add(duration.displayOrder);
-    }
-    return {
-      displayName: input.displayName.trim(),
-      description: input.description?.trim() || null,
-      baseMonthlyPriceAmountMinor: this.parseAmountMinor(
-        input.baseMonthlyPriceAmountMinor,
-      ),
-      currency: 'VND',
-      salesStartAt,
-      salesEndAt,
-      durations,
-    };
-  }
-
-  private normalizeDuration(duration: MembershipDurationInputDto) {
-    const priceAmountMinor = duration.priceAmountMinor === undefined
-      ? null
-      : this.parseAmountMinor(duration.priceAmountMinor);
-    const discountPercent = duration.discountPercent ?? null;
-    calculateDurationPrice({
-      baseMonthlyPriceAmountMinor: 0n,
-      months: duration.months,
-      priceAmountMinor,
-      discountPercent,
-    });
-    return {
-      months: duration.months,
-      priceAmountMinor,
-      discountPercent,
-      displayOrder: duration.displayOrder,
-    };
-  }
-
-  private parseAmountMinor(value: string): bigint {
-    const amount = BigInt(value);
-    if (amount > POSTGRES_BIGINT_MAX) {
-      throw new BadRequestException('Membership amount exceeds the supported range.');
-    }
-    return amount;
-  }
-
-  private versionCreateData(actorId: string, input: NormalizedVersion) {
-    return {
-      displayName: input.displayName,
-      description: input.description,
-      baseMonthlyPriceAmountMinor: input.baseMonthlyPriceAmountMinor,
-      currency: input.currency,
-      salesStartAt: input.salesStartAt,
-      salesEndAt: input.salesEndAt,
-      createdById: actorId,
-      durationOptions: { create: input.durations },
-    };
   }
 
   private planResponse(plan: PlanRecord) {
@@ -605,12 +297,6 @@ export class MembershipAdminService {
     return { id: item.id, versionId: item.versionId, graceDays: item.graceDays, course: item.course };
   }
 
-  private async assertUnmanagedPlan(tx: Prisma.TransactionClient, planId: string) {
-    const rows = await tx.$queryRaw<Array<{ managed: boolean }>>(Prisma.sql`
-      SELECT EXISTS(SELECT 1 FROM revenue_plan_policies
-        WHERE plan_id = ${planId}::uuid AND status IN ('active', 'scheduled')) AS managed`);
-    if (rows?.[0]?.managed) throw new ConflictException('This plan is managed by revenue policies. Publish changes through revenue configuration.');
-  }
   private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { MembershipPlanVersionStatus } from '../../../generated/prisma/client';
 import { MembershipAdminService } from './membership-admin.service';
 
@@ -115,15 +115,43 @@ function harness() {
   };
 }
 
-const input = {
-  code: 'gold',
-  displayName: ' Gold ',
-  baseMonthlyPriceAmountMinor: '100000',
-  currency: 'VND' as const,
-  durations: [{ months: 3, discountPercent: 25, displayOrder: 0 }],
-};
-
 describe('MembershipAdminService', () => {
+  it('archives published versions with locks and audit while preserving historical pricing', async () => {
+    const { service, tx, audit } = harness();
+    tx.membershipPlanVersion.findUnique.mockResolvedValue({ ...version, status: MembershipPlanVersionStatus.published });
+    tx.membershipPlanVersion.update.mockResolvedValue({ ...version, status: MembershipPlanVersionStatus.archived });
+    await expect(service.archiveVersion('admin-id', 'version-id')).resolves.toMatchObject({
+      status: 'ARCHIVED', baseMonthlyPriceAmountMinor: '100000',
+      durationOptions: [{ effectivePriceAmountMinor: '225000' }],
+    });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
+    expect(tx.$queryRaw.mock.invocationCallOrder[2]).toBeLessThan(tx.membershipPlanVersion.update.mock.invocationCallOrder[0]);
+    expect(tx.membershipPlanVersion.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: MembershipPlanVersionStatus.archived, archivedById: 'admin-id', archivedAt: expect.any(Date) },
+    }));
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'MEMBERSHIP_PLAN_VERSION_ARCHIVED', target: { type: 'membership_plan_version', id: 'version-id' },
+    }), tx);
+  });
+  it('rejects archival of missing or nonpublished versions without modifying history', async () => {
+    const { service, tx, audit } = harness();
+    tx.membershipPlanVersion.findUnique.mockResolvedValueOnce(null);
+    await expect(service.archiveVersion('admin-id', 'missing')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.archiveVersion('admin-id', 'draft')).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.membershipPlanVersion.update).not.toHaveBeenCalled(); expect(audit.record).not.toHaveBeenCalled();
+  });
+  it('lists immutable historical terms and course/service benefits without writing', async () => {
+    const { service, prisma, tx, audit } = harness();
+    prisma.membershipPlan.count.mockResolvedValue(1);
+    prisma.membershipPlan.findMany.mockResolvedValue([{ id: 'plan-id', code: 'GOLD', status: 'archived',
+      versions: [{ ...version, serviceEntitlements: [{ id: 'entitlement', versionId: 'version-id', booleanValue: null, quota: 30n,
+        definition: { id: 'definition', code: 'AI_CHAT', displayName: 'AI chat', valueType: 'metered', resetPeriod: 'calendar_month', description: null, unitLabel: 'request', displayOrder: 1 } }],
+        includedCourses: [{ id: 'included', versionId: 'version-id', graceDays: 7, course: { id: 'course', title: 'Retained course', slug: 'retained' } }] }] }]);
+    await expect(service.listPlans({ page: 1, pageSize: 25 })).resolves.toMatchObject({ total: 1, items: [{ status: 'ARCHIVED', versions: [{
+      durationOptions: [{ effectivePriceAmountMinor: '225000' }], serviceEntitlements: [{ quota: '30' }], includedCourses: [{ graceDays: 7 }],
+    }] }] });
+    expect(tx.membershipPlan.update).not.toHaveBeenCalled(); expect(audit.record).not.toHaveBeenCalled();
+  });
   it('archives Commerce products through the owning boundary before the plan', async () => {
     const { service, tx, commerceProducts } = harness();
     tx.membershipPlan.update.mockResolvedValue({
@@ -144,87 +172,10 @@ describe('MembershipAdminService', () => {
     );
   });
 
-  it('creates an arbitrary stable plan and version with string-money output', async () => {
-    const { service, tx, audit } = harness();
 
-    await expect(service.createPlan('admin-id', input)).resolves.toMatchObject({
-      code: 'GOLD',
-      versions: [
-        {
-          displayName: 'Gold',
-          baseMonthlyPriceAmountMinor: '100000',
-          durationOptions: [{ effectivePriceAmountMinor: '225000' }],
-        },
-      ],
-    });
-    expect(tx.membershipPlan.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          code: 'GOLD',
-          versions: {
-            create: expect.objectContaining({
-              baseMonthlyPriceAmountMinor: 100_000n,
-              durationOptions: {
-                create: [
-                  expect.objectContaining({ months: 3, discountPercent: 25 }),
-                ],
-              },
-            }),
-          },
-        }),
-      }),
-    );
-    expect(audit.record).toHaveBeenCalledTimes(1);
-  });
 
-  it('lists bounded published clear courses without excluding private visibility', async () => {
-    const { service, prisma } = harness();
-    await expect(service.listAvailableCourses({ page: 1, pageSize: 25, search: 'Private' })).resolves.toEqual({
-      items: [{ id: 'course-id', title: 'Private course', slug: 'private-course', visibility: 'PRIVATE' }],
-      page: 1, pageSize: 25, total: 1, totalPages: 1,
-    });
-    expect(prisma.course.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ deletedAt: null, status: 'published', moderationStatus: 'clear' }),
-      take: 25,
-    }));
-  });
 
-  it('serializes version numbering and creates a new version instead of editing history', async () => {
-    const { service, tx } = harness();
 
-    await service.createVersion('admin-id', 'plan-id', input);
-
-    expect(tx.$queryRaw).toHaveBeenCalled();
-    expect(tx.membershipPlanVersion.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ versionNumber: 2 }) }),
-    );
-  });
-
-  it('publishes a draft once and rejects mutation of published history', async () => {
-    const { service, tx } = harness();
-    await expect(service.publishVersion('admin-id', 'version-id')).resolves.toMatchObject({
-      status: 'PUBLISHED',
-    });
-
-    tx.membershipPlanVersion.findUnique.mockResolvedValueOnce({
-      ...version,
-      status: MembershipPlanVersionStatus.published,
-    });
-    await expect(service.publishVersion('admin-id', 'version-id')).rejects.toBeInstanceOf(
-      ConflictException,
-    );
-  });
-
-  it('rejects monetary input outside the PostgreSQL 64-bit range', async () => {
-    const { service } = harness();
-
-    expect(() =>
-      service.createPlan('admin-id', {
-        ...input,
-        baseMonthlyPriceAmountMinor: '9223372036854775808',
-      }),
-    ).toThrow(BadRequestException);
-  });
 
   it('creates code-driven entitlement definitions with safe typed metadata', async () => {
     const { service, tx, audit } = harness();
@@ -238,30 +189,7 @@ describe('MembershipAdminService', () => {
     expect(audit.record).toHaveBeenCalledTimes(1);
   });
 
-  it('configures a draft version from definition semantics and string quota', async () => {
-    const { service, tx } = harness();
-    await expect(service.configurePlanEntitlement('admin-id', 'version-id', {
-      definitionId: 'definition-id', quota: '30',
-    })).resolves.toMatchObject({ quota: '30', definition: { code: 'AI_CHAT' } });
-    expect(tx.membershipPlanEntitlement.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ valueType: 'metered', resetPeriod: 'calendar_month', quota: 30n }),
-    }));
-  });
 
-  it('rejects configuration whose value does not match the stable definition', async () => {
-    const { service } = harness();
-    await expect(service.configurePlanEntitlement('admin-id', 'version-id', {
-      definitionId: 'definition-id', booleanValue: true,
-    })).rejects.toBeInstanceOf(BadRequestException);
-  });
 
-  it('snapshots an explicit available course only on a draft version', async () => {
-    const { service, tx } = harness();
-    await expect(service.configureIncludedCourse('admin-id', 'version-id', {
-      courseId: '10000000-0000-4000-8000-000000000001', graceDays: 7,
-    })).resolves.toMatchObject({ graceDays: 7, course: { slug: 'course' } });
-    expect(tx.membershipPlanIncludedCourse.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ versionId: 'version-id', graceDays: 7 }),
-    }));
-  });
+
 });
