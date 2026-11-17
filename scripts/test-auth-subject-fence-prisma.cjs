@@ -184,7 +184,12 @@ module.exports = async function verifyAuthSubjectFence(db, actorId) {
       .then(result => ({ result }), error => ({ error })));
     try { await bounded(Promise.all(held.map(item => item.promise)), 'both admin subject fences'); }
     finally { releaseAdmins.resolve(); }
-    for (const outcome of await Promise.all(mutations)) { if (outcome.error) throw outcome.error; }
+    for (const outcome of await Promise.all(mutations)) {
+      if (outcome.error) {
+        console.error('GDS_AUTH_SUBJECT_FENCE_INVERSE_ADMIN_FAILED_ATTEMPTS=' + attempts.join(','));
+        throw outcome.error;
+      }
+    }
     assert.equal(await db.user.count({ where: { id: { in: adminIds }, status: 'active', roles: { some: { role: { name: 'platform_admin' } } } } }), 2);
     assert.equal(await db.auditLog.count({ where: { actorId: { in: adminIds }, action: 'USER_ROLE_CHANGED' } }), 2);
     console.log('GDS_AUTH_SUBJECT_FENCE_INVERSE_ADMINS=PASS; serializable attempts=' + attempts.join(','));
