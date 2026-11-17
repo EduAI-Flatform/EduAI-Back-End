@@ -287,7 +287,10 @@ export class AdminUserService {
         });
       } catch (error: unknown) {
         const retryable = isTransactionWriteConflict(error);
-        if (!retryable || attempt === 2) throw error;
+        if (!retryable) throw error;
+        if (attempt === 2) throw new ConflictException('Concurrent user administration conflict');
+        // Yield outside the rolled-back transaction so the competing writer can finish.
+        await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
       }
     }
 
