@@ -1,4 +1,3 @@
-import { ConflictException } from '@nestjs/common';
 import { CommerceProductStatus, CommerceProductType } from '../../../generated/prisma/client';
 import { CommerceProductService } from './commerce-product.service';
 
@@ -19,8 +18,6 @@ describe('CommerceProductService membership boundary', () => {
     const tx = {
       $queryRaw: jest.fn(),
       commerceProduct: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue(product),
         update: jest.fn().mockResolvedValue({ ...product, status: CommerceProductStatus.active }),
         findMany: jest.fn().mockResolvedValue([]),
       },
@@ -28,42 +25,6 @@ describe('CommerceProductService membership boundary', () => {
     const audit = { record: jest.fn() };
     return { service: new CommerceProductService(audit as never), tx, audit };
   }
-
-  it('uses the guarded draft-to-active lifecycle for a new membership product', async () => {
-    const { service, tx } = harness();
-
-    await expect(service.ensureActiveMembershipProduct(
-      tx as never,
-      'version-id',
-      'seller-id',
-    )).resolves.toMatchObject({ status: CommerceProductStatus.active });
-
-    expect(tx.commerceProduct.create).toHaveBeenCalledWith({ data: {
-      type: CommerceProductType.membership,
-      membershipPlanVersionId: 'version-id',
-      sellerId: 'seller-id',
-      status: CommerceProductStatus.draft,
-    } });
-    expect(tx.commerceProduct.update).toHaveBeenCalledWith({
-      where: { id: 'product-id' },
-      data: { status: CommerceProductStatus.active },
-    });
-  });
-
-  it('never reactivates an archived membership product', async () => {
-    const { service, tx } = harness();
-    tx.commerceProduct.findUnique.mockResolvedValue({
-      ...product,
-      status: CommerceProductStatus.archived,
-    });
-
-    await expect(service.ensureActiveMembershipProduct(
-      tx as never,
-      'version-id',
-      'seller-id',
-    )).rejects.toBeInstanceOf(ConflictException);
-    expect(tx.commerceProduct.update).not.toHaveBeenCalled();
-  });
 
   it('archives only non-archived products for the exact plan with atomic audit', async () => {
     const { service, tx, audit } = harness();

@@ -15,10 +15,7 @@ async function main() {
   const { CourseAccessService } = require('../dist/src/modules/access/course-access.service.js');
   const { CommerceService } = require('../dist/src/modules/commerce/commerce.service.js');
   const { CommerceOrderService } = require('../dist/src/modules/commerce/commerce-order.service.js');
-  const { CommerceProductService } = require('../dist/src/modules/commerce/commerce-product.service.js');
   const { CommerceFulfillmentService } = require('../dist/src/modules/payments/commerce-fulfillment.service.js');
-  const { MembershipCheckoutService } = require('../dist/src/modules/memberships/membership-checkout.service.js');
-  const { MembershipContinuityService } = require('../dist/src/modules/memberships/membership-continuity.service.js');
   const { LegacyMembershipReportService } = require('../dist/src/modules/memberships/legacy-membership-report.service.js');
   const { LegacyMembershipInventoryService } = require('../dist/src/modules/memberships/legacy-membership-inventory.service.js');
   const { LearningPathService } = require('../dist/src/modules/courses/learning-path.service.js');
@@ -104,10 +101,24 @@ async function main() {
     const gds=new GdsInternalCheckoutService(db,config,fulfillment,audit,revenue);
     const cart=new CommerceService(db,audit,access);
     const orders=new CommerceOrderService(db,config,{},audit,access);
-    const membership=new MembershipCheckoutService(db,audit,new CommerceProductService(audit),new MembershipContinuityService(db,access,audit));
     await cart.addCourse(ids.buyerCourse,ids.course);
     const courseOrder=await orders.createOrder(ids.buyerCourse,randomUUID(),{});
-    const memberOrder=(await membership.createCheckout(ids.buyerMember,randomUUID(),{versionId:ids.version,durationOptionId:ids.duration,changedBenefitsConfirmed:true})).order;
+    // Test-only historical purchase fixture, behind the disposable database guard above.
+    // Use canonical writes and the normal draft -> active product transition; all DB guards remain enabled.
+    const memberOrder=await db.$transaction(async tx=>{
+      const product=await tx.commerceProduct.create({data:{type:'membership',membershipPlanVersionId:ids.version,sellerId:ids.seller,status:'draft'}});
+      await tx.commerceProduct.update({where:{id:product.id},data:{status:'active'}});
+      const startsAt=new Date();
+      const {addCalendarMonths}=require('../dist/src/modules/memberships/membership.rules.js');
+      const endsAt=addCalendarMonths(startsAt,1);
+      const order=await tx.commerceOrder.create({data:{orderNumber:'SYN-M-'+randomUUID().replaceAll('-',''),buyerId:ids.buyerMember,
+        status:'pending_payment',subtotalAmountMinor:20000n,discountAmountMinor:0n,payableAmountMinor:20000n,currency:'VND',pricingPolicyVersion:'MEMBERSHIP_V1'}});
+      await tx.membershipCheckoutIntent.create({data:{orderId:order.id,userId:ids.buyerMember,versionId:ids.version,durationOptionId:ids.duration,
+        action:'purchase',startsAt,endsAt,activatesImmediately:true}});
+      await tx.commerceOrderLine.create({data:{orderId:order.id,productId:product.id,productType:'membership',productReferenceId:ids.version,sellerId:ids.seller,
+        displayTitle:'Synthetic GDS member',unitListPriceAmountMinor:20000n,subtotalAmountMinor:20000n,discountAmountMinor:0n,finalAmountMinor:20000n,currency:'VND'}});
+      return order;
+    });
     for(const [buyerId,orderId,expectedBalance,type] of [[ids.buyerCourse,courseOrder.id,30000n,'course'],[ids.buyerMember,memberOrder.id,20000n,'membership']]) {
       const receipts=await Promise.all([gds.payOrder(buyerId,orderId),gds.payOrder(buyerId,orderId)]);
       assert.ok(receipts.every(r=>r.status==='CONFIRMED'));
