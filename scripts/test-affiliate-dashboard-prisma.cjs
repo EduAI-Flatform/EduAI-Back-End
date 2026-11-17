@@ -36,6 +36,11 @@ async function main() {
     checkpoint = 'fixture.identities';
     const identities = await Promise.all([[owner, 'general'], [owner, 'instructor'], [other, 'general']].map(([user, kind]) =>
       db.affiliateIdentity.create({ data: { ownerId: user.id, kind, code: randomUUID().replaceAll('-', '').slice(0, 30) } })));
+    checkpoint = 'fixture.product';
+    const course = await db.course.create({ data: { title: 'Synthetic dashboard course', slug: randomUUID(),
+      instructorId: owner.id, level: 'beginner', status: 'published', visibility: 'public', priceAmountMinor: 1000000, priceCurrency: 'VND' } });
+    const product = await db.commerceProduct.create({ data: { type: 'course', courseId: course.id, sellerId: owner.id, status: 'draft' } });
+    await db.commerceProduct.update({ where: { id: product.id }, data: { status: 'active' } });
     // Owner: 120000 - 45000 + 5000 = 80000; other: 7000 - 12000 = -5000.
     // A no-accrual attribution still counts; neither visits nor accrual rows are referral counts.
     for (const [index, deltas] of [[0, [120000n, -45000n]], [1, [5000n]], [0, []], [2, [7000n, -12000n]]]) {
@@ -44,8 +49,15 @@ async function main() {
       const visit = await db.affiliateVisit.create({ data: { identityId: identity.id, policyRevisionId: revision.id,
         tokenHash: digest(randomUUID()), expiresAt: new Date(Date.now() + 86400000) } });
       checkpoint = 'fixture.order';
-      const order = await db.commerceOrder.create({ data: { buyerId: buyer.id, orderNumber: 'dashboard-' + randomUUID().slice(0, 20),
-        subtotalAmountMinor: 1000000n, payableAmountMinor: 1000000n, pricingPolicyVersion: 'synthetic-read-model' } });
+      // Deferred order-total guards require matching immutable lines at commit.
+      const order = await db.$transaction(async tx => {
+        const row = await tx.commerceOrder.create({ data: { buyerId: buyer.id, orderNumber: 'dashboard-' + randomUUID().slice(0, 20),
+          subtotalAmountMinor: 1000000n, payableAmountMinor: 1000000n, pricingPolicyVersion: 'synthetic-read-model' } });
+        await tx.commerceOrderLine.create({ data: { orderId: row.id, productId: product.id, productType: 'course',
+          productReferenceId: course.id, sellerId: owner.id, displayTitle: course.title, currency: 'VND',
+          unitListPriceAmountMinor: 1000000n, subtotalAmountMinor: 1000000n, discountAmountMinor: 0n, finalAmountMinor: 1000000n } });
+        return row;
+      });
       checkpoint = 'fixture.attribution';
       const attribution = await db.affiliateAttribution.create({ data: { identityId: identity.id, visitId: visit.id,
         buyerId: buyer.id, orderId: order.id, policyRevisionId: revision.id } });
@@ -65,6 +77,7 @@ async function main() {
         attributions: await db.affiliateAttribution.findMany({ where: { identity: { ownerId: { in: ownerIds } } }, orderBy: { id: 'asc' } }),
         accruals: await db.affiliateAccrual.findMany({ where: { attribution: { identity: { ownerId: { in: ownerIds } } } }, orderBy: { id: 'asc' } }),
         orders: await db.commerceOrder.findMany({ where: { buyerId: buyer.id }, orderBy: { id: 'asc' } }),
+        lines: await db.commerceOrderLine.findMany({ where: { order: { buyerId: buyer.id } }, orderBy: { id: 'asc' } }),
         walletCount: await db.gdsInternalWallet.count({ where: { buyerId: { in: ownerIds } } }),
         audits: await db.auditLog.findMany({ where: { actorId: { in: ownerIds } }, orderBy: { id: 'asc' } }),
       };
