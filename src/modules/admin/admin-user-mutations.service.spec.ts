@@ -160,6 +160,29 @@ describe('AdminUserService status mutations', () => {
     ).resolves.toEqual(expect.objectContaining({ status: UserStatus.suspended }));
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
   });
+  it('yields between complete transaction retries so an in-flight peer can commit', async () => {
+    jest.useFakeTimers();
+    try {
+      const { service, prisma } = createMutationService();
+      const conflict = new Prisma.PrismaClientKnownRequestError('write conflict', { code: 'P2034', clientVersion: 'test' });
+      prisma.$transaction.mockRejectedValueOnce(conflict).mockRejectedValueOnce(conflict);
+      const pending = service.setStatus('actor-id', baseUser.id, UserStatus.suspended);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      await jest.runOnlyPendingTimersAsync();
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      await jest.runOnlyPendingTimersAsync();
+      await pending;
+      expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+    } finally { jest.useRealTimers(); }
+  });
+  it('returns a bounded administration conflict after exhausting serialization retries', async () => {
+    const { service, prisma, auditService } = createMutationService();
+    prisma.$transaction.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('write conflict', { code: 'P2034', clientVersion: 'test' }));
+    await expect(service.setStatus('actor-id', baseUser.id, UserStatus.suspended)).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+    expect(auditService.record).not.toHaveBeenCalled();
+  });
 
   it('retries a native Prisma pg commit conflict before rechecking the last administrator', async () => {
     const { service, prisma } = createMutationService({ otherActiveAdmins: 0 });
