@@ -1,7 +1,8 @@
 import { AffiliateService } from './affiliate.service';
 import type { AffiliatePolicy } from './affiliate-domain';
 const now = new Date();
-const policy: AffiliatePolicy = { enabled: true, currency: 'VND', commissionBase: 'net_paid_after_recorded_refunds', attributionModel: 'first_touch', commissionBps: 1000, attributionDays: 30, holdDays: 7, minimumWithdrawal: 0, subAffiliateEnabled: false };
+const policy: AffiliatePolicy = { enabled: true, currency: 'VND', commissionBase: 'net_paid_after_recorded_refunds', attributionModel: 'first_touch', commissionBps: 1000, attributionDays: 30, holdDays: 7, minimumWithdrawal: 0, subAffiliateEnabled: false,
+  fundingSource: 'platform_fee', allocationPrecedence: 'seller_entitlements_first' };
 function setup() {
   const visit = { id: 'visit', identityId: 'identity', policyRevisionId: 'policy', expiresAt: new Date(Date.now() + 86400000), createdAt: new Date(Date.now() - 10000),
     identity: { ownerId: 'referrer', status: 'active', owner: { status: 'active', deletedAt: null } }, policy: { group: 'affiliate', status: 'scheduled', effectiveAt: new Date(Date.now() - 20000), content: policy } };
@@ -18,7 +19,33 @@ function setup() {
   const service = new AffiliateService(db as any, settings as any, { app: { publicAppUrl: 'https://gds.example.test' } } as any);
   return { service, db, tx, settings, visit };
 }
+function accrualRecord() {
+  return { id: 'attribution', identityId: 'identity', policyRevisionId: 'policy', createdAt: new Date(now.getTime() - 1000),
+    visit: { identityId: 'identity', policyRevisionId: 'policy', createdAt: new Date(now.getTime() - 2000) },
+    policy: { id: 'policy', group: 'affiliate', status: 'scheduled', effectiveAt: new Date(now.getTime() - 3000), content: { ...policy } }, accruals: [] as any[],
+    order: { id: 'order', status: 'confirmed', fulfillmentStatus: 'fulfilled', currency: 'VND', payableAmountMinor: 1000n, confirmedSettlementId: 's',
+      confirmedSettlement: { id: 's', orderId: 'order', amountMinor: 1000n, currency: 'VND', settledAt: now, kind: 'provider_collection', disposition: 'matched' }, refunds: [] as any[] } };
+}
 describe('affiliate ownership and accrual', () => {
+  it('does not admit identities or visits, or advertise readiness, without configured funding and an effective version', async () => {
+    const { service, settings, tx } = setup();
+    settings.current.mockResolvedValue({ settings: { affiliate: { ...policy, fundingSource: 'unconfigured' } }, versions: { affiliate: 'policy' } } as any);
+    await expect(service.identity('owner', 'general', ['student'])).rejects.toThrow('AFFILIATE_PROGRAM_DISABLED');
+    await expect(service.visit('referral-code')).rejects.toThrow('AFFILIATE_PROGRAM_DISABLED');
+    expect(await service.state('owner')).toMatchObject({ enabled: false });
+    settings.current.mockResolvedValue({ settings: { affiliate: policy }, versions: {} } as any);
+    expect(await service.state('owner')).toMatchObject({ enabled: false });
+    expect(tx.affiliateIdentity.upsert).not.toHaveBeenCalled();
+    expect(tx.affiliateVisit.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unconfigured frozen visit even when the current policy has funding', async () => {
+    const { service, tx, visit } = setup();
+    visit.policy.content = { ...policy, fundingSource: 'unconfigured' };
+    await expect(service.attribute('buyer', 'order', 'token')).rejects.toThrow('REFERRAL_POLICY_INVALID');
+    expect(tx.affiliateAttribution.create).not.toHaveBeenCalled();
+  });
+
   it('denies identity creation when policy is disabled and instructor-only code to a learner', async () => {
     const { service, settings, tx } = setup();
     await expect(service.identity('owner', 'instructor', ['student'])).rejects.toThrow('INSTRUCTOR_REFERRAL_NOT_ALLOWED');
@@ -59,9 +86,7 @@ describe('affiliate ownership and accrual', () => {
   });
   it('appends one source adjustment and never writes a wallet', async () => {
     const { service, tx } = setup();
-    const record = { id: 'attribution', policyRevisionId: 'policy', createdAt: new Date(now.getTime() - 1000), policy: { group: 'affiliate', content: policy }, accruals: [],
-      order: { id: 'order', status: 'confirmed', fulfillmentStatus: 'fulfilled', currency: 'VND', payableAmountMinor: 1000n, confirmedSettlementId: 's',
-        confirmedSettlement: { id: 's', orderId: 'order', amountMinor: 1000n, currency: 'VND', settledAt: now, kind: 'provider_collection', disposition: 'matched' }, refunds: [] } };
+    const record = accrualRecord();
     tx.affiliateAttribution.findMany.mockResolvedValue([record] as any);
     await service.reconcile('owner');
     const data = tx.affiliateAccrual.create.mock.calls[0][0].data;
@@ -69,6 +94,42 @@ describe('affiliate ownership and accrual', () => {
     (record.accruals as any[]).push({ sourceDigest: data.sourceDigest, deltaMinor: 100n });
     await service.reconcile('owner');
     expect(tx.affiliateAccrual.create).toHaveBeenCalledTimes(1);
+  });
+  it.each(['unconfigured', 'draft', 'ineffective visit', 'different visit policy', 'different visit identity'])('does not append positive accrual for %s provenance', async invalid => {
+    const { service, tx } = setup();
+    const record = accrualRecord();
+    if (invalid === 'unconfigured') record.policy.content.fundingSource = 'unconfigured';
+    if (invalid === 'draft') record.policy.status = 'draft';
+    if (invalid === 'ineffective visit') record.policy.effectiveAt = new Date(now.getTime() - 1500);
+    if (invalid === 'different visit policy') record.visit.policyRevisionId = 'other';
+    if (invalid === 'different visit identity') record.visit.identityId = 'other';
+    tx.affiliateAttribution.findMany.mockResolvedValue([record] as never);
+    expect(await service.reconcile('owner')).toMatchObject({ items: [{ status: 'unavailable', reason: 'REFERRAL_POLICY_INVALID' }] });
+    expect(tx.affiliateAccrual.create).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+  it('preserves history and appends only the canonical negative refund correction for an old unfunded policy', async () => {
+    const { service, tx, settings } = setup();
+    const record = accrualRecord();
+    record.policy.content.fundingSource = 'unconfigured';
+    record.accruals.push({ sourceDigest: 'historical', deltaMinor: 100n });
+    record.order.refunds.push({ id: 'refund', settlementId: 's', status: 'recorded', currency: 'VND', amountMinor: 500n, recordedAt: now });
+    settings.current.mockResolvedValue({ settings: { affiliate: { ...policy, enabled: false } }, versions: {} } as never);
+    tx.affiliateAttribution.findMany.mockResolvedValue([record] as never);
+    await service.reconcile('owner');
+    const data = tx.affiliateAccrual.create.mock.calls[0][0].data;
+    expect(data.deltaMinor).toBe(-50n);
+    record.accruals.push(data);
+    await service.reconcile('owner');
+    expect(tx.affiliateAccrual.create).toHaveBeenCalledTimes(1);
+    expect(record.accruals[0]).toEqual({ sourceDigest: 'historical', deltaMinor: 100n });
+  });
+  it('uses the historically admitted version even when current participation is disabled', async () => {
+    const { service, tx, settings } = setup();
+    settings.current.mockResolvedValue({ settings: { affiliate: { ...policy, enabled: false } }, versions: {} } as never);
+    tx.affiliateAttribution.findMany.mockResolvedValue([accrualRecord()] as never);
+    await service.reconcile('owner');
+    expect(tx.affiliateAccrual.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ deltaMinor: 100n }) }));
   });
   it('scopes performance data and exported fields to current affiliate ownership', async () => {
     const { service, tx } = setup();

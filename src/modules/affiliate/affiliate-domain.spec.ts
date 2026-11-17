@@ -1,4 +1,4 @@
-import { affiliatePolicyReady, evaluateAffiliateAccrual, type AffiliatePolicy } from './affiliate-domain';
+import { affiliateAdmissionReady, affiliatePolicyReady, evaluateAffiliateAccrual, type AffiliatePolicy } from './affiliate-domain';
 import type { MembershipSpendOrder } from '../membership-cards/membership-card.evaluator';
 const at = new Date('2026-11-11T00:00:00Z');
 const policy: AffiliatePolicy = { enabled: true, currency: 'VND', commissionBase: 'net_paid_after_recorded_refunds', attributionModel: 'first_touch',
@@ -6,6 +6,14 @@ const policy: AffiliatePolicy = { enabled: true, currency: 'VND', commissionBase
 const order: MembershipSpendOrder = { id: 'order', status: 'confirmed', fulfillmentStatus: 'fulfilled', currency: 'VND', payableAmountMinor: 101n,
   confirmedSettlementId: 'settlement', confirmedSettlement: { id: 'settlement', orderId: 'order', currency: 'VND', amountMinor: 101n, settledAt: at, kind: 'provider_collection', disposition: 'matched' }, refunds: [] };
 describe('affiliate commission source', () => {
+  it('requires configured funding for new admission while retaining historical canonical valuation', () => {
+    expect(affiliateAdmissionReady(policy)).toBe(false);
+    const funded = { ...policy, fundingSource: 'platform_fee', allocationPrecedence: 'seller_entitlements_first' };
+    expect(affiliateAdmissionReady(funded)).toBe(true);
+    expect(affiliateAdmissionReady({ ...funded, enabled: false })).toBe(false);
+    expect(affiliateAdmissionReady({ ...funded, allocationPrecedence: 'unconfigured' })).toBe(false);
+    expect(evaluateAffiliateAccrual(policy, 'historical', order, at, at)).toMatchObject({ status: 'evaluated', targetMinor: 10n });
+  });
   it('retains earned commission beyond the membership qualification window', () => {
     const initial = evaluateAffiliateAccrual(policy, 'revision', order, at, at);
     const later = evaluateAffiliateAccrual(policy, 'revision', order, at, new Date('2040-11-11T00:00:00Z'));
