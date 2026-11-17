@@ -50,3 +50,23 @@ test('backend CI covers new GDS source, disposable migrations and restricted aff
     assert.ok(workflow.includes(target), `CI must cover ${target}`);
   }
 });
+
+test('affiliate dashboard replay refuses non-CI and non-disposable database targets before loading runtime', () => {
+  const { spawnSync } = require('node:child_process');
+  const target = join(root, 'scripts/test-affiliate-dashboard-prisma.cjs');
+  const local = 'postgresql://eduai_migration_replay:synthetic@127.0.0.1:5432/eduai_migration_replay';
+  for (const [ci, url] of [
+    ['false', local], ['', local], ['true', ''],
+    ['true', local.replace('127.0.0.1', 'external.example.test')],
+    ['true', local.replace('/eduai_migration_replay', '/production')],
+    ['true', local.replace('eduai_migration_replay:', 'production:')],
+    ['true', local.replace('postgresql:', 'https:')],
+    ['true', local + '?host=external.example.test'],
+    ['true', local + '#unexpected'],
+  ]) {
+    const result = spawnSync(process.execPath, [target], { encoding: 'utf8', env: { ...process.env, CI: ci, DATABASE_URL: url } });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AFFILIATE_DASHBOARD_PRISMA=FAIL AssertionError/);
+    assert.equal(result.stdout, '');
+  }
+});

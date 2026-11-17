@@ -105,6 +105,9 @@ jobs:
       - name: Verify private support intake and images with restricted Prisma role
         run: node scripts/test-platform-requests-prisma.cjs
 
+      - name: Verify owner-scoped affiliate dashboard signed history and immutable reads
+        run: node scripts/test-affiliate-dashboard-prisma.cjs
+
       - name: Verify private backup against the disposable replay database
         run: |
           node -e 'const {backupGdsPlatform}=require("./scripts/backup-gds-platform.cjs"); console.log(JSON.stringify(backupGdsPlatform({loadDatabaseUrl:()=>process.env.DATABASE_URL})));'
