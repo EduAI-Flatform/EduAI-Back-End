@@ -29,7 +29,7 @@ async function main() {
     await membership.reconcileDue();
     // A missing version must reach the domain validation, rather than fail while decoding the lock.
     const admin = new MembershipAdminService(db, null, null);
-    await assert.rejects(admin.configureIncludedCourse(randomUUID(), randomUUID(), { courseId: randomUUID(), graceDays: 0 }), NotFoundException);
+    await assert.rejects(admin.archiveVersion(randomUUID(), randomUUID()), NotFoundException);
     process.stdout.write('REVENUE_ADVISORY_LOCK_PRISMA=PASS\n');
   } finally {
     await db.$disconnect();
