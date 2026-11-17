@@ -36,6 +36,20 @@ function setup() {
   };
 }
 describe("versioned platform policies", () => {
+  it('allows an unfunded affiliate draft but prevents scheduling it until funding is configured', async () => {
+    const { service, revision, tx } = setup();
+    const content = { ...structuredClone(DEFAULT_PLATFORM_SETTINGS.affiliate), enabled: true };
+    Object.assign(revision, { group: 'affiliate', status: 'approved', content });
+    expect(await service.preview('revision')).toMatchObject({ canSchedule: false, blockers: ['AFFILIATE_FUNDING_NOT_CONFIGURED'] });
+    await expect(service.schedule('admin', 'revision', new Date(Date.now() + 60000))).rejects.toMatchObject({
+      response: { blockers: ['AFFILIATE_FUNDING_NOT_CONFIGURED'] },
+    });
+    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
+    content.fundingSource = 'platform_fee';
+    expect(await service.preview('revision')).toMatchObject({ canSchedule: true, blockers: [] });
+    content.enabled = false; content.fundingSource = 'unconfigured';
+    expect(await service.preview('revision')).toMatchObject({ canSchedule: true, blockers: [] });
+  });
   it('exposes the supported request catalog only in the Admin settings response', async () => {
     const { service, tx } = setup();
     tx.serviceEntitlementDefinition.findMany.mockResolvedValue([{ id: 'definition', code: 'AI_CHAT',

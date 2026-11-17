@@ -21,6 +21,7 @@ import { readActivityPointReadiness } from '../tmi/activity-point.readiness';
 import { samePlatformPolicyContent } from './platform-policy-content';
 import { CARD_REQUEST_SERVICES, inspectCardServiceBindings, isBoundCardRequestDefinition } from '../membership-cards/card-service-bindings';
 import { readCardServiceReadiness } from '../membership-cards/card-service-readiness';
+import { affiliateAdmissionReady, type AffiliatePolicy } from '../affiliate/affiliate-domain';
 
 const publicGroups = [
   "branding",
@@ -269,6 +270,9 @@ export class PlatformSettingsService {
     }
     if (group === "affiliate" && c.subAffiliateEnabled) {
       return ["SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED"];
+    }
+    if (group === 'affiliate' && !affiliateAdmissionReady(content as AffiliatePolicy)) {
+      return ['AFFILIATE_FUNDING_NOT_CONFIGURED'];
     }
     if (group === "points") {
       const readiness = await readActivityPointReadiness(client);

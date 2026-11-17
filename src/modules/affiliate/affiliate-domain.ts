@@ -21,6 +21,23 @@ export function affiliatePolicyReady(policy: AffiliatePolicy) {
     && Number.isInteger(policy.attributionDays) && policy.attributionDays >= 1 && policy.attributionDays <= 365
     && !policy.subAffiliateEnabled;
 }
+/** New participation/value requires configured funding; historical refund valuation does not. */
+export function affiliateAdmissionReady(policy: AffiliatePolicy) {
+  return policy.enabled && affiliatePolicyReady(policy) && policy.fundingSource === 'platform_fee'
+    && policy.allocationPrecedence === 'seller_entitlements_first';
+}
+
+export function affiliateFrozenAttributionReady(record: {
+  policyRevisionId: string; identityId: string; createdAt: Date;
+  policy: { id: string; group: string; status: string; effectiveAt: Date | null; content: unknown };
+  visit: { policyRevisionId: string; identityId: string; createdAt: Date };
+}) {
+  const { policy, visit } = record;
+  return policy.id === record.policyRevisionId && policy.group === 'affiliate' && policy.status === 'scheduled'
+    && visit.policyRevisionId === record.policyRevisionId && visit.identityId === record.identityId
+    && policy.effectiveAt !== null && policy.effectiveAt <= visit.createdAt && visit.createdAt <= record.createdAt
+    && affiliateAdmissionReady(policy.content as AffiliatePolicy);
+}
 /** Uses the same settlement/refund proof as card qualification, without a rolling purchase cutoff. */
 export function evaluateAffiliateAccrual(policy: AffiliatePolicy, revisionId: string, order: MembershipSpendOrder,
   attributedAt: Date, at = new Date()) {
