@@ -149,18 +149,25 @@ async function main() {
         unitListPriceAmountMinor: 1000000n, subtotalAmountMinor: 1000000n, discountAmountMinor: 0n, finalAmountMinor: 1000000n } });
       await tx.affiliateAttribution.create({ data: { identityId: paidIdentity.id, visitId: paidVisit.id,
         buyerId: buyer.id, orderId: order.id, policyRevisionId: revision.id } });
+      checkpoint = 'paid.attempt';
       const attempt = await tx.commercePaymentAttempt.create({ data: { orderId: order.id, provider: 'payos',
         localRequestIdentity: randomUUID(), providerPaymentIdentity: 'synthetic-' + randomUUID(),
-        providerOrderCode: BigInt('0x' + randomUUID().replaceAll('-', '').slice(0, 12)), amountMinor: 1000000n, currency: 'VND' } });
+        providerOrderCode: BigInt('0x' + randomUUID().replaceAll('-', '').slice(0, 12)),
+        providerExpiresAt: new Date(Date.now() + 3600000), providerRequestStartedAt: new Date(),
+        providerReceivingAccountHash: digest('synthetic-dashboard-receiving-account'),
+        amountMinor: 1000000n, currency: 'VND' } });
       const pendingOperation = randomUUID();
+      checkpoint = 'paid.pending';
       await tx.commercePaymentAttempt.update({ where: { id: attempt.id }, data: { status: 'pending', statusOperationId: pendingOperation } });
       await tx.commerceLifecycleEvent.create({ data: { entityType: 'payment', entityId: attempt.id,
         previousStatus: 'created', nextStatus: 'pending', actorKind: 'user', actorId: buyer.id,
         operationId: pendingOperation, reasonCode: 'SYNTHETIC_PROVIDER_PENDING' } });
       const settledAt = new Date(), reference = 'synthetic-' + randomUUID();
+      checkpoint = 'paid.event';
       const event = await tx.commercePaymentEvent.create({ data: { paymentAttemptId: attempt.id, provider: 'payos',
         providerEventIdentity: 'synthetic-' + randomUUID(), providerPaymentIdentity: attempt.providerPaymentIdentity,
         providerSettlementReference: reference, amountMinor: 1000000n, currency: 'VND', nextStatus: 'paid', providerOccurredAt: settledAt } });
+      checkpoint = 'paid.settlement';
       const settlement = await tx.commerceSettlement.create({ data: { orderId: order.id, paymentAttemptId: attempt.id, paymentEventId: event.id,
         kind: 'provider_collection', disposition: 'matched', provider: 'payos', providerSettlementReference: reference,
         amountMinor: 1000000n, currency: 'VND', settledAt } });
