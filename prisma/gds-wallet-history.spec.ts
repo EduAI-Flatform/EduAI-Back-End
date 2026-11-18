@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { historyQuery, parseHistoryQuery, encodeHistoryCursor, readHistoryPage } from '../src/modules/wallet/gds-wallet-history';
+import { GdsWalletService } from '../src/modules/wallet/gds-wallet.service';
 
 const owner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const other = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -20,6 +21,26 @@ describe('paginated owned wallet activity', () => {
   });
   afterAll(() => db.close());
   const reader = { $queryRaw: async (q: any) => (await db.query(q.text, q.values)).rows };
+  it('exports the exact owner-filtered SQL history, masked and deduplicated, excluding future events', async () => {
+    const database = { $transaction: async (fn: (tx: typeof reader) => unknown) => fn(reader) };
+    const service = new GdsWalletService(database as never, { app: { deploymentClass: 'uat', nodeEnv: 'test' }, gdsWallet: { sandboxEnabled: true } } as never);
+    await db.exec('BEGIN');
+    try {
+      await db.exec(`INSERT INTO gds_internal_journal VALUES (md5('future-export')::uuid,'${owner}','TOPUP_CREDIT',777777,'2099-01-01T00:00:00Z',NULL)`);
+      const before = (await db.query('SELECT count(*)::int AS count FROM gds_internal_journal')).rows;
+      const result = await service.exportTransactions(owner, 'withdrawals');
+      expect(result).toMatchObject({ exported: 1, complete: true, scope: 'filtered_history', filter: 'withdrawals' });
+      const contents = Buffer.from(result.dataBase64, 'base64').toString('utf8');
+      expect(contents).toContain('••••6789');
+      expect(contents).not.toContain('000123456789');
+      expect(contents).not.toContain('999999');
+      const incoming = await service.exportTransactions(owner, 'incoming');
+      expect(incoming.exported).toBe(12);
+      expect(Buffer.from(incoming.dataBase64, 'base64').toString('utf8')).not.toContain('777777');
+      expect((await service.exportTransactions(other, 'incoming')).exported).toBe(1);
+      expect((await db.query('SELECT count(*)::int AS count FROM gds_internal_journal')).rows).toEqual(before);
+    } finally { await db.exec('ROLLBACK'); }
+  });
   it('pages through more than40 mixed records with tied microsecond times without duplication', async () => {
     const ids: string[] = []; let cursor: string | undefined;
     do {

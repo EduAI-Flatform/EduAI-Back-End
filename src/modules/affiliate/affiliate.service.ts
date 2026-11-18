@@ -13,6 +13,7 @@ import { lockGdsFinance } from '../wallet/gds-revenue-wallet.service';
 import { GdsWithdrawalService } from '../wallet/gds-withdrawal.service';
 import { gdsWalletCapabilities } from '../wallet/gds-wallet-capabilities';
 import { isRetryableGdsTransaction } from '../wallet/gds-transaction-retry';
+import { loadAffiliateSummary } from './affiliate-summary';
 
 function tokenHash(value: string) { return createHash('sha256').update(value).digest('hex'); }
 
@@ -24,11 +25,13 @@ export class AffiliateService {
   async state(ownerId: string) {
     const effective = await this.settings.current();
     const policy = effective.settings.affiliate as AffiliatePolicy;
-    const [identities, referralCount, sums] = await Promise.all([
-      this.prisma.affiliateIdentity.findMany({ where: { ownerId }, orderBy: { kind: 'asc' }, select: { id: true, code: true, kind: true, status: true } }),
-      this.prisma.affiliateAttribution.count({ where: { identity: { ownerId } } }),
-      this.prisma.affiliateAccrual.aggregate({ where: { attribution: { identity: { ownerId } } }, _sum: { deltaMinor: true } }),
-    ]);
+    const { identities, referralCount, summary } = await this.prisma.$transaction(async tx => {
+      const asOf = new Date();
+      const identities = await tx.affiliateIdentity.findMany({ where: { ownerId }, orderBy: { kind: 'asc' }, select: { id: true, code: true, kind: true, status: true } });
+      const referralCount = await tx.affiliateAttribution.count({ where: { identity: { ownerId }, createdAt: { lt: asOf } } });
+      const summary = await loadAffiliateSummary(tx, ownerId, asOf);
+      return { identities, referralCount, summary };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     const wallet = this.walletAdapter ? await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId: ownerId } }) : null;
     const withdrawalSettings = this.withdrawals ? await this.withdrawals.settings() : null;
     const readEnabled = this.walletAdapter ? gdsWalletCapabilities(this.config).readEnabled : false;
@@ -39,7 +42,7 @@ export class AffiliateService {
         const base = this.config.app.publicAppUrl;
         const referralUrl = base ? new URL('/?ref=' + identity.code, base).toString() : null;
         return { ...identity, referralUrl, qrCodeDataUrl: referralUrl ? await QRCode.toDataURL(referralUrl, { width: 180, margin: 2 }) : null };
-      })), totalReferrals: referralCount, accruedAmountMinor: (sums._sum.deltaMinor ?? 0n).toString(),
+      })), totalReferrals: referralCount, accruedAmountMinor: summary.lifetimeCommissionMinor, summary,
       currency: 'VND', availableBalanceMinor: readEnabled ? (wallet?.availableMinor ?? 0n).toString() : null,
       heldBalanceMinor: readEnabled ? (wallet?.heldMinor ?? 0n).toString() : null,
       debtMinor: readEnabled ? (wallet?.debtMinor ?? 0n).toString() : null,

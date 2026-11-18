@@ -6,7 +6,11 @@ import { GdsWithdrawalService } from './gds-withdrawal.service';
 import { Prisma, RoleName } from '../../../generated/prisma/client';
 import { GdsIncomeSummary, GdsWalletTotals, isVndTotal, readIncomeSummary, walletTotalsQuery } from './gds-wallet-metrics';
 import { isRetryableGdsTransaction } from './gds-transaction-retry';
-import { HistoryQuery, readHistoryPage } from './gds-wallet-history';
+import { HistoryExport, HistoryQuery, readHistoryPage } from './gds-wallet-history';
+import { textWorkbook } from '../../common/exports/text-workbook';
+
+// Resource bound for one in-memory XLSX response; never a business-history limit.
+const HISTORY_EXPORT_LIMIT = 2000;
 
 export type GdsWalletSummary = {
   available: boolean;
@@ -53,6 +57,24 @@ export class GdsWalletService {
   transactions(ownerId: string, query: HistoryQuery) {
     if (!gdsWalletCapabilities(this.config).readEnabled) throw new ForbiddenException('GDS_WALLET_UNAVAILABLE');
     return readHistoryPage(this.prisma, ownerId, query);
+  }
+
+  async exportTransactions(ownerId: string, filter: HistoryQuery['filter']): Promise<HistoryExport> {
+    if (!gdsWalletCapabilities(this.config).readEnabled) throw new ForbiddenException('GDS_WALLET_UNAVAILABLE');
+    return this.prisma.$transaction<HistoryExport>(async tx => {
+      const asOf = new Date();
+      // Exact history source, lifecycle grouping, masking and filter semantics.
+      const history = await readHistoryPage(tx, ownerId, { filter, limit: HISTORY_EXPORT_LIMIT, asOf });
+      if (history.hasMore) throw new BadRequestException('GDS_HISTORY_EXPORT_LIMIT_EXCEEDED');
+      const workbook = textWorkbook([
+        ['ID', 'Type', 'Amount minor', 'Currency', 'Occurred at', 'Withdrawal ID', 'Status', 'Bank', 'Masked account'],
+        ...history.items.map(item => [item.id, item.type, item.amountMinor, 'VND', item.occurredAt,
+          item.withdrawalId ?? '', item.status ?? '', item.bankShortName ?? item.bankCode ?? '', item.accountNumber ?? '']),
+      ], 'Transactions');
+      return { filename: `gds-transactions-${filter}.xlsx`, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dataBase64: workbook.toString('base64'), exported: history.items.length, scope: 'filtered_history' as const,
+        complete: true as const, filter, asOf: asOf.toISOString() };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
   async summary(buyerId: string, topupId?: string, roles: readonly RoleName[] = []): Promise<GdsWalletSummary> {

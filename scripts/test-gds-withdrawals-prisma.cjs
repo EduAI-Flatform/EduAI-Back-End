@@ -320,6 +320,28 @@ async function main() {
       assert.equal(activity.items[0].accountNumber, '••••' + input.accountNumber.slice(-4));
       assert.equal(activity.items[0].status, 'PENDING');
       assert.equal(JSON.stringify(activity).includes(input.accountNumber), false);
+      const beforeExport = {
+        wallet: await balance(f.id),
+        withdrawal: await runtime.gdsWithdrawal.findUniqueOrThrow({ where: { id: created.id } }),
+        journalCount: await runtime.gdsInternalJournal.count({ where: { walletId: f.wallet.id } }),
+        auditCount: await db.auditLog.count({ where: { actorId: f.id } }),
+      };
+      const exportService = new GdsWalletService(runtime, config, runtimeService);
+      const exported = await exportService.exportTransactions(f.id, 'withdrawals');
+      assert.equal(exported.scope, 'filtered_history'); assert.equal(exported.complete, true);
+      assert.equal(exported.exported, 1); assert.equal(exported.filter, 'withdrawals');
+      const workbook = Buffer.from(exported.dataBase64, 'base64');
+      assert.equal(workbook.readUInt32LE(0), 0x04034b50);
+      assert.ok(workbook.toString('utf8').includes(created.id));
+      assert.equal(workbook.toString('utf8').includes(input.accountNumber), false);
+      assert.equal((await exportService.exportTransactions(randomUUID(), 'withdrawals')).exported, 0);
+      assert.deepEqual({
+        wallet: await balance(f.id),
+        withdrawal: await runtime.gdsWithdrawal.findUniqueOrThrow({ where: { id: created.id } }),
+        journalCount: await runtime.gdsInternalJournal.count({ where: { walletId: f.wallet.id } }),
+        auditCount: await db.auditLog.count({ where: { actorId: f.id } }),
+      }, beforeExport);
+      console.log('GDS_HISTORY_EXPORT_RESTRICTED_RUNTIME_READ_ONLY=PASS');
       await runtimeService.act(f.id, created.id, 'cancel', { reason: 'Synthetic runtime recovery' }, true);
       assert.equal((await balance(f.id)).availableMinor, 200000n);
       await assert.rejects(runtime.gdsInternalWallet.update({ where: { id: f.wallet.id }, data: { debtMinor: 1n } }));
