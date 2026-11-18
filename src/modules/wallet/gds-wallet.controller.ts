@@ -47,6 +47,13 @@ export class GdsWalletController {
     return this.wallet.transactions(ownerId, parseHistoryQuery(ownerId, filter, limit, cursor));
   }
 
+  @Get('transactions/export')
+  @ApiQuery({ name: 'filter', required: false, enum: ['all','incoming','outgoing','payments','withdrawals'] })
+  @RateLimit({ identity: 'user', limit: 5, name: 'gds-wallet-history-export', windowSeconds: 60 })
+  exportTransactions(@CurrentUser('id') ownerId: string, @Query('filter') filter?: string) {
+    return this.wallet.exportTransactions(ownerId, parseHistoryQuery(ownerId, filter).filter);
+  }
+
   @Post('topups/payos')
   @RateLimit({ identity: 'user', limit: 2, name: 'gds-payos-qr-preview', windowSeconds: 60 })
   createPayosQr(

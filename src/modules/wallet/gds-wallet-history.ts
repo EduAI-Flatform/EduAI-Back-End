@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 
 export type HistoryFilter = 'all' | 'incoming' | 'outgoing' | 'payments' | 'withdrawals';
-export interface HistoryQuery { filter: HistoryFilter; limit: number; before?: { micros: string; id: string } }
+export interface HistoryQuery { filter: HistoryFilter; limit: number; before?: { micros: string; id: string }; asOf?: Date }
 const filters = new Set(['all','incoming','outgoing','payments','withdrawals']);
 export function encodeHistoryCursor(owner: string, filter: HistoryFilter, micros: string, id: string): string {
   return Buffer.from(JSON.stringify([1,owner,filter,micros,id])).toString('base64url');
@@ -25,6 +25,12 @@ export function parseHistoryQuery(owner: string, filter: unknown = 'all', limit:
 export interface HistoryItem {
   id: string; type: string; amountMinor: string; occurredAt: string;
   withdrawalId?: string; status?: string; bankCode?: string; bankShortName?: string; accountNumber?: string;
+}
+export interface HistoryExport {
+  filename: string;
+  contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  dataBase64: string; exported: number; scope: 'filtered_history'; complete: true;
+  filter: HistoryFilter; asOf: string;
 }
 type HistoryDbRow = Omit<HistoryItem,'occurredAt'> & { occurredAt: Date | string; micros: string };
 
@@ -51,6 +57,7 @@ export function historyQuery(owner: string, query: HistoryQuery) {
     ), ordered AS (
       SELECT *, FLOOR(EXTRACT(EPOCH FROM "occurredAt")*1000000)::bigint AS sort_time FROM activity
       WHERE (${conditions[query.filter]})
+        ${query.asOf ? Prisma.sql`AND "occurredAt" < ${query.asOf}` : Prisma.empty}
     )
     SELECT id,type,"amountMinor","occurredAt","withdrawalId",status,"bankCode","bankShortName","accountNumber", sort_time::text AS micros
     FROM ordered
