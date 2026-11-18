@@ -27,6 +27,15 @@ function accrualRecord() {
       confirmedSettlement: { id: 's', orderId: 'order', amountMinor: 1000n, currency: 'VND', settledAt: now, kind: 'provider_collection', disposition: 'matched' }, refunds: [] as any[] } };
 }
 describe('affiliate ownership and accrual', () => {
+  it('returns summary and legacy commission from the same owner snapshot without posting', async () => {
+    const { service, db, tx } = setup();
+    tx.affiliateAccrual.aggregate.mockResolvedValue({ _sum: { deltaMinor: -50n } } as any);
+    const result = await service.state('owner');
+    expect(result).toMatchObject({ accruedAmountMinor: '-50', summary: { lifetimeCommissionMinor: '-50', timeZone: 'UTC',
+      ranking: { value: null }, subAffiliates: { count: null } } });
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ isolationLevel: 'RepeatableRead' }));
+    expect(tx.affiliateAccrual.create).not.toHaveBeenCalled(); expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
   it('does not admit identities or visits, or advertise readiness, without configured funding and an effective version', async () => {
     const { service, settings, tx } = setup();
     settings.current.mockResolvedValue({ settings: { affiliate: { ...policy, fundingSource: 'unconfigured' } }, versions: { affiliate: 'policy' } } as any);

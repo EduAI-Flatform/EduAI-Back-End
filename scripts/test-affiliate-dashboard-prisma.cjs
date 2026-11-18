@@ -1,6 +1,8 @@
 'use strict';
 // Read-model acceptance only: synthetic historical accruals (including refund corrections),
-// NOT evidence that these pending orders earn commission. No reconciliation/provider/wallet posting.
+// NOT evidence that pending orders earn commission. Canonical paid/refund fixtures below
+// use synthetic stored provider proof and real fulfillment/refund services, never a provider API.
+// No reconciliation or wallet posting occurs.
 // Immutable fixtures intentionally remain until the disposable CI database is destroyed.
 const assert = require('node:assert/strict');
 const { randomUUID, createHash } = require('node:crypto');
@@ -19,6 +21,10 @@ async function main() {
   const { AffiliateService } = require('../dist/src/modules/affiliate/affiliate.service.js');
   const { PlatformSettingsService } = require('../dist/src/modules/platform/platform-settings.service.js');
   const { DEFAULT_PLATFORM_SETTINGS } = require('../dist/src/modules/platform/platform-settings.defaults.js');
+  const { AuditService } = require('../dist/src/common/audit/audit.service.js');
+  const { CourseAccessService } = require('../dist/src/modules/access/course-access.service.js');
+  const { CommerceFulfillmentService } = require('../dist/src/modules/payments/commerce-fulfillment.service.js');
+  const { PaymentRefundService } = require('../dist/src/modules/payments/payment-refund.service.js');
   const QRCode = require('qrcode');
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const digest = text => createHash('sha256').update(text).digest('hex');
@@ -92,6 +98,20 @@ async function main() {
       const state = await service.state(user.id);
       assert.equal(state.enabled, false); assert.equal(state.policyRevisionId, revision.id);
       assert.equal(state.totalReferrals, count); assert.equal(state.accruedAmountMinor, amount);
+      assert.equal(state.summary.lifetimeCommissionMinor, amount);
+      assert.equal(state.summary.timeZone, 'UTC');
+      assert.equal(state.summary.commissionStatus, 'available');
+      for (const period of [state.summary.today, state.summary.month]) {
+        assert.equal(period.endsBefore, state.summary.asOf);
+        const expected = before.accruals.filter(row => before.attributions.some(attribution => attribution.id === row.attributionId
+          && before.identities.some(identity => identity.id === attribution.identityId && identity.ownerId === user.id)))
+          .filter(row => row.createdAt >= new Date(period.startsAt) && row.createdAt < new Date(period.endsBefore))
+          .reduce((sum, row) => sum + row.deltaMinor, 0n).toString();
+        assert.equal(period.amountMinor, expected);
+      }
+      assert.equal(state.summary.revenue.status, 'available');
+      assert.equal(state.summary.revenue.amountMinor, '0'); // These synthetic orders are still pending.
+      assert.equal(state.summary.ranking.value, null); assert.equal(state.summary.subAffiliates.count, null);
       assert.equal(state.identities.length, identityCount); assert.equal(state.currency, 'VND');
       for (const key of ['availableBalanceMinor', 'heldBalanceMinor', 'debtMinor']) assert.equal(state[key], null);
       assert.equal(state.withdrawalEnabled, false); assert.equal(state.subAffiliateEnabled, false);
@@ -112,7 +132,99 @@ async function main() {
     assert.equal((await disabledWallet.state(owner.id)).availableBalanceMinor, null);
     await assert.rejects(() => service.identity(owner.id, 'general', ['student']), /AFFILIATE_PROGRAM_DISABLED/);
     assert.deepEqual(await snapshot(), before);
-    process.stdout.write('AFFILIATE_DASHBOARD_PRISMA=PASS signed_owner_aggregates disabled_policy real_qr immutable_reads\n');
+
+    // Separate native source fixture: full canonical payment chain, with every
+    // database transition/total/source guard retained. This is stored synthetic
+    // evidence, not a call to or certification of a real payment provider.
+    checkpoint = 'paid.fixture';
+    const paidOwner = await db.user.create({ data: { email: `${randomUUID()}@synthetic.invalid`, fullName: 'Synthetic paid dashboard owner' } });
+    const paidIdentity = await db.affiliateIdentity.create({ data: { ownerId: paidOwner.id, kind: 'general', code: randomUUID().replaceAll('-', '').slice(0, 30) } });
+    const paidVisit = await db.affiliateVisit.create({ data: { identityId: paidIdentity.id, policyRevisionId: revision.id,
+      tokenHash: digest(randomUUID()), expiresAt: new Date(Date.now() + 86400000) } });
+    const paid = await db.$transaction(async tx => {
+      const order = await tx.commerceOrder.create({ data: { buyerId: buyer.id, orderNumber: 'dashboard-paid-' + randomUUID().slice(0, 20),
+        subtotalAmountMinor: 1000000n, payableAmountMinor: 1000000n, pricingPolicyVersion: 'synthetic-read-model' } });
+      const line = await tx.commerceOrderLine.create({ data: { orderId: order.id, productId: product.id, productType: 'course',
+        productReferenceId: course.id, sellerId: owner.id, displayTitle: course.title, currency: 'VND',
+        unitListPriceAmountMinor: 1000000n, subtotalAmountMinor: 1000000n, discountAmountMinor: 0n, finalAmountMinor: 1000000n } });
+      await tx.affiliateAttribution.create({ data: { identityId: paidIdentity.id, visitId: paidVisit.id,
+        buyerId: buyer.id, orderId: order.id, policyRevisionId: revision.id } });
+      const attempt = await tx.commercePaymentAttempt.create({ data: { orderId: order.id, provider: 'payos',
+        localRequestIdentity: randomUUID(), providerPaymentIdentity: 'synthetic-' + randomUUID(),
+        providerOrderCode: BigInt('0x' + randomUUID().replaceAll('-', '').slice(0, 12)), amountMinor: 1000000n, currency: 'VND' } });
+      const pendingOperation = randomUUID();
+      await tx.commercePaymentAttempt.update({ where: { id: attempt.id }, data: { status: 'pending', statusOperationId: pendingOperation } });
+      await tx.commerceLifecycleEvent.create({ data: { entityType: 'payment', entityId: attempt.id,
+        previousStatus: 'created', nextStatus: 'pending', actorKind: 'user', actorId: buyer.id,
+        operationId: pendingOperation, reasonCode: 'SYNTHETIC_PROVIDER_PENDING' } });
+      const settledAt = new Date(), reference = 'synthetic-' + randomUUID();
+      const event = await tx.commercePaymentEvent.create({ data: { paymentAttemptId: attempt.id, provider: 'payos',
+        providerEventIdentity: 'synthetic-' + randomUUID(), providerPaymentIdentity: attempt.providerPaymentIdentity,
+        providerSettlementReference: reference, amountMinor: 1000000n, currency: 'VND', nextStatus: 'paid', providerOccurredAt: settledAt } });
+      const settlement = await tx.commerceSettlement.create({ data: { orderId: order.id, paymentAttemptId: attempt.id, paymentEventId: event.id,
+        kind: 'provider_collection', disposition: 'matched', provider: 'payos', providerSettlementReference: reference,
+        amountMinor: 1000000n, currency: 'VND', settledAt } });
+      const paidOperation = randomUUID();
+      await tx.commercePaymentAttempt.update({ where: { id: attempt.id }, data: { status: 'paid', statusOperationId: paidOperation, paidAt: settledAt } });
+      await tx.commerceLifecycleEvent.create({ data: { entityType: 'payment', entityId: attempt.id,
+        previousStatus: 'pending', nextStatus: 'paid', actorKind: 'user', actorId: buyer.id,
+        operationId: paidOperation, reasonCode: 'SYNTHETIC_PROVIDER_PAID' } });
+      const orderOperation = randomUUID();
+      await tx.commerceOrder.update({ where: { id: order.id }, data: { status: 'confirmed', confirmedSettlementId: settlement.id,
+        confirmedAt: settledAt, statusOperationId: orderOperation } });
+      await tx.commerceLifecycleEvent.create({ data: { entityType: 'order', entityId: order.id,
+        previousStatus: 'pending_payment', nextStatus: 'confirmed', actorKind: 'user', actorId: buyer.id,
+        operationId: orderOperation, reasonCode: 'SYNTHETIC_PROVIDER_CONFIRMED' } });
+      return { orderId: order.id, lineId: line.id, settlementId: settlement.id, attemptId: attempt.id };
+    });
+    const audit = new AuditService(db), access = new CourseAccessService(db, config);
+    const fulfillment = new CommerceFulfillmentService(db, access, audit, { createForUser: async () => {} });
+    checkpoint = 'paid.fulfill';
+    await fulfillment.fulfillConfirmedPayment(paid.orderId, paid.settlementId, 'user', buyer.id);
+    assert.equal((await db.commerceOrder.findUniqueOrThrow({ where: { id: paid.orderId } })).fulfillmentStatus, 'fulfilled');
+    const paidSnapshot = async () => {
+      const refunds = await db.commerceRefund.findMany({ where: { orderId: paid.orderId }, include: { allocations: true }, orderBy: { id: 'asc' } });
+      return {
+        state: await snapshot(),
+        paidIdentity: await db.affiliateIdentity.findUnique({ where: { id: paidIdentity.id } }),
+        paidVisit: await db.affiliateVisit.findUnique({ where: { id: paidVisit.id } }),
+        paidAttributions: await db.affiliateAttribution.findMany({ where: { identityId: paidIdentity.id }, orderBy: { id: 'asc' } }),
+        paidAccruals: await db.affiliateAccrual.findMany({ where: { attribution: { identityId: paidIdentity.id } }, orderBy: { id: 'asc' } }),
+        settlements: await db.commerceSettlement.findMany({ where: { orderId: paid.orderId } }),
+        attempts: await db.commercePaymentAttempt.findMany({ where: { orderId: paid.orderId } }),
+        events: await db.commercePaymentEvent.findMany({ where: { paymentAttemptId: paid.attemptId } }), refunds,
+        grants: await db.courseAccessGrant.findMany({ where: { userId: buyer.id }, orderBy: { id: 'asc' } }),
+        lifecycle: await db.commerceLifecycleEvent.findMany({ where: { entityId: { in: [paid.orderId, paid.attemptId, ...refunds.map(refund => refund.id)] } }, orderBy: { id: 'asc' } }),
+        journalCount: await db.gdsInternalJournal.count({ where: { orderRef: paid.orderId } }),
+        paidWallet: await db.gdsInternalWallet.findUnique({ where: { buyerId: paidOwner.id } }),
+        buyerWallet: await db.gdsInternalWallet.findUnique({ where: { buyerId: buyer.id } }),
+        paidAudits: await db.auditLog.findMany({ where: { actorId: paidOwner.id }, orderBy: { id: 'asc' } }),
+      };
+    };
+    checkpoint = 'paid.read';
+    const paidBefore = await paidSnapshot();
+    const paidState = await service.state(paidOwner.id);
+    assert.equal(paidState.totalReferrals, 1); assert.equal(paidState.accruedAmountMinor, '0');
+    assert.equal(paidState.summary.revenue.status, 'available'); assert.equal(paidState.summary.revenue.amountMinor, '1000000');
+    assert.deepEqual(await paidSnapshot(), paidBefore);
+    checkpoint = 'paid.refund';
+    const refunds = new PaymentRefundService(db, { ...config, commerce: { idempotencySecret: 'synthetic-dashboard-refund-fixture-only' } }, audit, access);
+    const requested = await refunds.create(owner.id, randomUUID(), { settlementId: paid.settlementId, amountMinor: '250000',
+      reasonCode: 'SYNTHETIC_PARTIAL_REFUND', allocations: [{ orderLineId: paid.lineId, amountMinor: '250000' }] });
+    await refunds.record(owner.id, requested.id, { confirmExternalAction: true, externalReference: 'synthetic-refund-' + randomUUID(),
+      expectedUpdatedAt: requested.updatedAt.toISOString() });
+    checkpoint = 'paid.refunded.read';
+    const refundedBefore = await paidSnapshot();
+    assert.deepEqual(refundedBefore.grants, paidBefore.grants); // Real partial-refund service preserves purchased access.
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const state = await service.state(paidOwner.id);
+      assert.equal(state.summary.revenue.status, 'available'); assert.equal(state.summary.revenue.amountMinor, '750000');
+      assert.equal(state.summary.lifetimeCommissionMinor, '0');
+    }
+    assert.equal((await service.state(other.id)).summary.revenue.amountMinor, '0');
+    assert.equal(refundedBefore.journalCount, 0);
+    assert.deepEqual(await paidSnapshot(), refundedBefore);
+    process.stdout.write('AFFILIATE_DASHBOARD_PRISMA=PASS signed_owner_aggregates disabled_policy real_qr canonical_net_revenue partial_refund immutable_reads\n');
   } finally { await db.$disconnect(); }
 }
 main().catch(error => {
