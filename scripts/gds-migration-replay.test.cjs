@@ -70,3 +70,11 @@ test('affiliate dashboard replay refuses non-CI and non-disposable database targ
     assert.equal(result.stdout, '');
   }
 });
+
+test('native replay retains versioned affiliate ranking and immutable financial/access acceptance checks', () => {
+  const workflow = readFileSync(join(root, '.github/workflows/gds-migration-replay.yml'), 'utf8');
+  const replay = readFileSync(join(root, 'scripts/test-affiliate-dashboard-prisma.cjs'), 'utf8');
+  assert.ok(workflow.includes('node scripts/test-affiliate-dashboard-prisma.cjs'));
+  for (const marker of ['ranking.policy', 'ranking.read', 'ranking.permissions', 'rankingBefore', 'paidSnapshot',
+    'rankedTied.summary.ranking.value', "'not_participating'", 'futureDraft.id', 'legacyAffiliate']) assert.ok(replay.includes(marker), marker);
+});

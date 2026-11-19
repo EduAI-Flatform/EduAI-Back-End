@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import type { AffiliateRankingPolicy } from './affiliate-ranking.policy';
 import { evaluateSettledSpend, type MembershipSpendOrder } from '../membership-cards/membership-card.evaluator';
 export interface AffiliatePolicy {
+  ranking?: AffiliateRankingPolicy;
   fundingSource?: string;
   allocationPrecedence?: string;
   enabled: boolean;

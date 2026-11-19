@@ -30,18 +30,23 @@ async function main() {
   const digest = text => createHash('sha256').update(text).digest('hex');
   try {
     checkpoint = 'fixture.users';
-    const [owner, other, empty, buyer] = await Promise.all(['owner', 'other', 'empty', 'buyer'].map(label => db.user.create({
+    const [owner, other, empty, buyer, tied] = await Promise.all(['owner', 'other', 'empty', 'buyer', 'tied'].map(label => db.user.create({
       data: { email: `${randomUUID()}@synthetic.invalid`, fullName: `Synthetic dashboard ${label}` },
     })));
     checkpoint = 'fixture.policy';
     const version = (await db.platformPolicyRevision.aggregate({ where: { group: 'affiliate' }, _max: { version: true } }))._max.version ?? 0;
+    const legacyAffiliate = { ...DEFAULT_PLATFORM_SETTINGS.affiliate, enabled: false };
+    delete legacyAffiliate.ranking; // Actual old immutable JSON compatibility fixture.
     const revision = await db.platformPolicyRevision.create({ data: { group: 'affiliate', version: version + 1,
       status: 'scheduled', createdById: owner.id, approvedById: owner.id, approvedAt: new Date(), effectiveAt: new Date(),
-      content: { ...DEFAULT_PLATFORM_SETTINGS.affiliate, enabled: false },
+      content: legacyAffiliate,
     } });
     checkpoint = 'fixture.identities';
-    const identities = await Promise.all([[owner, 'general'], [owner, 'instructor'], [other, 'general']].map(([user, kind]) =>
+    const identities = await Promise.all([[owner, 'general'], [owner, 'instructor'], [other, 'general'], [tied, 'general']].map(([user, kind]) =>
       db.affiliateIdentity.create({ data: { ownerId: user.id, kind, code: randomUUID().replaceAll('-', '').slice(0, 30) } })));
+    // A current general identity qualifies the owner; retained inactive instructor
+    // history still contributes. General identity owners have no required student role.
+    await db.affiliateIdentity.update({ where: { id: identities[1].id }, data: { status: 'suspended' } });
     checkpoint = 'fixture.product';
     const course = await db.course.create({ data: { title: 'Synthetic dashboard course', slug: randomUUID(),
       instructorId: owner.id, level: 'beginner', status: 'published', visibility: 'public', priceAmountMinor: 1000000, priceCurrency: 'VND' } });
@@ -49,7 +54,7 @@ async function main() {
     await db.commerceProduct.update({ where: { id: product.id }, data: { status: 'active' } });
     // Owner: 120000 - 45000 + 5000 = 80000; other: 7000 - 12000 = -5000.
     // A no-accrual attribution still counts; neither visits nor accrual rows are referral counts.
-    for (const [index, deltas] of [[0, [120000n, -45000n]], [1, [5000n]], [0, []], [2, [7000n, -12000n]]]) {
+    for (const [index, deltas] of [[0, [120000n, -45000n]], [1, [5000n]], [0, []], [2, [7000n, -12000n]], [3, [80000n]]]) {
       const identity = identities[index];
       checkpoint = 'fixture.visit';
       const visit = await db.affiliateVisit.create({ data: { identityId: identity.id, policyRevisionId: revision.id,
@@ -76,7 +81,7 @@ async function main() {
     await db.affiliateVisit.create({ data: { identityId: identities[0].id, policyRevisionId: revision.id,
       tokenHash: digest(randomUUID()), expiresAt: new Date(Date.now() + 86400000) } });
     const snapshot = async () => {
-      const ownerIds = [owner.id, other.id, empty.id];
+      const ownerIds = [owner.id, other.id, empty.id, buyer.id, tied.id];
       return {
         identities: await db.affiliateIdentity.findMany({ where: { ownerId: { in: ownerIds } }, orderBy: { id: 'asc' } }),
         visits: await db.affiliateVisit.findMany({ where: { identity: { ownerId: { in: ownerIds } } }, orderBy: { id: 'asc' } }),
@@ -132,6 +137,67 @@ async function main() {
     assert.equal((await disabledWallet.state(owner.id)).availableBalanceMinor, null);
     await assert.rejects(() => service.identity(owner.id, 'general', ['student']), /AFFILIATE_PROGRAM_DISABLED/);
     assert.deepEqual(await snapshot(), before);
+
+    checkpoint = 'ranking.policy';
+    const rankingPolicy = { enabled: true, basis: 'recorded_signed_commission', period: 'lifetime', tiePolicy: 'competition' };
+    const draft = await settings.create(owner.id, 'affiliate', { ...legacyAffiliate, ranking: rankingPolicy });
+    const policyBeforeApproval = await service.state(owner.id);
+    assert.equal(policyBeforeApproval.summary.ranking.status, 'unconfigured');
+    assert.equal(policyBeforeApproval.summary.ranking.policyRevisionId, revision.id);
+    await settings.approve(owner.id, draft.id);
+    assert.equal((await service.state(owner.id)).summary.ranking.status, 'unconfigured');
+    const futureDraft = await settings.create(owner.id, 'affiliate', { ...legacyAffiliate,
+      ranking: { ...rankingPolicy, period: 'utc_day' } });
+    await settings.approve(owner.id, futureDraft.id);
+    await settings.schedule(owner.id, futureDraft.id, new Date(Date.now() + 86400000));
+    assert.equal((await service.state(owner.id)).summary.ranking.policyRevisionId, revision.id);
+    const enabledImpact = await settings.preview(draft.id);
+    assert.equal(enabledImpact.rankingImpact.beforeRevisionId, revision.id);
+    assert.equal(enabledImpact.rankingImpact.afterRevisionId, draft.id);
+    assert.equal(enabledImpact.rankingImpact.complete, true);
+    assert.ok(enabledImpact.rankingImpact.newlyRanked >= 3);
+    assert.equal(enabledImpact.rankingImpact.changedRanks, 0);
+    await settings.schedule(owner.id, draft.id, new Date());
+    assert.deepEqual((await db.platformPolicyRevision.findUnique({ where: { id: revision.id } })).content, legacyAffiliate);
+    // Add an actual zero-score participant and an instructor-only identity without
+    // its current role. These fixture writes precede the immutable-read snapshot.
+    const zeroIdentity = await db.affiliateIdentity.create({ data: { ownerId: buyer.id, kind: 'general', code: randomUUID().replaceAll('-', '') } });
+    const instructorIdentity = await db.affiliateIdentity.create({ data: { ownerId: empty.id, kind: 'instructor', code: randomUUID().replaceAll('-', '') } });
+    checkpoint = 'ranking.read';
+    const rankingBefore = await snapshot();
+    const [rankedOwner, rankedTied, rankedZero, rankedNegative, excluded] = await Promise.all([owner, tied, buyer, other, empty].map(user => service.state(user.id)));
+    assert.equal(rankedOwner.enabled, false); // Ranking never enables financial admission.
+    assert.equal(rankedOwner.summary.ranking.status, 'available');
+    assert.equal(rankedOwner.summary.ranking.policyRevisionId, draft.id);
+    assert.equal(rankedOwner.summary.ranking.value, rankedTied.summary.ranking.value);
+    assert.ok(rankedZero.summary.ranking.value > rankedOwner.summary.ranking.value);
+    assert.ok(rankedNegative.summary.ranking.value > rankedZero.summary.ranking.value);
+    assert.equal(excluded.summary.ranking.status, 'not_participating');
+    assert.equal(excluded.summary.ranking.value, null);
+    for (const state of [rankedOwner, rankedTied, rankedZero, rankedNegative]) {
+      assert.equal(state.summary.ranking.complete, true);
+      assert.equal(state.summary.ranking.asOf, state.summary.asOf);
+      assert.equal(state.summary.ranking.endsBefore, state.summary.asOf);
+      assert.equal(state.summary.ranking.timeZone, 'UTC');
+      for (const privateValue of [owner.id, other.id, tied.id, owner.email, other.email])
+        assert.ok(!JSON.stringify(state.summary.ranking).includes(privateValue));
+    }
+    assert.deepEqual(await snapshot(), rankingBefore);
+    checkpoint = 'ranking.permissions';
+    const instructorRole = await db.role.upsert({ where: { name: 'instructor' }, create: { name: 'instructor' }, update: {} });
+    await db.userRole.create({ data: { userId: empty.id, roleId: instructorRole.id } });
+    assert.equal((await service.state(empty.id)).summary.ranking.status, 'available');
+    await db.userRole.delete({ where: { userId_roleId: { userId: empty.id, roleId: instructorRole.id } } });
+    assert.equal((await service.state(empty.id)).summary.ranking.status, 'not_participating');
+    await db.user.update({ where: { id: buyer.id }, data: { status: 'suspended' } });
+    assert.equal((await service.state(buyer.id)).summary.ranking.status, 'not_participating');
+    await db.user.update({ where: { id: buyer.id }, data: { status: 'active', deletedAt: new Date() } });
+    assert.equal((await service.state(buyer.id)).summary.ranking.status, 'not_participating');
+    await db.user.update({ where: { id: buyer.id }, data: { deletedAt: null } });
+    await db.affiliateIdentity.update({ where: { id: zeroIdentity.id }, data: { status: 'suspended' } });
+    assert.equal((await service.state(buyer.id)).summary.ranking.status, 'not_participating');
+    // Keep excluded instructor fixture present, proving its existence grants no role.
+    assert.ok(instructorIdentity.id);
 
     // Separate native source fixture: full canonical payment chain, with every
     // database transition/total/source guard retained. This is stored synthetic
@@ -231,7 +297,7 @@ async function main() {
     assert.equal((await service.state(other.id)).summary.revenue.amountMinor, '0');
     assert.equal(refundedBefore.journalCount, 0);
     assert.deepEqual(await paidSnapshot(), refundedBefore);
-    process.stdout.write('AFFILIATE_DASHBOARD_PRISMA=PASS signed_owner_aggregates disabled_policy real_qr canonical_net_revenue partial_refund immutable_reads\n');
+    process.stdout.write('AFFILIATE_DASHBOARD_PRISMA=PASS signed_owner_aggregates disabled_policy versioned_ranking competition_ties historical_sources role_boundaries future_policy real_qr canonical_net_revenue partial_refund immutable_reads\n');
   } finally { await db.$disconnect(); }
 }
 main().catch(error => {
