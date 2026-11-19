@@ -1,3 +1,4 @@
+import { DEFAULT_AFFILIATE_RANKING } from '../affiliate/affiliate-ranking.policy';
 export const PLATFORM_GROUPS = [
   "branding",
   "navigation",
@@ -162,6 +163,7 @@ export const DEFAULT_PLATFORM_SETTINGS = {
     }>,
   },
   affiliate: {
+    ranking: { ...DEFAULT_AFFILIATE_RANKING },
     enabled: false,
     currency: "VND",
     commissionBase: "net_paid_after_recorded_refunds",

@@ -4,6 +4,16 @@ import {
   validatePlatformUrl,
 } from "./platform-settings.validation";
 describe("platform configuration validation", () => {
+  it('validates absent legacy ranking without rewriting it and rejects malformed present ranking', () => {
+    const old: any = structuredClone(DEFAULT_PLATFORM_SETTINGS.affiliate); delete old.ranking;
+    const original = JSON.stringify(old);
+    expect(validatePlatformSettings('affiliate', old)).toBe('affiliate');
+    expect(JSON.stringify(old)).toBe(original);
+    for (const ranking of [null, {}, { ...DEFAULT_PLATFORM_SETTINGS.affiliate.ranking, enabled: true },
+      { ...DEFAULT_PLATFORM_SETTINGS.affiliate.ranking, scoreExpression: 'unsafe' }]) {
+      expect(() => validatePlatformSettings('affiliate', { ...old, ranking })).toThrow();
+    }
+  });
   const quotaPolicy = () => ({ ...structuredClone(DEFAULT_PLATFORM_SETTINGS.membership),
     serviceLimits: { enabled: false, consumptionPriority: 'purchased_first', termAnchorAt: '', termMonths: 0 },
     tiers: DEFAULT_PLATFORM_SETTINGS.membership.tiers.map(tier => ({ ...tier,

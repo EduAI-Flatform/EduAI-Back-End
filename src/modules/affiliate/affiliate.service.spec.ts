@@ -7,6 +7,7 @@ function setup() {
   const visit = { id: 'visit', identityId: 'identity', policyRevisionId: 'policy', expiresAt: new Date(Date.now() + 86400000), createdAt: new Date(Date.now() - 10000),
     identity: { ownerId: 'referrer', status: 'active', owner: { status: 'active', deletedAt: null } }, policy: { group: 'affiliate', status: 'scheduled', effectiveAt: new Date(Date.now() - 20000), content: policy } };
   const tx = {
+    platformPolicyRevision: { findFirst: jest.fn().mockResolvedValue({ id: 'policy', content: policy }) },
     commerceOrder: { findFirst: jest.fn().mockResolvedValue({ id: 'order', buyerId: 'buyer', status: 'pending_payment', createdAt: new Date(), confirmedSettlementId: null }) },
     affiliateVisit: { findUnique: jest.fn().mockResolvedValue(visit), create: jest.fn().mockResolvedValue({ id: 'visit' }) },
     affiliateIdentity: { findUnique: jest.fn().mockResolvedValue({ id: 'identity', status: 'active', owner: { status: 'active', deletedAt: null } }), upsert: jest.fn().mockResolvedValue({ id: 'identity' }), findMany: jest.fn().mockResolvedValue([]) },
@@ -27,6 +28,20 @@ function accrualRecord() {
       confirmedSettlement: { id: 's', orderId: 'order', amountMinor: 1000n, currency: 'VND', settledAt: now, kind: 'provider_collection', disposition: 'matched' }, refunds: [] as any[] } };
 }
 describe('affiliate ownership and accrual', () => {
+  it('reads the effective ranking revision inside the summary snapshot without consulting earlier current settings', async () => {
+    const { service, tx, settings } = setup();
+    const ranking = { enabled: true, basis: 'recorded_referral_count', period: 'lifetime', tiePolicy: 'competition' };
+    tx.platformPolicyRevision.findFirst.mockResolvedValue({ id: 'snapshot-policy', content: { ...policy, enabled: false, ranking } } as any);
+    Object.assign(tx, { user: { findMany: jest.fn().mockResolvedValue([{ id: 'owner' }, { id: 'other' }]) } });
+    const result = await service.state('owner');
+    expect(result).toMatchObject({ enabled: false, policyRevisionId: 'snapshot-policy', summary: { ranking: {
+      status: 'available', value: 1, policyRevisionId: 'snapshot-policy', complete: true } } });
+    expect(result.summary.ranking.asOf).toBe(result.summary.asOf);
+    expect(tx.platformPolicyRevision.findFirst.mock.calls[0][0].where.effectiveAt.lte.toISOString()).toBe(result.summary.asOf);
+    expect(settings.current).not.toHaveBeenCalled();
+    expect(tx.affiliateAccrual.create).not.toHaveBeenCalled(); expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.summary.ranking)).not.toContain('other');
+  });
   it('returns summary and legacy commission from the same owner snapshot without posting', async () => {
     const { service, db, tx } = setup();
     tx.affiliateAccrual.aggregate.mockResolvedValue({ _sum: { deltaMinor: -50n } } as any);
@@ -39,10 +54,12 @@ describe('affiliate ownership and accrual', () => {
   it('does not admit identities or visits, or advertise readiness, without configured funding and an effective version', async () => {
     const { service, settings, tx } = setup();
     settings.current.mockResolvedValue({ settings: { affiliate: { ...policy, fundingSource: 'unconfigured' } }, versions: { affiliate: 'policy' } } as any);
+    tx.platformPolicyRevision.findFirst.mockResolvedValue({ id: 'policy', content: { ...policy, fundingSource: 'unconfigured' } });
     await expect(service.identity('owner', 'general', ['student'])).rejects.toThrow('AFFILIATE_PROGRAM_DISABLED');
     await expect(service.visit('referral-code')).rejects.toThrow('AFFILIATE_PROGRAM_DISABLED');
     expect(await service.state('owner')).toMatchObject({ enabled: false });
     settings.current.mockResolvedValue({ settings: { affiliate: policy }, versions: {} } as any);
+    tx.platformPolicyRevision.findFirst.mockResolvedValue(null);
     expect(await service.state('owner')).toMatchObject({ enabled: false });
     expect(tx.affiliateIdentity.upsert).not.toHaveBeenCalled();
     expect(tx.affiliateVisit.create).not.toHaveBeenCalled();

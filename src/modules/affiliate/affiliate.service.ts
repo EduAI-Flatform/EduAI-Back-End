@@ -14,6 +14,7 @@ import { GdsWithdrawalService } from '../wallet/gds-withdrawal.service';
 import { gdsWalletCapabilities } from '../wallet/gds-wallet-capabilities';
 import { isRetryableGdsTransaction } from '../wallet/gds-transaction-retry';
 import { loadAffiliateSummary } from './affiliate-summary';
+import { loadEffectiveAffiliatePolicy } from './affiliate-ranking';
 
 function tokenHash(value: string) { return createHash('sha256').update(value).digest('hex'); }
 
@@ -23,21 +24,21 @@ export class AffiliateService {
     @Optional() private readonly walletAdapter?: AffiliateWalletService, @Optional() private readonly withdrawals?: GdsWithdrawalService) {}
 
   async state(ownerId: string) {
-    const effective = await this.settings.current();
-    const policy = effective.settings.affiliate as AffiliatePolicy;
-    const { identities, referralCount, summary } = await this.prisma.$transaction(async tx => {
+    const { identities, referralCount, summary, effective } = await this.prisma.$transaction(async tx => {
       const asOf = new Date();
+      const effective = await loadEffectiveAffiliatePolicy(tx, asOf);
       const identities = await tx.affiliateIdentity.findMany({ where: { ownerId }, orderBy: { kind: 'asc' }, select: { id: true, code: true, kind: true, status: true } });
       const referralCount = await tx.affiliateAttribution.count({ where: { identity: { ownerId }, createdAt: { lt: asOf } } });
-      const summary = await loadAffiliateSummary(tx, ownerId, asOf);
-      return { identities, referralCount, summary };
+      const summary = await loadAffiliateSummary(tx, ownerId, asOf, effective);
+      return { identities, referralCount, summary, effective };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+    const policy = effective.policy;
     const wallet = this.walletAdapter ? await this.prisma.gdsInternalWallet.findUnique({ where: { buyerId: ownerId } }) : null;
     const withdrawalSettings = this.withdrawals ? await this.withdrawals.settings() : null;
     const readEnabled = this.walletAdapter ? gdsWalletCapabilities(this.config).readEnabled : false;
     const walletReady = !!this.walletAdapter && policy.fundingSource === 'platform_fee' && policy.allocationPrecedence === 'seller_entitlements_first';
     return {
-      enabled: !!effective.versions.affiliate && affiliateAdmissionReady(policy), policyRevisionId: effective.versions.affiliate ?? null,
+      enabled: !!effective.revisionId && affiliateAdmissionReady(policy), policyRevisionId: effective.revisionId,
       identities: await Promise.all(identities.map(async identity => {
         const base = this.config.app.publicAppUrl;
         const referralUrl = base ? new URL('/?ref=' + identity.code, base).toString() : null;

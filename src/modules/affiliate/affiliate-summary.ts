@@ -1,14 +1,18 @@
 import { Prisma } from '../../../generated/prisma/client';
 import { evaluateSettledSpend } from '../membership-cards/membership-card.evaluator';
 import { affiliateOrderSelect } from './affiliate-source';
+import { computeAffiliateRanking, selfAffiliateRanking, type AffiliateRankingSource } from './affiliate-ranking';
+import { DEFAULT_AFFILIATE_RANKING } from './affiliate-ranking.policy';
+import type { AffiliatePolicy } from './affiliate-domain';
 
 // Resource safeguards, not configurable commercial thresholds. Probe one extra
 // record and refuse a partial total, including high-fan-out refund sources.
 const ORDER_LIMIT = 1000;
 const REFUND_LIMIT = 10000;
-type Source = Pick<Prisma.TransactionClient, 'affiliateAccrual' | 'affiliateAttribution' | 'commerceRefund'>;
+type Source = Pick<Prisma.TransactionClient, 'affiliateAccrual' | 'affiliateAttribution' | 'commerceRefund'> & Partial<AffiliateRankingSource>;
 
-export async function loadAffiliateSummary(db: Source, ownerId: string, asOf: Date) {
+export async function loadAffiliateSummary(db: Source, ownerId: string, asOf: Date,
+  effective: { policy: AffiliatePolicy; revisionId: string | null } = { policy: {} as AffiliatePolicy, revisionId: null }) {
   if (!Number.isFinite(asOf.getTime())) throw new Error('INVALID_AFFILIATE_SUMMARY_DATE');
   const day = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate()));
   const month = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 1));
@@ -23,6 +27,9 @@ export async function loadAffiliateSummary(db: Source, ownerId: string, asOf: Da
   const today = await sum(day);
   const monthly = await sum(month);
   const revenue = await revenueAt(db, ownerId, asOf);
+  const rankingPolicy = Object.prototype.hasOwnProperty.call(effective.policy, 'ranking') ? effective.policy.ranking! : DEFAULT_AFFILIATE_RANKING;
+  const ranking = selfAffiliateRanking(await computeAffiliateRanking(db as AffiliateRankingSource, rankingPolicy, asOf),
+    rankingPolicy, effective.revisionId, ownerId, asOf);
   return {
     asOf: asOf.toISOString(), timeZone: 'UTC' as const, currency: 'VND' as const,
     commissionBasis: 'recorded_signed_accruals' as const,
@@ -30,7 +37,7 @@ export async function loadAffiliateSummary(db: Source, ownerId: string, asOf: Da
     today: { startsAt: day.toISOString(), endsBefore: asOf.toISOString(), amountMinor: today },
     month: { startsAt: month.toISOString(), endsBefore: asOf.toISOString(), amountMinor: monthly },
     revenue,
-    ranking: { status: 'unconfigured' as const, value: null, reason: 'RANKING_POLICY_NOT_CONFIGURED' },
+    ranking,
     subAffiliates: { status: 'disabled' as const, count: null, reason: 'SUB_AFFILIATE_POLICY_NOT_ENABLED' },
   };
 }

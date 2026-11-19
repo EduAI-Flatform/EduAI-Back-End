@@ -22,6 +22,8 @@ import { samePlatformPolicyContent } from './platform-policy-content';
 import { CARD_REQUEST_SERVICES, inspectCardServiceBindings, isBoundCardRequestDefinition } from '../membership-cards/card-service-bindings';
 import { readCardServiceReadiness } from '../membership-cards/card-service-readiness';
 import { affiliateAdmissionReady, type AffiliatePolicy } from '../affiliate/affiliate-domain';
+import { computeAffiliateRanking, computeAffiliateRankingImpact, loadEffectiveAffiliatePolicy, type AffiliateRankingSource } from '../affiliate/affiliate-ranking';
+import { withAffiliateRankingDefaults } from '../affiliate/affiliate-ranking.policy';
 
 const publicGroups = [
   "branding",
@@ -45,7 +47,7 @@ export class PlatformSettingsService {
     const versions: Record<string, string> = {};
     for (const row of records)
       if (!versions[row.group]) {
-        settings[row.group] = row.content;
+        settings[row.group] = row.group === 'affiliate' ? withAffiliateRankingDefaults(row.content) : row.content;
         versions[row.group] = row.id;
       }
     return { settings, versions };
@@ -91,6 +93,7 @@ export class PlatformSettingsService {
   }
 
   async create(actorId: string, group: string, content: unknown) {
+    content = group === 'affiliate' ? withAffiliateRankingDefaults(content) : content;
     validatePlatformSettings(group, content);
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -136,8 +139,18 @@ export class PlatformSettingsService {
   async preview(id: string, membershipPage: { after?: string; pageSize?: number } = {}) {
     const row = await this.get(id);
     const current = await this.current();
-    const before = current.settings[row.group];
-    const changed = !samePlatformPolicyContent(before, row.content);
+    let before = current.settings[row.group];
+    const after = row.group === 'affiliate' ? withAffiliateRankingDefaults(row.content) : row.content;
+    const rankingPreview = row.group === 'affiliate' ? await this.prisma.$transaction(async tx => {
+      const asOf = new Date();
+      const effective = await loadEffectiveAffiliatePolicy(tx, asOf);
+      const proposed = after as AffiliatePolicy;
+      const impact = await computeAffiliateRankingImpact(tx, effective.policy.ranking!, proposed.ranking!, effective.revisionId, row.id, asOf);
+      const blockers = await this.activationBlockers('affiliate', after, tx, null, impact.activationBlockers);
+      return { before: effective.policy, impact, blockers };
+    }, { isolationLevel: 'RepeatableRead' }) : null;
+    if (rankingPreview) before = rankingPreview.before;
+    const changed = !samePlatformPolicyContent(before, after);
     const membershipImpact = row.group === "membership"
       ? await this.prisma.$transaction(tx => computeMembershipCardImpact(
           tx, row.content as unknown as MembershipCardPolicy, row.id,
@@ -152,7 +165,7 @@ export class PlatformSettingsService {
       : null;
     const cardServiceBindings = row.group === 'membership'
       ? await inspectCardServiceBindings(this.prisma, row.content as unknown as MembershipCardPolicy) : null;
-    const blockers = await this.activationBlockers(
+    const blockers = rankingPreview?.blockers ?? await this.activationBlockers(
       row.group as PlatformGroup,
       row.content,
       this.prisma,
@@ -163,7 +176,7 @@ export class PlatformSettingsService {
       group: row.group,
       version: row.version,
       before,
-      after: row.content,
+      after,
       changed,
       canSchedule: blockers.length === 0,
       blockers,
@@ -171,6 +184,7 @@ export class PlatformSettingsService {
       membershipImpact: membershipImpact ? { ...membershipImpact, activationReady: blockers.length === 0, activationBlockers: blockers } : null,
       cardServiceBindings,
       pointsImpact,
+      rankingImpact: rankingPreview ? { ...rankingPreview.impact, activationReady: blockers.length === 0, activationBlockers: blockers } : null,
     };
   }
 
@@ -258,21 +272,28 @@ export class PlatformSettingsService {
   }
 
   private async activationBlockers(group: PlatformGroup, content: unknown,
-    client: Pick<Prisma.TransactionClient, '$queryRaw' | 'serviceEntitlementDefinition'> = this.prisma,
-    inspectedBindings?: Awaited<ReturnType<typeof inspectCardServiceBindings>> | null): Promise<string[]> {
+    client: Pick<Prisma.TransactionClient, '$queryRaw' | 'serviceEntitlementDefinition'> & AffiliateRankingSource = this.prisma,
+    inspectedBindings?: Awaited<ReturnType<typeof inspectCardServiceBindings>> | null, inspectedRankingBlockers?: string[]): Promise<string[]> {
     const c = content as Record<string, unknown>;
+    if (group === 'affiliate') {
+      const prepared = withAffiliateRankingDefaults(content) as AffiliatePolicy;
+      let rankingBlockers = inspectedRankingBlockers;
+      if (!rankingBlockers) {
+        const result = await computeAffiliateRanking(client, prepared.ranking!, new Date());
+        rankingBlockers = result.complete ? [] : [result.reason!];
+      }
+      // The reporting switch is independent of admission/funding, including when
+      // the top-level program is disabled. Preserve all existing financial gates.
+      const financialBlockers = c.enabled === false ? [] : c.subAffiliateEnabled
+        ? ['SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED'] : !affiliateAdmissionReady(prepared) ? ['AFFILIATE_FUNDING_NOT_CONFIGURED'] : [];
+      return [...rankingBlockers, ...financialBlockers];
+    }
     if (["membership", "points", "affiliate"].includes(group) && c.enabled === false) return [];
     if (group === 'membership' && (c.serviceLimits as { enabled?: boolean } | undefined)?.enabled === true) {
       const bindings = inspectedBindings ?? await inspectCardServiceBindings(client, content as MembershipCardPolicy);
       const readiness = await readCardServiceReadiness(client);
       return [...(readiness.ready ? [] : [readiness.reason]),
         ...new Set(bindings.issues.map(issue => issue.reason))];
-    }
-    if (group === "affiliate" && c.subAffiliateEnabled) {
-      return ["SUB_AFFILIATE_ATTRIBUTION_NOT_IMPLEMENTED"];
-    }
-    if (group === 'affiliate' && !affiliateAdmissionReady(content as AffiliatePolicy)) {
-      return ['AFFILIATE_FUNDING_NOT_CONFIGURED'];
     }
     if (group === "points") {
       const readiness = await readActivityPointReadiness(client);

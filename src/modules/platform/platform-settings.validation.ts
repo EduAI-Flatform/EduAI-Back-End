@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { withAffiliateRankingDefaults, validateAffiliateRanking } from '../affiliate/affiliate-ranking.policy';
 import { isISO8601 } from 'class-validator';
 import { SUPPORTED_POINT_EVENTS } from '../tmi/activity-point-policy';
 import { DEFAULT_CARD_SERVICE_LIMITS, validateCardServiceLimits, withCardServiceLimitDefaults } from '../membership-cards/membership-card-limits.policy';
@@ -111,7 +112,8 @@ export function validatePlatformSettings(
   if (!content || JSON.stringify(content).length > 100000) fail("size");
   const validated = group === 'membership' ? withCardServiceLimitDefaults(content)
     : group === 'courses' ? withCourseProgramDefaults(withCourseQuizDefaults(content))
-      : group === 'partners' ? withPartnerConnectionDefaults(content) : content;
+      : group === 'partners' ? withPartnerConnectionDefaults(content)
+        : group === 'affiliate' ? withAffiliateRankingDefaults(content) : content;
   validateShape(
     validated,
     group === 'membership' ? { ...DEFAULT_PLATFORM_SETTINGS.membership, serviceLimits: DEFAULT_CARD_SERVICE_LIMITS }
@@ -119,6 +121,7 @@ export function validatePlatformSettings(
     group,
   );
   const c = validated as Record<string, any>;
+  if (group === 'affiliate') validateAffiliateRanking(c.ranking);
   if (group === 'courses') {
     const ids = new Set<string>();
     for (const category of c.categories) {

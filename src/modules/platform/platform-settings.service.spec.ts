@@ -36,6 +36,53 @@ function setup() {
   };
 }
 describe("versioned platform policies", () => {
+  it('prepares canonical affiliate drafts while preserving old immutable JSON and the group validator contract', async () => {
+    const { service, tx } = setup();
+    const old: any = structuredClone(DEFAULT_PLATFORM_SETTINGS.affiliate); delete old.ranking;
+    const original = JSON.stringify(old);
+    await service.create('admin', 'affiliate', old);
+    expect(tx.platformPolicyRevision.create.mock.calls[0][0].data.content).toEqual({ ...old, ranking: DEFAULT_PLATFORM_SETTINGS.affiliate.ranking });
+    expect(JSON.stringify(old)).toBe(original);
+    tx.platformPolicyRevision.findMany.mockResolvedValue([{ id: 'legacy', group: 'affiliate', content: old }] as any);
+    expect(await service.current()).toMatchObject({ settings: { affiliate: { ranking: DEFAULT_PLATFORM_SETTINGS.affiliate.ranking } }, versions: { affiliate: 'legacy' } });
+    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
+  });
+  it('pairs preview provenance inside the ranking snapshot and keeps financial admission independently disabled', async () => {
+    const { service, tx, prisma, revision } = setup();
+    const before = { ...structuredClone(DEFAULT_PLATFORM_SETTINGS.affiliate), ranking: { enabled: true, basis: 'recorded_referral_count', period: 'lifetime', tiePolicy: 'competition' } };
+    Object.assign(revision, { group: 'affiliate', content: { ...before, ranking: { ...before.ranking, period: 'utc_month' } } });
+    // An earlier current read must not determine ranking's before-policy.
+    tx.platformPolicyRevision.findMany.mockResolvedValue([{ id: 'stale', group: 'affiliate', content: DEFAULT_PLATFORM_SETTINGS.affiliate }] as any);
+    tx.platformPolicyRevision.findFirst.mockResolvedValue({ id: 'snapshot-effective', content: before } as any);
+    tx.user.findMany.mockResolvedValue([{ id: 'participant' }] as any);
+    Object.assign(tx, { affiliateAttribution: { findMany: jest.fn().mockResolvedValue([]) } });
+    const preview = await service.preview('revision');
+    expect(preview).toMatchObject({ before, canSchedule: true, rankingImpact: { beforeRevisionId: 'snapshot-effective', afterRevisionId: 'revision', complete: true,
+      newlyRanked: 0, removedParticipants: 0, unchangedRanks: 1, changedRanks: 0 } });
+    const cutoff = tx.platformPolicyRevision.findFirst.mock.calls[0][0].where.effectiveAt.lte;
+    expect(preview.rankingImpact?.asOf).toBe(cutoff.toISOString());
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'RepeatableRead' });
+    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled(); expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+  it('blocks enabled ranking even when affiliate admission is disabled, but allows disabled-after recovery and future scheduling', async () => {
+    const { service, tx, revision } = setup();
+    const ranking = { enabled: true, basis: 'recorded_signed_commission', period: 'lifetime', tiePolicy: 'competition' };
+    const content = { ...structuredClone(DEFAULT_PLATFORM_SETTINGS.affiliate), ranking };
+    Object.assign(revision, { group: 'affiliate', status: 'approved', content });
+    tx.user.findMany.mockRejectedValue(new Error('private failure'));
+    expect(await service.preview('revision')).toMatchObject({ canSchedule: false, blockers: ['RANKING_SOURCE_UNAVAILABLE'] });
+    const future = new Date(Date.now() + 86400000);
+    await expect(service.schedule('admin', 'revision', future)).rejects.toMatchObject({ response: { blockers: ['RANKING_SOURCE_UNAVAILABLE'] } });
+    expect(tx.platformPolicyRevision.updateMany).not.toHaveBeenCalled();
+    tx.platformPolicyRevision.findFirst.mockResolvedValue({ id: 'unavailable-old', content } as any);
+    ranking.enabled = false;
+    // Frozen before fixture must remain enabled while the proposed draft disables.
+    tx.platformPolicyRevision.findFirst.mockResolvedValue({ id: 'unavailable-old', content: { ...content, ranking: { ...ranking, enabled: true } } } as any);
+    expect(await service.preview('revision')).toMatchObject({ canSchedule: true, rankingImpact: { complete: false, comparable: false,
+      beforeRevisionId: 'unavailable-old', newlyRanked: null, changedRanks: null, activationReady: true } });
+    await service.schedule('admin', 'revision', future);
+    expect(tx.platformPolicyRevision.updateMany).toHaveBeenCalledWith({ where: { id: 'revision', status: 'approved' }, data: { status: 'scheduled', effectiveAt: future } });
+  });
   it('allows an unfunded affiliate draft but prevents scheduling it until funding is configured', async () => {
     const { service, revision, tx } = setup();
     const content = { ...structuredClone(DEFAULT_PLATFORM_SETTINGS.affiliate), enabled: true };
