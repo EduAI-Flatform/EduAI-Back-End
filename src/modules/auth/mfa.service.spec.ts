@@ -63,6 +63,15 @@ describe('MfaService', () => {
     await expect(service.enroll(userId, 'owner@example.test', Math.floor(currentTime / 1000) - 301)).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(service.disable(userId, totpAt(secret, step), 0)).rejects.toBeInstanceOf(UnauthorizedException);
   });
+  it('identifies stale primary proof explicitly and keeps the five-minute boundary', () => {
+    const { service } = setup();
+    const now = Math.floor(currentTime / 1000);
+    expect(() => service.assertFreshPrimary(now - 300)).not.toThrow();
+    expect(() => service.assertFreshPrimary(now - 301)).toThrow(UnauthorizedException);
+    try { service.assertFreshPrimary(now - 301); } catch (error) {
+      expect((error as UnauthorizedException).getResponse()).toMatchObject({ error: 'MFA_REAUTHENTICATION_REQUIRED' });
+    }
+  });
   it('stores encrypted pending setup and never enables without a matching proof', async () => {
     const { service, tx } = setup();
     const response = await service.enroll(userId, 'owner@example.test', Math.floor(currentTime / 1000));

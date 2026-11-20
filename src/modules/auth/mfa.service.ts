@@ -43,7 +43,7 @@ export class MfaService {
   }
   assertFreshPrimary(authTime: number | undefined) {
     const age = Math.floor(Date.now() / 1000) - (authTime ?? 0);
-    if (age < -30 || age > 300) throw new UnauthorizedException('Sign in again before changing authenticator settings.');
+    if (age < -30 || age > 300) throw new UnauthorizedException({ error: 'MFA_REAUTHENTICATION_REQUIRED', message: 'Sign in again before changing authenticator settings.' });
   }
   async enroll(userId: string, email: string, authTime: number | undefined, transaction?: Prisma.TransactionClient) {
     this.assertFreshPrimary(authTime);

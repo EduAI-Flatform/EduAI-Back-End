@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BILLING_EXPORT_LIMIT, billingWorkbook, calendarDateRange } from '../../common/exports/billing-export';
 import {
   ListOrdersQueryDto,
   OrderHistoryItemResponseDto,
@@ -8,6 +9,7 @@ import {
 } from './dto/order-history.dto';
 
 const historyInclude = {
+  invoiceRequest: { select: { id: true, status: true } },
   membershipCheckoutIntent: { select: { action: true, startsAt: true, endsAt: true, durationOption: { select: { months: true } } } },
   lines: { orderBy: { createdAt: 'asc' as const } },
   paymentAttempts: { orderBy: { createdAt: 'desc' as const }, take: 1 },
@@ -23,14 +25,12 @@ export class CommerceOrderHistoryService {
     learnerId: string,
     query: ListOrdersQueryDto = { page: 1, pageSize: 20 },
   ): Promise<OrderHistoryPageResponseDto> {
-    if (query.startDate && query.endDate && query.startDate > query.endDate) throw new BadRequestException('Start date must not follow end date.');
-    const start = query.startDate ? new Date(query.startDate + 'T00:00:00+07:00') : undefined;
-    const end = query.endDate ? new Date(new Date(query.endDate + 'T00:00:00+07:00').getTime() + 86400000) : undefined;
+    const createdAt = calendarDateRange(query.startDate, query.endDate);
     const where: Prisma.CommerceOrderWhereInput = {
       buyerId: learnerId,
       archivedAt: null,
       ...(query.status ? { status: query.status } : {}),
-      ...(start || end ? { createdAt: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) } } : {}),
+      ...(createdAt ? { createdAt } : {}),
     };
     const [total, orders] = await Promise.all([
       this.prisma.commerceOrder.count({ where }),
@@ -60,6 +60,26 @@ export class CommerceOrderHistoryService {
     return this.project(order);
   }
 
+  async exportOrders(learnerId: string, query: ListOrdersQueryDto) {
+    const createdAt = calendarDateRange(query.startDate, query.endDate);
+    return this.prisma.$transaction(async tx => {
+      const asOf = new Date();
+      const orders = await tx.commerceOrder.findMany({
+        where: { buyerId: learnerId, archivedAt: null, ...(query.status ? { status: query.status } : {}),
+          createdAt: { ...createdAt, lt: createdAt?.lt && createdAt.lt < asOf ? createdAt.lt : asOf } },
+        include: { lines: { orderBy: { createdAt: 'asc' } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: BILLING_EXPORT_LIMIT + 1,
+      });
+      if (orders.length > BILLING_EXPORT_LIMIT) throw new BadRequestException('COMMERCE_ORDER_EXPORT_LIMIT_EXCEEDED');
+      return billingWorkbook('don-hang.xlsx', [
+        ['Mã đơn', 'Sản phẩm', 'Ngày tạo', 'Ngày thanh toán', 'Tổng tiền', 'Giảm giá', 'Thực trả', 'Tiền tệ', 'Trạng thái'],
+        ...orders.map(order => [order.orderNumber, order.lines.map(line => line.displayTitle + ' × ' + line.quantity).join('; '),
+          order.createdAt.toISOString(), order.confirmedAt?.toISOString() ?? '', order.subtotalAmountMinor.toString(),
+          order.discountAmountMinor.toString(), order.payableAmountMinor.toString(), order.currency, order.status.toUpperCase()]),
+      ], asOf);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
   private project(order: HistoryOrder): OrderHistoryItemResponseDto {
     const money = (amount: bigint) => ({
       amountMinor: amount.toString(),
@@ -69,6 +89,7 @@ export class CommerceOrderHistoryService {
     return {
       id: order.id,
       orderNumber: order.orderNumber,
+      invoiceRequest: order.invoiceRequest ?? null,
       status: order.status.toUpperCase(),
       fulfillmentStatus: order.fulfillmentStatus.toUpperCase(),
       subtotal: money(order.subtotalAmountMinor),

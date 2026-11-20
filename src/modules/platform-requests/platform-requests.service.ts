@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingsService } from '../platform/platform-settings.service';
 import { CreateInvoiceRequestDto, CreatePartnerApplicationDto, CreateSupportTicketDto, PartnerListQueryDto, RequestListQueryDto, SupportListQueryDto, UpdatePartnerApplicationDto, UpdateSupportTicketDto } from './platform-requests.dto';
 import { PLATFORM_REQUEST_HANDLERS } from './platform-requests.readiness';
+import { BILLING_EXPORT_LIMIT, billingWorkbook, calendarDateRange } from '../../common/exports/billing-export';
 
 export interface SupportImageUpload { buffer: Buffer; mimetype: string; size: number; }
 
@@ -60,12 +61,37 @@ export class PlatformRequestsService {
   }
 
   async listSupport(ownerId: string | undefined, query: SupportListQueryDto) {
-    const where = { ...(ownerId ? { ownerId } : {}), ...(query.status ? { status: query.status } : {}), ...(query.requestType ? { requestType: query.requestType } : {}) };
+    const createdAt = calendarDateRange(query.startDate, query.endDate);
+    const where = { ...(ownerId ? { ownerId } : {}), ...(query.status ? { status: query.status } : {}), ...(query.requestType ? { requestType: query.requestType } : {}), ...(createdAt ? { createdAt } : {}) };
     const [items, total] = await Promise.all([
-      this.prisma.platformSupportTicket.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: supportSelect }),
+      this.prisma.platformSupportTicket.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize, select: { ...supportSelect, invoiceDetails: true, order: { select: { orderNumber: true } } } }),
       this.prisma.platformSupportTicket.count({ where }),
     ]);
-    return { items: items.map(item => ({ ...item, content: item.content.slice(0, 200) })), ...pageMeta(query, total) };
+    return { items: items.map(({ order, ...item }) => ({ ...item, orderNumber: order?.orderNumber ?? null, content: item.content.slice(0, 200) })), ...pageMeta(query, total) };
+  }
+
+  async exportInvoices(ownerId: string, query: SupportListQueryDto) {
+    const createdAt = calendarDateRange(query.startDate, query.endDate);
+    return this.prisma.$transaction(async tx => {
+      const asOf = new Date();
+      const invoices = await tx.platformSupportTicket.findMany({
+        where: { ownerId, requestType: 'invoice', ...(query.status ? { status: query.status } : {}),
+          createdAt: { ...createdAt, lt: createdAt?.lt && createdAt.lt < asOf ? createdAt.lt : asOf } },
+        select: { id: true, status: true, invoiceDetails: true, createdAt: true, updatedAt: true, order: { select: { orderNumber: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: BILLING_EXPORT_LIMIT + 1,
+      });
+      if (invoices.length > BILLING_EXPORT_LIMIT) throw new BadRequestException('INVOICE_EXPORT_LIMIT_EXCEEDED');
+      return billingWorkbook('yeu-cau-hoa-don.xlsx', [
+        ['Mã yêu cầu', 'Mã đơn', 'Người nhận / Tổ chức', 'Mã số thuế', 'Địa chỉ', 'Email', 'Ngày gửi', 'Ngày cập nhật', 'Trạng thái'],
+        ...invoices.map(invoice => {
+          const details = invoice.invoiceDetails && typeof invoice.invoiceDetails === 'object' && !Array.isArray(invoice.invoiceDetails)
+            ? invoice.invoiceDetails as Record<string, unknown> : {};
+          const text = (name: string) => typeof details[name] === 'string' ? details[name] as string : '';
+          return [invoice.id, invoice.order?.orderNumber ?? '', text('recipientName'), text('taxCode'), text('billingAddress'), text('invoiceEmail'),
+            invoice.createdAt.toISOString(), invoice.updatedAt.toISOString(), invoice.status];
+        }),
+      ], asOf);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
   async getSupport(ownerId: string | undefined, id: string, query: RequestListQueryDto) {
