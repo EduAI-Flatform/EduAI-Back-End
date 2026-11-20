@@ -67,6 +67,16 @@ describe('request HTTP authorization and validation', () => {
     expect(response.headers['content-type']).toContain('image/png'); expect(response.headers['cache-control']).toContain('no-store'); expect(response.headers['x-content-type-options']).toBe('nosniff');
     await request(app.getHttpServer()).get('/admin/platform/requests/support/' + ticketId + '/image').set('x-test-owner', other).set('x-test-role', 'platform_admin').expect(200);
   });
+  it('protects invoice export and validates date/status filters on its static route', async () => {
+    await request(app.getHttpServer()).get('/platform/support/invoice-requests/export').expect(401);
+    await request(app.getHttpServer()).get('/platform/support/invoice-requests/export?status=paid').set('x-test-owner', owner).expect(400);
+    await request(app.getHttpServer()).get('/platform/support/invoice-requests/export?startDate=2026-02-30').set('x-test-owner', owner).expect(400);
+    const response = await request(app.getHttpServer()).get('/platform/support/invoice-requests/export?status=open&startDate=2026-11-01&endDate=2026-11-20').set('x-test-owner', owner).expect(200);
+    expect(response.headers['cache-control']).toBe('private, no-store');
+    expect(response.body).toMatchObject({ complete: true, scope: 'filtered_history', exported: 1 });
+    expect(prisma.platformSupportTicket.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ ownerId: owner, requestType: 'invoice', status: 'open' }) }));
+  });
+
   it('requires authentication for support access', async () => {
     await request(app.getHttpServer()).get('/platform/support').expect(401);
   });

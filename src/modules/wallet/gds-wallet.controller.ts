@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, Headers, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '../../../generated/prisma/client';
 import { RateLimit } from '../../common/security/rate-limit.decorator';
@@ -41,17 +41,27 @@ export class GdsWalletController {
   @ApiQuery({ name: 'filter', required: false, enum: ['all','incoming','outgoing','payments','withdrawals'] })
   @ApiQuery({ name: 'limit', required: false, schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 } })
   @ApiQuery({ name: 'cursor', required: false, schema: { type: 'string', maxLength: 512 } })
+  @ApiQuery({ name: 'startDate', required: false, schema: { type: 'string', format: 'date' } })
+  @ApiQuery({ name: 'endDate', required: false, schema: { type: 'string', format: 'date' } })
   @RateLimit({ identity: 'user', limit: 30, name: 'gds-wallet-history', windowSeconds: 60 })
   transactions(@CurrentUser('id') ownerId: string, @Query('filter') filter?: string,
-    @Query('limit') limit?: string, @Query('cursor') cursor?: string) {
-    return this.wallet.transactions(ownerId, parseHistoryQuery(ownerId, filter, limit, cursor));
+    @Query('limit') limit?: string, @Query('cursor') cursor?: string,
+    @Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    return this.wallet.transactions(ownerId, parseHistoryQuery(ownerId, filter, limit, cursor, startDate, endDate));
   }
 
   @Get('transactions/export')
+  @Header('Cache-Control', 'private, no-store')
+  @ApiQuery({ name: 'startDate', required: false, schema: { type: 'string', format: 'date' } })
+  @ApiQuery({ name: 'endDate', required: false, schema: { type: 'string', format: 'date' } })
   @ApiQuery({ name: 'filter', required: false, enum: ['all','incoming','outgoing','payments','withdrawals'] })
   @RateLimit({ identity: 'user', limit: 5, name: 'gds-wallet-history-export', windowSeconds: 60 })
-  exportTransactions(@CurrentUser('id') ownerId: string, @Query('filter') filter?: string) {
-    return this.wallet.exportTransactions(ownerId, parseHistoryQuery(ownerId, filter).filter);
+  exportTransactions(@CurrentUser('id') ownerId: string, @Query('filter') filter?: string,
+    @Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
+    const query = parseHistoryQuery(ownerId, filter, '20', undefined, startDate, endDate);
+    return startDate || endDate
+      ? this.wallet.exportTransactions(ownerId, query.filter, { startDate: query.startDate, endDate: query.endDate, start: query.start, end: query.end })
+      : this.wallet.exportTransactions(ownerId, query.filter);
   }
 
   @Post('topups/payos')

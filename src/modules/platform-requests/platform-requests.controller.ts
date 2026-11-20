@@ -25,6 +25,8 @@ export class PlatformSupportController {
   }
   @Post('invoice-requests') @RateLimit({ identity: 'user', limit: 10, name: 'invoice-request', windowSeconds: 3600 })
   invoice(@CurrentUser('id') ownerId: string, @Body() input: CreateInvoiceRequestDto) { return this.requests.createInvoice(ownerId, input); }
+  @Get('invoice-requests/export') @Header('Cache-Control', 'private, no-store') @RateLimit({ identity: 'user', limit: 5, name: 'invoice-request-export', windowSeconds: 60 })
+  exportInvoices(@CurrentUser('id') ownerId: string, @Query() query: SupportListQueryDto) { return this.requests.exportInvoices(ownerId, query); }
   @Get(':id') detail(@CurrentUser('id') ownerId: string, @Param('id', ParseUUIDPipe) id: string, @Query() query: RequestListQueryDto) {
     return this.requests.getSupport(ownerId, id, query);
   }

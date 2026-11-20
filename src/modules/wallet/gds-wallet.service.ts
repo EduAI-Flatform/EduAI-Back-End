@@ -59,12 +59,12 @@ export class GdsWalletService {
     return readHistoryPage(this.prisma, ownerId, query);
   }
 
-  async exportTransactions(ownerId: string, filter: HistoryQuery['filter']): Promise<HistoryExport> {
+  async exportTransactions(ownerId: string, filter: HistoryQuery['filter'], dates?: Pick<HistoryQuery, 'startDate' | 'endDate' | 'start' | 'end'>): Promise<HistoryExport> {
     if (!gdsWalletCapabilities(this.config).readEnabled) throw new ForbiddenException('GDS_WALLET_UNAVAILABLE');
     return this.prisma.$transaction<HistoryExport>(async tx => {
       const asOf = new Date();
       // Exact history source, lifecycle grouping, masking and filter semantics.
-      const history = await readHistoryPage(tx, ownerId, { filter, limit: HISTORY_EXPORT_LIMIT, asOf });
+      const history = await readHistoryPage(tx, ownerId, { ...dates, filter, limit: HISTORY_EXPORT_LIMIT, asOf });
       if (history.hasMore) throw new BadRequestException('GDS_HISTORY_EXPORT_LIMIT_EXCEEDED');
       const workbook = textWorkbook([
         ['ID', 'Type', 'Amount minor', 'Currency', 'Occurred at', 'Withdrawal ID', 'Status', 'Bank', 'Masked account'],
