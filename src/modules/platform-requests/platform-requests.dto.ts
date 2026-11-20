@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { Equals, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Equals, IsEmail, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 const trimmed = ({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value;
 export const SUPPORT_STATUSES = ['open', 'in_progress', 'resolved', 'closed'] as const;
@@ -40,6 +40,8 @@ export class RequestListQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize = 20;
 }
 export class SupportListQueryDto extends RequestListQueryDto {
+  @IsOptional() @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) startDate?: string;
+  @IsOptional() @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) endDate?: string;
   @IsOptional() @IsIn(['support', 'invoice']) requestType?: 'support' | 'invoice';
   @IsOptional() @IsIn(SUPPORT_STATUSES) status?: typeof SUPPORT_STATUSES[number];
 }

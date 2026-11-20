@@ -4,7 +4,7 @@ import { IsDateString, IsIn, IsInt, IsOptional, Matches, Max, Min } from 'class-
 import { MoneyResponseDto } from './commerce-response.dto';
 
 export class ListOrdersQueryDto {
-  @IsOptional() @IsIn(['confirmed', 'pending_payment', 'cancelled', 'expired']) status?: 'confirmed' | 'pending_payment' | 'cancelled' | 'expired';
+  @IsOptional() @IsIn(['confirmed', 'pending_payment', 'cancelled', 'expired', 'late_payment_review', 'late_payment_refunded']) status?: 'confirmed' | 'pending_payment' | 'cancelled' | 'expired' | 'late_payment_review' | 'late_payment_refunded';
   @IsOptional() @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) startDate?: string;
   @IsOptional() @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) endDate?: string;
   @IsOptional()
@@ -70,6 +70,7 @@ export class OrderMembershipPeriodResponseDto {
 }
 
 export class OrderHistoryItemResponseDto {
+  @ApiPropertyOptional() invoiceRequest?: { id: string; status: string } | null;
   @ApiPropertyOptional({ type: OrderMembershipPeriodResponseDto, nullable: true })
   membership?: OrderMembershipPeriodResponseDto | null;
 

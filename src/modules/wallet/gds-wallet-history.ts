@@ -1,20 +1,26 @@
 import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
+import { calendarDateRange } from '../../common/exports/billing-export';
 
 export type HistoryFilter = 'all' | 'incoming' | 'outgoing' | 'payments' | 'withdrawals';
-export interface HistoryQuery { filter: HistoryFilter; limit: number; before?: { micros: string; id: string }; asOf?: Date }
+export interface HistoryQuery { filter: HistoryFilter; limit: number; before?: { micros: string; id: string }; asOf?: Date; startDate?: string; endDate?: string; start?: Date; end?: Date }
 const filters = new Set(['all','incoming','outgoing','payments','withdrawals']);
-export function encodeHistoryCursor(owner: string, filter: HistoryFilter, micros: string, id: string): string {
-  return Buffer.from(JSON.stringify([1,owner,filter,micros,id])).toString('base64url');
+export function encodeHistoryCursor(owner: string, filter: HistoryFilter, micros: string, id: string, startDate?: string, endDate?: string): string {
+  return Buffer.from(JSON.stringify(startDate || endDate ? [2,owner,filter,micros,id,startDate ?? '',endDate ?? ''] : [1,owner,filter,micros,id])).toString('base64url');
 }
-export function parseHistoryQuery(owner: string, filter: unknown = 'all', limit: unknown = '20', cursor?: unknown): HistoryQuery {
+export function parseHistoryQuery(owner: string, filter: unknown = 'all', limit: unknown = '20', cursor?: unknown, startDate?: unknown, endDate?: unknown): HistoryQuery {
   if (typeof filter !== 'string' || !filters.has(filter) || typeof limit !== 'string' || !/^(?:[1-9]|[1-4]\d|50)$/.test(limit)) throw new BadRequestException('GDS_HISTORY_INVALID_QUERY');
-  const result: HistoryQuery = { filter: filter as HistoryFilter, limit: Number(limit) };
+  const range = calendarDateRange(startDate, endDate);
+  const result: HistoryQuery = { filter: filter as HistoryFilter, limit: Number(limit),
+    ...(startDate ? { startDate: startDate as string } : {}), ...(endDate ? { endDate: endDate as string } : {}),
+    ...(range?.gte ? { start: range.gte } : {}), ...(range?.lt ? { end: range.lt } : {}) };
   if (cursor === undefined) return result;
   try {
     if (typeof cursor !== 'string' || cursor.length > 512 || !/^[\w-]+$/.test(cursor)) throw new Error();
     const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-    if (!Array.isArray(value) || value.length !== 5 || value[0] !== 1 || value[1] !== owner || value[2] !== filter ||
+    const dated = Boolean(startDate || endDate);
+    if (!Array.isArray(value) || value.length !== (dated ? 7 : 5) || value[0] !== (dated ? 2 : 1) || value[1] !== owner || value[2] !== filter ||
+        (dated && (value[5] !== (startDate ?? '') || value[6] !== (endDate ?? ''))) ||
         typeof value[3] !== 'string' || !/^\d{1,18}$/.test(value[3]) || typeof value[4] !== 'string' ||
         !/^(journal|withdrawal)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value[4])) throw new Error();
     result.before = { micros: value[3], id: value[4] };
@@ -58,6 +64,8 @@ export function historyQuery(owner: string, query: HistoryQuery) {
       SELECT *, FLOOR(EXTRACT(EPOCH FROM "occurredAt")*1000000)::bigint AS sort_time FROM activity
       WHERE (${conditions[query.filter]})
         ${query.asOf ? Prisma.sql`AND "occurredAt" < ${query.asOf}` : Prisma.empty}
+        ${query.start ? Prisma.sql`AND "occurredAt" >= ${query.start}` : Prisma.empty}
+        ${query.end ? Prisma.sql`AND "occurredAt" < ${query.end}` : Prisma.empty}
     )
     SELECT id,type,"amountMinor","occurredAt","withdrawalId",status,"bankCode","bankShortName","accountNumber", sort_time::text AS micros
     FROM ordered
@@ -74,5 +82,5 @@ export async function readHistoryPage(db: Pick<Prisma.TransactionClient,'$queryR
     ...(row.withdrawalId ? {withdrawalId:row.withdrawalId,status:row.status,bankCode:row.bankCode,
       ...(row.bankShortName ? {bankShortName:row.bankShortName}:{}),accountNumber:row.accountNumber}:{}),
   } satisfies HistoryItem)), hasMore,
-    nextCursor: hasMore && last ? encodeHistoryCursor(owner,query.filter,last.micros,last.id) : null };
+    nextCursor: hasMore && last ? encodeHistoryCursor(owner,query.filter,last.micros,last.id,query.startDate,query.endDate) : null };
 }

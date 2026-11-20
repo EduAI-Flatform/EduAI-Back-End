@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Headers,
+  Header,
   Param,
   ParseUUIDPipe,
   Post,
@@ -34,6 +35,7 @@ import {
   OrderHistoryPageResponseDto,
 } from './dto/order-history.dto';
 import { OrderResponseDto } from './dto/order-response.dto';
+import { RateLimit } from '../../common/security/rate-limit.decorator';
 
 @ApiTags('Commerce')
 @ApiBearerAuth()
@@ -93,6 +95,15 @@ export class CommerceController {
     @Query() query: ListOrdersQueryDto,
   ): Promise<OrderHistoryPageResponseDto> {
     return this.orderHistoryService.list(learnerId, query);
+  }
+
+  @Get('orders/export')
+  @Header('Cache-Control', 'private, no-store')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(RoleName.student, RoleName.instructor, RoleName.platform_admin)
+  @RateLimit({ identity: 'user', limit: 5, name: 'commerce-order-export', windowSeconds: 60 })
+  exportOrders(@CurrentUser('id') learnerId: string, @Query() query: ListOrdersQueryDto) {
+    return this.orderHistoryService.exportOrders(learnerId, query);
   }
 
   @Get('orders/:orderId')
